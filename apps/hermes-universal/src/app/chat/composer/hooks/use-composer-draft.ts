@@ -1,19 +1,30 @@
+// Register the built-in draft providers with the suggestion bus (side-effect
+// import — the bus itself is provider-agnostic). The repair provider is
+// event-driven and registers through the gateway stream instead.
+import '@/store/suggestion-providers/cron'
+import '@/store/suggestion-providers/github'
 import '@/store/suggestion-providers/mcp'
+import '@/store/suggestion-providers/skill'
 
 import { useAui, useAuiState, useComposerRuntime } from '@assistant-ui/react'
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
+import { SLASH_COMMAND_RE } from '@hermes/shared'
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { SLASH_COMMAND_RE } from '@/lib/chat-runtime'
-import { onComposerDraftSyncRequest } from '@/lib/composer-draft-bus'
-import { IS_MOBILE } from '@/lib/platform'
+import { isElementInHiddenPane } from '@/components/pane-shell/pane-visibility'
+import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
+import { useStoreSelector } from '@/lib/use-session-slice'
 import {
-  clearSessionDraft,
+  adoptGoneSessionDraft,
+  adoptNewSessionDraft,
   type ComposerAttachment,
-  isSessionDraftRekey,
+  type ComposerDraftSyncMode,
+  onComposerDraftSyncRequest,
+  reloadPersistedDrafts,
   stashSessionDraft,
   takeSessionDraft
 } from '@/store/composer'
 import { isBrowsingHistory } from '@/store/composer-input-history'
+import { $composerPopout } from '@/store/composer-popout'
 import { clearDraftSuggestions, sampleComposerDraft } from '@/store/composer-suggestions'
 
 import {
@@ -25,16 +36,24 @@ import {
 import {
   type ComposerInsertMode,
   focusComposerInput,
-  focusHeldByOtherEditor,
   getActiveComposer,
+  markActiveComposer,
   onComposerFocusRequest,
   onComposerInsertRefsRequest,
-  onComposerInsertRequest
+  onComposerInsertRequest,
+  releaseActiveComposer
 } from '../focus'
 import { type InlineRefInput, insertInlineRefsIntoEditor } from '../inline-refs'
-import { composerPlainText, placeCaretEnd, renderComposerContents } from '../rich-editor'
+import {
+  composerPlainText,
+  normalizeComposerEditorDom,
+  placeCaretEnd,
+  REF_RE,
+  renderComposerContents
+} from '../rich-editor'
 import { useComposerScope } from '../scope'
 import type { ChatBarProps } from '../types'
+import { useComposerVisible } from '../visibility'
 
 interface UseComposerDraftArgs {
   activeQueueSessionKey: string | null
@@ -63,6 +82,10 @@ export function useComposerDraft({
 }: UseComposerDraftArgs) {
   const aui = useAui()
   const composerRuntime = useComposerRuntime()
+  const paneVisible = useComposerVisible()
+  const visibleRef = useRef(paneVisible)
+  visibleRef.current = paneVisible
+  const floating = useStoreSelector($composerPopout, state => state.poppedOut)
   // Which composer this is on the focus bus + which attachment set it owns.
   const { attachments: attachmentScope, target } = useComposerScope()
 
@@ -111,12 +134,16 @@ export function useComposerDraft({
 
   const [focusRequestId, setFocusRequestId] = useState(0)
 
-  // Focus only. Marking the active composer is NOT this function's job: a real
-  // focus fires `onFocus` on the input, which marks — while a mount-time call
-  // marking would hand every keystroke to whichever tile resumed last.
   const focusInput = useCallback(() => {
+    const editor = editorRef.current
+
+    if (!visibleRef.current || (editor && (!editor.isConnected || isElementInHiddenPane(editor)))) {
+      return
+    }
+
     focusComposerInput(editorRef.current)
-  }, [])
+    markActiveComposer(target)
+  }, [target])
 
   const requestMainFocus = useCallback(() => {
     setFocusRequestId(id => id + 1)
@@ -134,34 +161,23 @@ export function useComposerDraft({
       const editor = editorRef.current
 
       if (editor) {
-        // Inert by construction: this paints text the user is not mid-typing —
-        // a restore, an insert, a programmatic clear. A `/command` ending it is
-        // therefore FINISHED, so it commits to a chip rather than staying an
-        // editable trailing token the next keystroke would extend.
         renderComposerContents(editor, next, { trailingCommitted: true })
 
-        // `placeCaretEnd` writes the DOCUMENT selection, and putting the
-        // selection inside a contenteditable IS a focus in WebKit — it focuses
-        // the editable root, which on a phone raises the soft keyboard. A draft
-        // RESTORE paints with `focus: false` precisely because it must not take
-        // the caret, so on mobile the keyboard came up on every bubble switch
-        // even with the autofocus effect gated off. Place it there only when
-        // this editor is the one holding the caret anyway: about to be focused,
-        // or already focused.
-        //
-        // Desktop keeps the unconditional call. There is no keyboard to raise,
-        // and the caret landing at the end of a restored draft is what its focus
-        // paths (⌘L, the focus bus) have always relied on.
-        if (!IS_MOBILE || focus || document.activeElement === editor) {
+        // Selection is document-global: a keep-alive composer in a hidden tab
+        // may repaint when its background session updates, but moving its caret
+        // here steals the selection from the visible composer without changing
+        // document.activeElement. The foreground then still looks focused while
+        // printable keydowns produce no input.
+        if (visibleRef.current && getActiveComposer() === target && !isElementInHiddenPane(editor)) {
           placeCaretEnd(editor)
         }
       }
 
-      if (focus) {
+      if (focus && visibleRef.current) {
         requestMainFocus()
       }
     },
-    [requestMainFocus, setComposerText]
+    [requestMainFocus, setComposerText, target]
   )
 
   const appendExternalText = useCallback(
@@ -169,6 +185,16 @@ export function useComposerDraft({
       const value = text.trim()
 
       if (!value) {
+        return
+      }
+
+      // 'prefix' puts the value at the START of the draft — slash commands
+      // (the skill-suggestion pill) only route when they lead the message.
+      if (mode === 'prefix') {
+        const rest = draftRef.current.trimStart()
+
+        paintDraft(`${value} ${rest}`.trimEnd())
+
         return
       }
 
@@ -180,50 +206,38 @@ export function useComposerDraft({
     [paintDraft]
   )
 
-  // Autofocus on mount and on a session swap.
+  // Keep-alive tabs keep this composer mounted. A background session whose
+  // turn finished or recovered from a reconnect would otherwise re-run this
+  // effect and steal the caret. usePaneVisible defaults true outside a tab
+  // stack, so tiles, pop-outs, and secondary windows still auto-focus.
   useEffect(() => {
-    if (inputDisabled) {
-      return
-    }
-
-    // Not on a phone. On desktop the caret is free and following the focused
-    // tile with it is the whole point; on a phone it costs the soft keyboard,
-    // half the screen and a layout shift — for a SWITCH. The mobile bubble rail
-    // changes `focusKey` on every tap, so navigating the parallel chats meant
-    // the keyboard opening each time whether or not the user meant to type.
-    // An explicit request over the focus bus (below) still focuses on mobile:
-    // that is someone asking for the caret, not a composer announcing arrival.
-    if (IS_MOBILE) {
-      return
-    }
-
-    // Only the FOCUSED chat's composer may claim the caret on arrival. Tiles
-    // arrive on their own schedule — `openSessionTile` saves one with no runtime
-    // id, so its composer mounts once the async resume lands, long after the ⌘T
-    // that created the tab (MJXHRM-6) — and with several tiles open the last one
-    // home would otherwise win every keystroke. The focused zone already names
-    // the chat the user is in, and it names it BEFORE the mount (`focusDraftTile`
-    // claims the zone as the tab is created), so a fresh tab still autofocuses.
-    if (target !== getActiveComposer()) {
-      return
-    }
-
-    // Same target, but an editor the user is already in (the edit composer
-    // inside this chat) holds the caret: arriving is not a reason to take it.
-    if (focusHeldByOtherEditor(editorRef.current)) {
-      return
-    }
-
-    focusInput()
-  }, [focusInput, focusKey, inputDisabled, target])
-
-  // An explicit request over the focus bus is unconditional — it is someone
-  // saying "put the caret here", not a component announcing its arrival.
-  useEffect(() => {
-    if (!inputDisabled && focusRequestId > 0) {
+    if (!inputDisabled && paneVisible && !floating) {
       focusInput()
     }
-  }, [focusInput, focusRequestId, inputDisabled])
+  }, [floating, focusInput, focusKey, inputDisabled, paneVisible])
+
+  const previousFocusRequest = useRef(focusRequestId)
+   
+  useEffect(() => {
+    if (previousFocusRequest.current === focusRequestId) {
+      return
+    }
+
+    previousFocusRequest.current = focusRequestId
+
+    if (!inputDisabled && paneVisible) {
+      focusInput()
+    }
+  }, [focusInput, focusRequestId, inputDisabled, paneVisible])
+
+  // The mirror of the `markActiveComposer` above: give the key back when this
+  // composer goes away (a session tile closing, a pane unmounting). Covers both
+  // claim sites for this composer — `focusInput` here and ChatBar's `onFocus` —
+  // since they mark the same scope target. Without it `'active'` keeps
+  // resolving to a dead tile and every routed focus/insert request is dropped.
+  // (Heal-to-visible in focus.ts covers the keep-alive-tab case where the pane
+  // stays mounted behind the front tab; this covers true unmounts.)
+  useEffect(() => () => releaseActiveComposer(target), [target])
 
   useEffect(() => {
     if (inputDisabled) {
@@ -237,7 +251,8 @@ export function useComposerDraft({
 
       // Type-to-focus appends at end; bare Enter just focuses.
       if (typeChar) {
-        paintDraft(`${draftRef.current}${typeChar}`, true)
+        paintDraft(`${draftRef.current}${typeChar}`, false)
+        focusInput()
 
         return
       }
@@ -255,12 +270,27 @@ export function useComposerDraft({
       offFocus()
       offInsert()
     }
-  }, [appendExternalText, inputDisabled, paintDraft, target])
+  }, [appendExternalText, focusInput, inputDisabled, paintDraft, target])
 
   const stashAt = (scope: string | null, text = draftRef.current, attachments = attachmentScope.$attachments.get()) =>
     stashSessionDraft(scope, text, attachments)
 
   const loadIntoComposer = (text: string, attachments: ComposerAttachment[]) => {
+    // Diagnostic breadcrumb for #59305-class reports: identifies WHAT kind of
+    // state got restored into the composer (session switch, queue-edit
+    // restore, history browse) without logging any raw content. REF_RE has the
+    // global flag — testing against a throwaway clone avoids mutating the
+    // shared instance's lastIndex, which would otherwise corrupt this check on
+    // the next call.
+    if (attachments.length > 0 || new RegExp(REF_RE.source, REF_RE.flags).test(text)) {
+      console.debug('[composer-rehydrate]', {
+        attachmentCount: attachments.length,
+        attachmentKinds: attachments.map(a => a.kind),
+        hasTextRefs: new RegExp(REF_RE.source, REF_RE.flags).test(text),
+        scope: activeQueueSessionKeyRef.current
+      })
+    }
+
     attachmentScope.$attachments.set(cloneAttachments(attachments))
     paintDraft(text, false)
   }
@@ -270,9 +300,13 @@ export function useComposerDraft({
     draftRef.current = ''
 
     if (editorRef.current) {
-      editorRef.current.replaceChildren()
+      renderComposerContents(editorRef.current, '')
+
+      if (visibleRef.current && getActiveComposer() === target && !isElementInHiddenPane(editorRef.current)) {
+        placeCaretEnd(editorRef.current)
+      }
     }
-  }, [setComposerText])
+  }, [setComposerText, target])
 
   // Read the editor's current plain text into draftRef + composer state. This
   // closes the "queued rAF flush hasn't run yet" window so scope-swap/pagehide
@@ -284,7 +318,13 @@ export function useComposerDraft({
       return draftRef.current
     }
 
-    const text = composerPlainText(editor)
+    // Same normalize-then-sanitize the rAF flush does. An emptied editor still
+    // holds the placeholder <br> that keeps the contenteditable from collapsing
+    // to a sliver, and that serializes as "\n" — so an editor the user just
+    // cleared would otherwise stash a one-newline draft and come back non-empty.
+    normalizeComposerEditorDom(editor)
+
+    const text = sanitizeComposerInput(composerPlainText(editor))
 
     if (text !== draftRef.current) {
       draftRef.current = text
@@ -303,6 +343,7 @@ export function useComposerDraft({
   // source otherwise), and (3) schedule the debounced per-session stash.
   // Browsing history / editing a queued prompt suppress the stash so recalled
   // text never clobbers the draft.
+   
   useEffect(() => {
     const sync = () => {
       const text = composerRuntime.getState().text
@@ -314,8 +355,6 @@ export function useComposerDraft({
       const editor = editorRef.current
 
       if (editor && document.activeElement !== editor && composerPlainText(editor) !== text) {
-        // The editor is NOT the one being typed into (that is the guard right
-        // above), so this text is finished and its trailing `/command` chips.
         renderComposerContents(editor, text, { trailingCommitted: true })
       }
 
@@ -348,11 +387,7 @@ export function useComposerDraft({
       unsubscribe()
       window.clearTimeout(draftPersistTimerRef.current)
     }
-    // `stashAt` is deliberately omitted: it is redeclared every render but reads
-    // everything through refs and the scope context, so its behaviour never
-    // changes — while depending on it would resubscribe the composer runtime on
-    // every keystroke and cancel the pending draft write each time.
-  }, [composerRuntime, queueEditRef]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [composerRuntime, queueEditRef])
 
   const insertText = (text: string) => {
     const base = draftRef.current
@@ -370,7 +405,8 @@ export function useComposerDraft({
       return false
     }
 
-    const nextDraft = insertInlineRefsIntoEditor(editor, refs)
+    const interactive = visibleRef.current && getActiveComposer() === target && !isElementInHiddenPane(editor)
+    const nextDraft = insertInlineRefsIntoEditor(editor, refs, { interactive })
 
     if (nextDraft === null) {
       return false
@@ -378,7 +414,10 @@ export function useComposerDraft({
 
     draftRef.current = nextDraft
     setComposerText(nextDraft)
-    requestMainFocus()
+
+    if (interactive) {
+      requestMainFocus()
+    }
 
     return true
   }
@@ -399,59 +438,48 @@ export function useComposerDraft({
   // Per-thread draft swap — the composer's only session coupling. Lifecycle
   // never clears composer state; this effect alone stashes on leave, restores
   // on enter. Keyed writes are idempotent, so no skip-sentinel.
-  const previousDraftScopeRef = useRef(activeQueueSessionKey)
+  //
+  // MUST be a layout effect, not a passive one: it swaps attachmentScope's
+  // module-level $attachments atom, and a passive effect fires only after the
+  // browser paints the new session's view — leaving a window where the DOM
+  // already shows session B while $attachments (and therefore ChatBar's
+  // `attachments` prop) still holds session A's chips. A submit fired in that
+  // window (e.g. a fast session switch immediately followed by Enter) would
+  // ship A's attachments into B's turn (#59305). useLayoutEffect closes the
+  // window by running before paint.
 
-  useEffect(() => {
-    const previousScope = previousDraftScopeRef.current
-    previousDraftScopeRef.current = activeQueueSessionKey
-
+  useLayoutEffect(() => {
     // A pending debounce timer from the outgoing session is now stale — its
     // scope was correct when scheduled, but the authoritative stash below
     // (and the cleanup on the way out) already covers that text. Letting it
     // fire later would just clobber with an older snapshot.
     window.clearTimeout(draftPersistTimerRef.current)
     pendingDraftPersistRef.current = null
-    draftScopeRef.current = activeQueueSessionKey
 
-    // NOT a chat switch — the SAME chat under a new id. `session.create` promotes
-    // `draft:N` to a real runtime id (and a sleep/wake resume mints a fresh one
-    // for a session that already had one), and the key this effect watches IS the
-    // session key, so a rekey is indistinguishable from a switch at this level.
-    //
-    // Treating it as a switch is a data-loss bug, not a cosmetic one: the reload
-    // below repaints the editor from a key nothing has ever stashed under, so
-    // `loadIntoComposer('', [])` blanks the typed text AND the scope's staged
-    // attachments. Dropping a file on an unsent chat hits it every time —
-    // `stageAttachmentFromPath` calls `ensureSession()` before the chip is added,
-    // so the rekey lands mid-drop and takes the message with it.
-    //
-    // The editor already holds the right text and the scope already holds the
-    // right chips, so the whole job here is bookkeeping: re-file under the live
-    // key and drop the dead one. `stashSessionDraft` moved anything that had
-    // already been debounced to disk (store/composer.ts), but the cleanup that
-    // ran a moment ago re-filed the editor's CURRENT text under the outgoing key,
-    // and text typed inside the debounce window was never in the stash at all —
-    // this is what covers both.
-    const rekeyed = isSessionDraftRekey(previousScope, activeQueueSessionKey)
-
-    if (rekeyed) {
-      const editing = queueEditStateRef.current
-
-      if (editing?.sessionKey === previousScope) {
-        stashAt(activeQueueSessionKey, editing.draft, editing.attachments)
-      } else if (!isBrowsingHistory(sessionIdRef.current)) {
-        stashAt(activeQueueSessionKey, syncDraftFromEditor())
-      }
-
-      clearSessionDraft(previousScope)
-    } else {
-      const { attachments, text } = takeSessionDraft(activeQueueSessionKey)
-      loadIntoComposer(text, attachments)
+    // A new chat writes to the shared pre-session bucket until its stored id
+    // arrives; the assigning site announces that id (store/composer.ts). Move
+    // the bucket at this handoff — after the outgoing cleanup stashed the live
+    // editor text under it, before the incoming scope is restored — so the
+    // text the user kept typing follows the chat instead of vanishing.
+    // Keyed on the scope alone: the runtime id can land a resume later than
+    // the route flips the scope, so it is not a usable signal here.
+    if (!draftScopeRef.current && activeQueueSessionKey) {
+      adoptNewSessionDraft(activeQueueSessionKey)
+    } else if (!activeQueueSessionKey) {
+      // The reverse handoff: a session the user was typing into turned out
+      // to be gone and the window dropped to a fresh draft (#111868). The
+      // outgoing composer's cleanup has already stashed the live text under
+      // the dead key — whether that was this instance's previous scope or an
+      // unmounted one's — so move it into the fresh draft when the gone
+      // verdict announced it. No announcement, no-op.
+      adoptGoneSessionDraft()
     }
 
-    // Returned on BOTH paths. A rekey does not end this composer's obligation to
-    // write its text down when the user later leaves for a different chat — an
-    // early `return` here would have quietly traded one lost draft for another.
+    draftScopeRef.current = activeQueueSessionKey
+
+    const { attachments, text } = takeSessionDraft(activeQueueSessionKey)
+    loadIntoComposer(text, attachments)
+
     return () => {
       const latestText = syncDraftFromEditor()
       const editing = queueEditStateRef.current
@@ -464,62 +492,47 @@ export function useComposerDraft({
 
       // Withdraw the outgoing session's draft suggestions (and any pending
       // sample timer). The incoming session re-earns its own from the draft
-      // restore above — without this a leaving session's "Add Linear" pill
+      // restore above — without this a leaving session's "Add GitHub" pill
       // lingers in the map and re-appears stale on the way back.
       clearDraftSuggestions(sessionIdRef.current)
     }
-    // `sessionId` is deliberately the STALE (outgoing) one — do NOT "fix" this
-    // to `sessionIdRef.current` for consistency with the rest of the file. This
-    // cleanup persists the draft of the session being LEFT, under the outgoing
-    // `activeQueueSessionKey`, so the browse guard has to ask about that same
-    // session; the ref holds the incoming one by the time cleanup runs.
-    // `loadIntoComposer` / `stashAt` are redeclared every render (they read
-    // through live refs), so listing them would make a session-swap effect fire
-    // per keystroke — stashing and reloading the composer mid-typing.
   }, [activeQueueSessionKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A draft moving BETWEEN WINDOWS (MJXHRM-213). The HUD and the main window are
-  // separate webviews sharing one `localStorage` draft stash, so a handoff is two
-  // moments: flush what is in this editor before the other window reads it, and
-  // repaint from the stash after the other window has written.
-  //
-  // The focus guard on `reload` is the load-bearing half: repainting an editor
-  // someone is typing in would drop their keystrokes and move their caret, and
-  // "the window you are looking at wins" is the only rule that cannot surprise
-  // anyone.
-  useEffect(() => {
-    return onComposerDraftSyncRequest(mode => {
-      const scope = draftScopeRef.current
+  // The HUD handoff's two verbs. Entering HUD mode flushes this editor's text
+  // into the shared stash so the HUD's composer boots with it; leaving repaints
+  // from the stash so whatever the HUD typed (or sent, clearing it) is what the
+  // app window shows. The per-session swap effect above can't cover either one:
+  // the session scope doesn't change, so it never re-consults the stash.
+  const syncDraft = (mode: ComposerDraftSyncMode) => {
+    if (mode === 'flush') {
+      window.clearTimeout(draftPersistTimerRef.current)
+      pendingDraftPersistRef.current = null
+      stashAt(draftScopeRef.current, syncDraftFromEditor())
 
-      if (isBrowsingHistory(sessionIdRef.current) || queueEditStateRef.current?.sessionKey === scope) {
-        return
-      }
+      return
+    }
 
-      if (mode === 'flush') {
-        pendingDraftPersistRef.current = null
-        stashAt(scope, syncDraftFromEditor())
+    reloadPersistedDrafts()
+    const stashed = takeSessionDraft(draftScopeRef.current)
+    loadIntoComposer(stashed.text, stashed.attachments)
+  }
 
-        return
-      }
+  const syncDraftRef = useRef(syncDraft)
+  syncDraftRef.current = syncDraft
 
-      const editor = editorRef.current
-
-      if (editor && document.activeElement === editor) {
-        return
-      }
-
-      const { attachments, text } = takeSessionDraft(scope)
-
-      if (text !== draftRef.current) {
-        loadIntoComposer(text, attachments)
-      }
-    })
-    // `stashAt` / `loadIntoComposer` are recreated every render (they close over
-    // live refs by design), so listing them would resubscribe on every keystroke.
-  }, [syncDraftFromEditor]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(
+    () =>
+      onComposerDraftSyncRequest(({ mode, target: requested }) => {
+        if (requested === target) {
+          syncDraftRef.current(mode)
+        }
+      }),
+    [target]
+  )
 
   // pagehide is load-bearing: React skips effect cleanups on reload, so Cmd+R
   // inside the debounce/rAF window would drop trailing keystrokes without this.
+   
   useEffect(() => {
     const flushPendingDraftPersist = () => {
       const scope = draftScopeRef.current
@@ -540,10 +553,7 @@ export function useComposerDraft({
       window.removeEventListener('pagehide', flushPendingDraftPersist)
       flushPendingDraftPersist()
     }
-    // `stashAt` is deliberately omitted, as above — and it matters more here,
-    // because this cleanup PERSISTS the draft. Re-running the effect on every
-    // render would stash on every keystroke rather than on the way out.
-  }, [syncDraftFromEditor]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [syncDraftFromEditor])
 
   return {
     activeQueueSessionKeyRef,

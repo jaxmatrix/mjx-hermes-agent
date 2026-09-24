@@ -5,67 +5,30 @@ import type {
   HermesRepoPullRequests,
   HermesRepoStatus,
   HermesReviewList,
-  HermesReviewScope,
   HermesReviewShipInfo
 } from '@/global'
-import { api } from '@/lib/api'
-import { listRepoPullRequests } from '@/lib/gateway-rest'
-import { scanLocalGitRepos } from '@/store/repo-scan'
+import { hermesApi } from '@/hermes'
 
-// Ported from apps/desktop/src/lib/desktop-git.ts — specifically its `remoteGit`
-// branch. Desktop runs git through Electron when it owns the filesystem, and
-// mirrors the same surface over the dashboard REST API (`/api/git/*`) whenever
-// the gateway is remote, so the coding rail / worktree lanes / review pane act
-// on the BACKEND repo where sessions actually run.
-//
-// Universal is *always* that remote case: there is no local FS bridge, the
-// gateway owns the repo. So the Electron branch is dropped and `desktopGit()`
-// returns the REST implementation unconditionally. `desktopApi` becomes the
-// universal `api()` helper (which routes through the Rust http_request command
-// and attaches the session token + `?profile=`).
+import { desktopFsProfile, isDesktopFsRemoteMode } from './desktop-fs'
 
-export interface GitBridge {
-  worktreeList: (repoPath: string) => Promise<HermesGitWorktree[]>
-  worktreeAdd: (
-    repoPath: string,
-    options?: { name?: string; branch?: string; base?: string; existingBranch?: string }
-  ) => Promise<{ path: string; branch: string; repoRoot: string }>
-  worktreeRemove: (
-    repoPath: string,
-    worktreePath: string,
-    options?: { force?: boolean }
-  ) => Promise<{ removed: string }>
-  branchSwitch: (repoPath: string, branch: string) => Promise<{ branch: string }>
-  branchList: (repoPath: string) => Promise<HermesGitBranch[]>
-  baseBranchList: (repoPath: string) => Promise<HermesGitBaseBranch[]>
-  repoStatus: (repoPath: string) => Promise<HermesRepoStatus | null>
-  fileDiff: (repoPath: string, filePath: string) => Promise<string>
-  review: {
-    list: (repoPath: string, scope: HermesReviewScope, baseRef?: null | string) => Promise<HermesReviewList>
-    diff: (
-      repoPath: string,
-      filePath: string,
-      scope: HermesReviewScope,
-      baseRef?: null | string,
-      staged?: boolean
-    ) => Promise<string>
-    stage: (repoPath: string, filePath?: null | string) => Promise<{ ok: boolean }>
-    unstage: (repoPath: string, filePath?: null | string) => Promise<{ ok: boolean }>
-    revert: (repoPath: string, filePath?: null | string) => Promise<{ ok: boolean }>
-    revParse: (repoPath: string, ref?: null | string) => Promise<null | string>
-    commit: (repoPath: string, message: string, push: boolean) => Promise<{ ok: boolean }>
-    commitContext: (repoPath: string) => Promise<{ diff: string; recent: string }>
-    push: (repoPath: string) => Promise<{ ok: boolean }>
-    shipInfo: (repoPath: string) => Promise<HermesReviewShipInfo>
-    /** The repo's PRs for these branches (and/or explicit numbers), via `gh`.
-     *  Both lists are deduped and capped backend-side. */
-    prList: (repoPath: string, branches: string[], numbers?: number[]) => Promise<HermesRepoPullRequests>
-    createPr: (repoPath: string) => Promise<{ url: string }>
+// Remote-aware git facade. Locally the desktop runs git through Electron
+// (window.hermesDesktop.git); on a remote gateway that's the wrong filesystem,
+// so we mirror the same surface over the dashboard REST API (/api/git/*) — the
+// coding rail, worktree lanes, review pane, and branch ops then act on the
+// BACKEND repo where sessions actually run. Mirrors desktop-fs.ts.
+
+type GitBridge = NonNullable<NonNullable<Window['hermesDesktop']>['git']>
+
+function desktopApi<T>(path: string, body?: Record<string, unknown>): Promise<T> {
+  const desktop = window.hermesDesktop
+
+  if (!desktop) {
+    throw new Error('Hermes Desktop bridge is unavailable')
   }
-  scanRepos: (
-    roots: string[],
-    options?: { maxDepth?: number; enabled?: boolean; excludePaths?: string[] }
-  ) => Promise<{ root: string; label: string }[]>
+
+  return hermesApi<T>(
+    body ? { body, method: 'POST', path, profile: desktopFsProfile() } : { path, profile: desktopFsProfile() }
+  )
 }
 
 function gitGet<T>(route: string, params: Record<string, boolean | null | string | undefined>): Promise<T> {
@@ -77,11 +40,11 @@ function gitGet<T>(route: string, params: Record<string, boolean | null | string
     }
   }
 
-  return api<T>({ path: `/api/git/${route}?${query.toString()}` })
+  return desktopApi<T>(`/api/git/${route}?${query.toString()}`)
 }
 
 function gitPost<T>(route: string, body: Record<string, unknown>): Promise<T> {
-  return api<T>({ body, method: 'POST', path: `/api/git/${route}` })
+  return desktopApi<T>(`/api/git/${route}`, body)
 }
 
 const remoteGit: GitBridge = {
@@ -131,26 +94,21 @@ const remoteGit: GitBridge = {
 
     shipInfo: repoPath => gitGet<HermesReviewShipInfo>('review/ship-info', { path: repoPath }),
 
-    // The one PR client: gateway-rest owns the /api/git/review/pr-list call, and
-    // this exposes it on the same facade every other git op goes through.
-    prList: (repoPath, branches, numbers) => listRepoPullRequests(repoPath, branches, numbers),
+    prList: (repoPath, branches, numbers) =>
+      gitPost<HermesRepoPullRequests>('review/pr-list', { branches, numbers: numbers ?? [], path: repoPath }),
 
     createPr: repoPath => gitPost('review/create-pr', { path: repoPath })
   },
 
-  // Repo discovery is a disk crawl, not a git command, and this is the LOCAL
-  // half only: the Rust walk over THIS machine's filesystem (store/repo-scan.ts
-  // → src-tauri/src/repo_scan.rs), meaningful only when the backend was spawned
-  // here. When the client's disk is not the gateway's (remote/cloud gateway, or
-  // mobile, which has no crawlable disk at all) the crawl is not a git-bridge
-  // call at all — `store/projects.ts` asks the gateway to walk its own policy
-  // roots over `projects.discover_repos {scan: true}` and never reaches this
-  // facade. Callers must gate on `localRepoScanSupported()`; that RPC replaced
-  // the fork's `GET /api/git/scan-repos`, which was a second server-side walk of
-  // the same policy (MJXHRM-474).
-  scanRepos: (roots, options) => scanLocalGitRepos(roots, options ?? {})
+  // Repo discovery is a local-disk crawl; on a remote gateway the backend
+  // already merges session-derived repos, so this is a no-op.
+  scanRepos: async () => []
 }
 
 export function desktopGit(): GitBridge | undefined {
-  return remoteGit
+  if (typeof window === 'undefined') {
+    return undefined
+  }
+
+  return isDesktopFsRemoteMode() ? remoteGit : window.hermesDesktop?.git
 }

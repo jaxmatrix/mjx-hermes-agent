@@ -3,62 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   directiveFrameHeight,
   frameSizeFromMessage,
+  intentFromMessage,
   themePrelude,
-  withInlineChrome,
-  workspaceFilePath
+  withInlineChrome
 } from './inline-preview-directive'
-
-// The `file` attribute is written by the MODEL, so this is the security seam
-// of the whole directive: everything it returns becomes a gateway file read.
-describe('workspaceFilePath', () => {
-  const cwd = '/home/dev/project'
-
-  it('resolves a plain relative file against the session cwd', () => {
-    expect(workspaceFilePath('index.html', cwd)).toBe('/home/dev/project/index.html')
-    expect(workspaceFilePath('build/out/report.html', cwd)).toBe('/home/dev/project/build/out/report.html')
-  })
-
-  it('normalizes `./` and interior `..` that stay inside the workspace', () => {
-    expect(workspaceFilePath('./index.html', cwd)).toBe('/home/dev/project/index.html')
-    expect(workspaceFilePath('docs/../index.html', cwd)).toBe('/home/dev/project/index.html')
-    expect(workspaceFilePath('a/b/../../c.html', cwd)).toBe('/home/dev/project/c.html')
-  })
-
-  it('trims a trailing separator off the cwd instead of doubling it', () => {
-    expect(workspaceFilePath('index.html', '/home/dev/project/')).toBe('/home/dev/project/index.html')
-  })
-
-  it('REJECTS a climb above the workspace root', () => {
-    expect(workspaceFilePath('../secrets.html', cwd)).toBeNull()
-    expect(workspaceFilePath('../../../../etc/passwd', cwd)).toBeNull()
-    expect(workspaceFilePath('a/../../outside.html', cwd)).toBeNull()
-    expect(workspaceFilePath('./../outside.html', cwd)).toBeNull()
-    // Backslashes are separators too, or `..\\..\\` would walk out unchecked
-    // on a Windows-shaped path the gateway is happy to resolve.
-    expect(workspaceFilePath('..\\..\\outside.html', cwd)).toBeNull()
-  })
-
-  it('REJECTS anything that names a location instead of a workspace-relative path', () => {
-    expect(workspaceFilePath('/etc/passwd', cwd)).toBeNull()
-    expect(workspaceFilePath('file:///etc/passwd', cwd)).toBeNull()
-    expect(workspaceFilePath('https://evil.example/x.html', cwd)).toBeNull()
-    expect(workspaceFilePath('C:\\Windows\\win.ini', cwd)).toBeNull()
-    expect(workspaceFilePath('\\\\server\\share\\x.html', cwd)).toBeNull()
-    expect(workspaceFilePath('~/.ssh/id_rsa', cwd)).toBeNull()
-  })
-
-  it('REJECTS empty, whitespace-only, NUL-bearing, and cwd-less input', () => {
-    expect(workspaceFilePath('', cwd)).toBeNull()
-    expect(workspaceFilePath('   ', cwd)).toBeNull()
-    expect(workspaceFilePath('.', cwd)).toBeNull()
-    expect(workspaceFilePath('index.html\0.png', cwd)).toBeNull()
-    expect(workspaceFilePath('index.html', '')).toBeNull()
-  })
-
-  it('strips the backticks a model wraps a path in', () => {
-    expect(workspaceFilePath('`index.html`', cwd)).toBe('/home/dev/project/index.html')
-  })
-})
 
 describe('directiveFrameHeight', () => {
   it('returns null (auto-size) when absent or garbage', () => {
@@ -78,20 +26,12 @@ describe('directiveFrameHeight', () => {
 describe('withInlineChrome', () => {
   const prelude = themePrelude({ '--foreground': '#eee' }, 'Inter')
 
-  it('puts the theme prelude before the page styles so the page overrides it', () => {
+  it('puts the theme prelude FIRST so page styles override it', () => {
     const doc = '<html><head><style>body{color:red}</style></head><body><h1>hi</h1></body></html>'
     const framed = withInlineChrome(doc, 'tok', prelude)
 
     expect(framed.startsWith(prelude)).toBe(true)
     expect(framed.indexOf(prelude)).toBeLessThan(framed.indexOf('color:red'))
-  })
-
-  it('keeps the doctype FIRST — a prelude in front of it means quirks mode', () => {
-    const framed = withInlineChrome('<!doctype html><html><body>x</body></html>', 'tok', prelude)
-
-    expect(framed.startsWith('<!doctype html>')).toBe(true)
-    // …and the prelude still lands ahead of the document's own markup.
-    expect(framed.indexOf(prelude)).toBeLessThan(framed.indexOf('<body>'))
   })
 
   it('injects the measuring script before </body>', () => {
@@ -157,5 +97,31 @@ describe('frameSizeFromMessage', () => {
     expect(frameSizeFromMessage(msg({ height: -5 }), 'tok')).toBeNull()
     expect(frameSizeFromMessage(null, 'tok')).toBeNull()
     expect(frameSizeFromMessage('str', 'tok')).toBeNull()
+  })
+})
+
+describe('intentFromMessage', () => {
+  const msg = (over: Record<string, unknown> = {}) => ({
+    type: 'hermes-inline-preview-intent',
+    token: 'tok',
+    prompt: 'get-price eth',
+    ...over
+  })
+
+  it('accepts our intent with our token, trimmed', () => {
+    expect(intentFromMessage(msg(), 'tok')).toBe('get-price eth')
+    expect(intentFromMessage(msg({ prompt: '  hi  ' }), 'tok')).toBe('hi')
+  })
+
+  it('caps runaway prompts to a sentence-sized budget', () => {
+    expect(intentFromMessage(msg({ prompt: 'x'.repeat(9000) }), 'tok')).toHaveLength(500)
+  })
+
+  it('rejects wrong token, wrong type, empty, and hostile shapes', () => {
+    expect(intentFromMessage(msg({ token: 'stolen' }), 'tok')).toBeNull()
+    expect(intentFromMessage(msg({ type: 'hermes-inline-preview-size' }), 'tok')).toBeNull()
+    expect(intentFromMessage(msg({ prompt: '   ' }), 'tok')).toBeNull()
+    expect(intentFromMessage(msg({ prompt: 42 }), 'tok')).toBeNull()
+    expect(intentFromMessage(null, 'tok')).toBeNull()
   })
 })

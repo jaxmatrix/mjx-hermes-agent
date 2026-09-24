@@ -74,7 +74,7 @@ vi.mock('@/store/composer-queue', () => ({ enqueueQueuedPrompt }))
 vi.mock('@/store/new-session', () => ({ startNewSession }))
 vi.mock('@/store/connection', () => ({ $connectionPhase: h.$connectionPhase }))
 vi.mock('@/store/session', () => ({ $sessions: h.$sessions }))
-vi.mock('@/store/session-states', () => ({ sessionTileDelegate: () => delegate }))
+vi.mock('@/store/session-key-states', () => ({ sessionTileDelegate: () => delegate }))
 vi.mock('@/app/chat/slash-runner', () => ({ primarySlashRunner: () => slashRunner }))
 vi.mock('./quick-entry', () => ({ QUICK_ENTRY_SURFACE: 'quick' }))
 

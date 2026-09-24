@@ -3,16 +3,13 @@ import { useStore } from '@nanostores/react'
 import { type Translations, useI18n } from '@/i18n'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
-import { $attentionSessionIds, $unreadFinishedSessionIds, $workingSessionIds, sessionAliasIds } from '@/store/session'
 import { $sessionColorById, sessionColorFor } from '@/store/session-color'
-import { $stalledSessionIds } from '@/store/session-states'
+import { $sessionDotStateById, type SessionDotState } from '@/store/session-dot-state'
 import type { SessionInfo } from '@/types/hermes'
 
-import { type SessionDotState, sessionDotState } from './sidebar/session-row-state'
-
 // A pure lookup table: each state maps to its className, aria-label, and title.
-// No priority resolution here — sessionDotState already picked one. Label/title
-// resolve from sidebar.row translations, keyed by name.
+// No priority resolution here — $sessionDotStateById already picked one.
+// Label/title resolve from sidebar.row translations, keyed by name.
 type DotVariant = {
   ariaLabel?: (r: Translations['sidebar']['row']) => string
   className: string
@@ -27,13 +24,14 @@ const DOT_BASE = 'size-1.5 rounded-full'
 // circle can only say "something is happening" — which the row's arc already
 // says, better — while costing a repaint per frame on every row at once. What
 // the dot is for is telling states APART, and that is a job for color and fill:
-// filled means producing, hollow means open but quiet.
+// filled means producing, hollow means open but quiet. The two states this
+// replaces differed by 30% opacity and were, in practice, the same dot.
 const DOT_VARIANTS: Record<SessionDotState, DotVariant> = {
-  // Yellow — a clarify/approval is blocking the turn. The one "act now" color,
+  // Amber — a clarify/approval is blocking the turn. The one "act now" color,
   // and the only state the user is required to do something about.
   'needs-input': {
     ariaLabel: r => r.needsInput,
-    className: `${DOT_BASE} bg-(--ui-yellow)`,
+    className: `${DOT_BASE} bg-amber-500`,
     role: 'status',
     title: r => r.waitingForAnswer
   },
@@ -52,8 +50,17 @@ const DOT_VARIANTS: Record<SessionDotState, DotVariant> = {
     role: 'status',
     title: r => r.sessionRunning
   },
+  // Hollow muted — a terminal(background=true) process outlived the turn. An
+  // outline reads as "still open" without claiming the model is working; a
+  // filled grey dot read as finished, the opposite of what this means.
+  background: {
+    ariaLabel: r => r.backgroundRunning,
+    className: `${DOT_BASE} border border-(--ui-text-tertiary)`,
+    role: 'status',
+    title: r => r.backgroundRunning
+  },
   // Emerald — the turn finished while the user was looking elsewhere. The
-  // colour is theme-derived (`--ui-success`, a success green rotated toward the
+  // color is theme-derived (`--ui-success`, a success green rotated toward the
   // accent) so eight finished dots can't sit in the sidebar fighting a palette
   // they don't belong to. Under a green accent it stays emerald.
   unread: {
@@ -62,44 +69,42 @@ const DOT_VARIANTS: Record<SessionDotState, DotVariant> = {
     role: 'status',
     title: r => r.finishedUnread
   },
-  // Hollow grey, the faintest ink the app has — nothing has ever run here. An
-  // outline says "open, not producing"; a draft is the one state that has yet to
-  // do anything at all, so it sits a shade dimmer than any live outline would.
+  // Hollow grey, the faintest ink the app has — nothing has ever run here. It
+  // shares the outline with `background` because both mean "open, not
+  // producing", and sits a shade dimmer because a draft is the one state that
+  // has yet to do anything at all.
   draft: {
     ariaLabel: r => r.draftSession,
     className: `${DOT_BASE} border border-(--ui-text-quaternary)`,
     title: r => r.draftSession
   },
-  // Settled: the project color, or nothing at all. An uncolored session used to
-  // get a grey dot, which put a mark of the same weight as a status next to
-  // every resting row and made "no color" look like a state of its own.
+  // Settled: the project color when there is one, else the faintest filled
+  // grey. Every session shows SOME mark — a row with nothing in the lead slot
+  // reads as broken next to its neighbours, so "no color" falls back to the
+  // quietest ink rather than to an invisible dot.
   idle: {
-    className: 'size-1 rounded-full'
+    className: 'size-1 rounded-full bg-(--ui-text-quaternary)'
   }
 }
 
-/** The dot a state paints, for surfaces that DESCRIBE a status rather than
- *  render a session — the sidebar's status filter, say. Idle carries no color of
- *  its own (it inherits the project's), so callers supply one. */
+/** The dot a state paints, for surfaces that describe a status rather than
+ *  render a session — the sidebar's status filter, say. Idle carries no color
+ *  of its own (it inherits the project's), so callers supply one. */
 export const sessionDotClassName = (state: SessionDotState): string => DOT_VARIANTS[state].className
 
 export interface SessionStatusDotProps {
   /** The STORED session id — the key every live-state atom (working /
-   *  attention / stalled / unread) is keyed by, on BOTH surfaces: the sidebar
-   *  row's `session.id` and a pane tile's `storedSessionId` are the same stored
-   *  id (`$workingSessionIds` et al. map `storedSessionId`). It may be a
-   *  PRE-ROTATION id — a tile or bubble opened before an auto-compression keeps
-   *  the one it was created with — which is why the lookups below go through
-   *  `sessionAliasIds` rather than this value alone.
+   *  attention / stalled / unread / background) is keyed by, on BOTH surfaces:
+   *  the sidebar row's `session.id` and a pane tile's `storedSessionId` are the
+   *  same stored id (`$workingSessionIds` et al. map `storedSessionId`).
    *
-   *  Null on a chat that has yet to reach the backend — the workspace tab on a
-   *  fresh draft, a draft tile. There is no id to key by and no turn behind it,
-   *  which is the draft state by definition. */
+   *  Null on a new chat that has yet to reach the backend — no id to key by,
+   *  and no turn behind it, which is the draft state by definition. */
   storedSessionId: null | string
-  /** The session row for color resolution — recents OR the project tree. Call
-   *  sites already hold it; passing it lets the idle dot inherit the project
-   *  color even for a session older than the paginated recents page (which has
-   *  no `$sessionColorById` entry). */
+  /** The session row for color resolution — recents OR the project tree. Both
+   *  call sites already hold it; passing it lets the idle dot inherit the
+   *  project color even for a session older than the paginated recents page
+   *  (which has no `$sessionColorById` entry). */
   session?: null | SessionInfo
   /** TUI-style tree stem for a branched session (`└─ ` / `├─ `). */
   branchStem?: string
@@ -109,21 +114,13 @@ export interface SessionStatusDotProps {
 }
 
 /**
- * SESSION STATUS DOT — the ONE primitive the sidebar row, the PANE TABS (the
- * main workspace tab and every session tile's tab, via `TileChrome.tabLead`),
- * the ⌃Tab switcher and the mobile bubble strip render, so a session's status
- * and color can never disagree between surfaces. Before MJXHRM-385 the switcher
- * and the bubble strip each hand-rolled their own dot, and the bubble's used
- * AMBER for a running turn and RED for an unread one — the amber this component
- * reserves for "needs your input", and a colour nothing else used at all.
- * It reads every signal itself from the shared stores keyed by the stored
- * session id: live state (working / needs-input / stalled / unread, made
- * mutually exclusive by `sessionDotState`) and the resolved color (override →
- * project color, via `sessionColorFor`). An idle session shows its project
- * color; the active states own the dot with their semantic color so an
- * attention cue is never masked by the inherited tint.
- *
- * Ported from desktop `app/chat/session-status-dot.tsx`.
+ * SESSION STATUS DOT — the ONE primitive the sidebar row, the pane tabs, and
+ * the session switcher render, so a session's status can never disagree
+ * between surfaces. It resolves everything itself from the stored session id:
+ * the live state (via `$sessionDotStateById`, already reduced to one mutually
+ * exclusive answer) and the color (override → project, via `sessionColorFor`).
+ * An idle session shows its project color; the active states own the dot with
+ * their semantic color so an attention cue is never masked by the tint.
  */
 export function SessionStatusDot({ storedSessionId, session, branchStem, className }: SessionStatusDotProps) {
   const { t } = useI18n()
@@ -134,28 +131,12 @@ export function SessionStatusDot({ storedSessionId, session, branchStem, classNa
   useStore($sessionColorById)
   const color = sessionColorFor(session) ?? null
 
-  // EVERY id that names this conversation, not just the one the caller holds.
-  // Auto-compression rotates a session's stored id and universal deliberately
-  // leaves tiles / bubbles / pane ids on the pre-rotation one; the live-status
-  // collections are keyed by the slice's current id, so asking under a single
-  // id painted a tab or a bubble `idle` straight through a running turn (and
-  // lost needs-input and unread with it). Cheap — at most three ids, resolved
-  // from the row this dot already holds for its colour.
-  const aliases = sessionAliasIds(storedSessionId, session)
+  // Selector, not a plain useStore: the map is rebuilt whenever any session's
+  // status changes, but a given dot only repaints when ITS OWN state flips.
+  const dotState = useStoreSelector($sessionDotStateById, states =>
+    storedSessionId ? (states[storedSessionId] ?? 'idle') : 'draft'
+  )
 
-  // Per-session membership as booleans via useStoreSelector: these collections
-  // tick on every stream delta (any session working/stalled/etc changes the
-  // reference), but a given dot only repaints when ITS OWN membership flips.
-  // A plain useStore(collection).has(id) re-rendered every dot on every tick.
-  //
-  // Note the shape split, unlike desktop: universal's $workingSessionIds
-  // resolves to a Set, the other three to arrays.
-  const needsInput = useStoreSelector($attentionSessionIds, ids => aliases.some(id => ids.includes(id)))
-  const isWorking = useStoreSelector($workingSessionIds, ids => aliases.some(id => ids.has(id)))
-  const isStalled = useStoreSelector($stalledSessionIds, ids => aliases.some(id => ids.includes(id)))
-  const isUnread = useStoreSelector($unreadFinishedSessionIds, ids => aliases.some(id => ids.includes(id)))
-
-  const dotState = sessionDotState({ isDraft: storedSessionId === null, isStalled, isUnread, isWorking, needsInput })
   const variant = DOT_VARIANTS[dotState]
 
   return (

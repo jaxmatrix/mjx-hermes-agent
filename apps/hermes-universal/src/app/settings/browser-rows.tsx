@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
 import { clearGuestData } from '@/lib/browser/host'
@@ -16,7 +17,6 @@ import { confirm } from '@/store/confirm'
 import { notify } from '@/store/notifications'
 
 import { ListRow } from './primitives'
-import { settingRowElementId } from './settings-search'
 
 /**
  * The in-app browser's four device-local rows (MJXHRM-447), in Settings ▸

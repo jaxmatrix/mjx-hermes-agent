@@ -1,4 +1,4 @@
-import { atom, computed, type ReadableAtom } from '@/store/atom'
+import { atom, computed, type ReadableAtom } from 'nanostores'
 
 type DismissedToolRows = Record<string, true>
 

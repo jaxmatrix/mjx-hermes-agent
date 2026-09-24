@@ -2,8 +2,8 @@
  * Live skin sync from the Hermes backend.
  *
  * The backend resolves the active skin (built-in or `$HERMES_HOME/skins/*.yaml`)
- * and announces it on `gateway.ready` / `skin.changed`. `ingestBackendSkin` folds
- * that into the app:
+ * and announces it on `gateway.ready` / `skin.changed`, and answers `config.get
+ * skin` with the same payload. `ingestBackendSkin` folds that into the desktop:
  *
  *   1. Registers the converted theme in `$backendThemes` so it appears wherever a
  *      built-in does — Appearance, Cmd-K, `/skin` — with no per-surface wiring
@@ -12,28 +12,43 @@
  *      `$pendingSkinApply`, which the ThemeProvider drains through `setTheme`.
  *
  * `gateway.ready` seeds the baseline WITHOUT applying, so a fresh connect never
- * stomps the user's persisted theme; only a genuine name change (Hermes
+ * stomps the user's persisted desktop theme; only a genuine name change (Hermes
  * authoring/activating a skin from a prompt, or `/skin` elsewhere) repaints.
- *
- * Wired from `store/event-router.ts` — see the `GLOBAL_EVENT_TYPES` branch.
  */
 
-import { atom } from '@/store/atom'
+import type { HermesSkin } from '@hermes/shared/skin'
+import { atom } from 'nanostores'
+
+import { readJson, writeJson } from '@/lib/storage'
 
 import { BUILTIN_THEMES } from './presets'
 import { skinToDesktopTheme } from './skin'
-import type { HermesSkin } from './skin-contract'
-import type { DesktopTheme } from './types'
+import { type DesktopTheme, isValidTheme } from './types'
+
+// Cached so the boot-time paint (which runs before the gateway connects) can
+// resolve a persisted skin pick synchronously, like a built-in or a user
+// install. Without it the stored name failed `resolveTheme` on every launch
+// and the app silently painted the default until the next `skin.changed`.
+const BACKEND_THEMES_KEY = 'hermes-desktop-backend-themes-v1'
+
+const readCached = (): Record<string, DesktopTheme> =>
+  Object.fromEntries(
+    Object.entries(readJson<Record<string, unknown>>(BACKEND_THEMES_KEY) ?? {}).filter(
+      (entry): entry is [string, DesktopTheme] => !BUILTIN_THEMES[entry[0]] && isValidTheme(entry[1])
+    )
+  )
 
 /** Skins pushed by the backend, keyed by name. Merged by `listAllThemes`. */
-export const $backendThemes = atom<Record<string, DesktopTheme>>({})
+export const $backendThemes = atom<Record<string, DesktopTheme>>(typeof window === 'undefined' ? {} : readCached())
+
+$backendThemes.listen(themes => writeJson(BACKEND_THEMES_KEY, themes))
 
 /** One-shot skin name the ThemeProvider should switch to (it clears this). */
-export const $pendingSkinApply = atom<null | string>(null)
+export const $pendingSkinApply = atom<string | null>(null)
 
 // Last skin name synced from the backend + whether it was ever APPLIED (vs
 // merely seeded at connect). Once applied, only a name change applies again —
-// no re-apply on repeat events, no snap-back after a manual theme switch.
+// no re-apply on repeat events, no snap-back after a manual desktop switch.
 // A `skin.changed` matching a seed-only baseline still applies: the seed
 // records without painting, so if the activation event was missed (backend
 // restart / disconnected), an explicit re-affirm must repaint, not no-op.
@@ -47,24 +62,24 @@ export function __resetBackendSkinSync(): void {
 }
 
 /**
- * Fold a resolved skin into the app. `apply: false` (connect-time seed) only
- * records the baseline; `apply: true` (runtime change) repaints on a name
- * change. Built-in names keep our own palette but can still be applied.
+ * Fold a resolved skin into the desktop. `apply: false` (connect-time seed) only
+ * records the baseline; `apply: true` (runtime change / poll) repaints on a name
+ * change. Built-in names keep the desktop's own palette but can still be applied.
  */
-export function ingestBackendSkin(skin: HermesSkin | null | undefined, { apply }: { apply: boolean }): void {
+export function ingestBackendSkin(skin: HermesSkin | undefined | null, { apply }: { apply: boolean }): void {
   const name = (skin && typeof skin === 'object' ? (skin.name ?? '') : '').trim()
 
   if (!name) {
     return
   }
 
-  // `default` is "no opinion" on the PALETTE — we keep our own default (nous),
-  // so we never register a converted theme under `default`. It is still a valid
-  // apply TARGET though: a runtime switch back to `default` must repaint us to
-  // our own default (setTheme normalizes `default` → nous). So we only skip the
-  // registry step here and let it flow through the apply logic below.
-  // Built-in names (mono/slate/…) already have a hand-tuned palette — we never
-  // shadow it, but the name is still a valid apply target.
+  // `default` is "no opinion" on the PALETTE — the desktop keeps its own default
+  // (nous), so we never register a converted theme under `default`. It is still a
+  // valid apply TARGET though: a runtime switch back to `default` must repaint the
+  // desktop to its own default (setTheme normalizes `default` → nous). So we only
+  // skip the registry step here and let it flow through the apply logic below.
+  // Built-in names (mono/slate/…) already have a hand-tuned desktop palette — we
+  // never shadow it, but the name is still a valid apply target.
   if (name !== 'default' && !BUILTIN_THEMES[name]) {
     const theme = skinToDesktopTheme(skin as HermesSkin)
 
@@ -74,9 +89,6 @@ export function ingestBackendSkin(skin: HermesSkin | null | undefined, { apply }
 
     const current = $backendThemes.get()
 
-    // Deep-compare: an in-place recolor of the ACTIVE skin repaints through this
-    // store (the same-name apply guard below no-ops), so the store must move
-    // only when the palette actually changed — and must move when it did.
     if (JSON.stringify(current[name]) !== JSON.stringify(theme)) {
       $backendThemes.set({ ...current, [name]: theme })
     }

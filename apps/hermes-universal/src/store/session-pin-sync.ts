@@ -2,55 +2,32 @@
  * Reconcile the sidebar's pins with the backend "keep" flag, both directions.
  *
  * Pins drive the sidebar UI out of `$pinnedSessionIds` (localStorage), but the
- * durable record is `sessions.pinned` in each profile's state.db. That flag is
- * what a pin MEANS server-side, and two things depend on it that no client-side
- * list can reproduce:
- *
- *  - the `sessions.auto_archive` sweep runs backend-side and skips pinned rows
- *    (`hermes_state.py` `archive_stale_sessions`), so a pin the backend cannot
- *    see is a chat the sweep is free to hide — the pin silently failing at its
- *    one job;
- *  - both list endpoints back-fill pinned conversations past their LIMIT
- *    (`include_pinned=True`), so a pinned chat stays reachable however far it
- *    has aged out of the recency window.
- *
- * It is also the only pin channel every client shares. Desktop has mirrored
- * here since `feat(desktop): pins sync between apps sharing a gateway`; a
- * gateway-side list of ids that only Universal writes converges Universal with
- * Universal and with nothing else.
+ * durable record is `sessions.pinned` in each profile's state.db. Two things
+ * depend on the backend copy: the `sessions.auto_archive` sweep runs
+ * server-side and would otherwise hide a pinned chat, and a second Desktop app
+ * pointed at the same gateway has its own, separate localStorage.
  *
  * Push: PATCH `pinned` whenever the local set changes, and re-assert the whole
- * set at boot — which transparently migrates pre-existing local pins with no
- * user action.
+ * set at boot — which transparently migrates pre-existing pins with no user
+ * action.
  *
- * Pull: session rows carry `pinned`, and the list endpoints back-fill pinned
- * conversations past their LIMIT, so a row's absence from a page no longer says
- * anything about its pin state. That makes the server row authoritative: adopt
- * pins this app hasn't seen, and drop local pins the server says are gone. Only
- * rows actually present in the payload are consulted, so a backend predating
- * the flag (`pinned === undefined`) leaves the local set untouched — and a page
- * that predates one of our own writes is fenced out until a later page confirms
- * the value we wrote.
- *
- * Ported from apps/desktop/src/store/session-pin-sync.ts, which carries three
- * rounds of race fixes; the only Universal-specific change is the write gate
- * (`ownsPersistedAppState`, so satellite/activity windows never author the
- * persisted pin set) in place of desktop's Electron-bridge check.
+ * Pull: session rows now carry `pinned`, and the list endpoints back-fill
+ * pinned conversations past their LIMIT, so a row's absence from a page no
+ * longer says anything about its pin state. That makes the server row
+ * authoritative: adopt pins this app hasn't seen, and drop local pins the
+ * server says are gone. Only rows actually present in the payload are
+ * consulted, so a backend predating the flag (`pinned === undefined`) leaves
+ * the local set untouched — and a page that predates one of our own writes is
+ * fenced out until a later page confirms the value we wrote.
  */
 
+import { atom } from 'nanostores'
+
 import { setSessionPinnedRemote } from '@/hermes'
+import { onConnectionScopeChange } from '@/lib/connection-scoped'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
-import {
-  $pinnedSessionCache,
-  $sessions,
-  $sessionsListEpoch,
-  isTombstonedSession,
-  sessionExistsOnBackends,
-  sessionMatchesStoredId,
-  sessionPinId
-} from '@/store/session'
-import { ownsPersistedAppState } from '@/store/windows'
+import { $cronSessions, $messagingSessions, $sessions, sessionMatchesStoredId, sessionPinId } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
 // pin ids we've successfully PATCHed pinned=true this session.
@@ -64,13 +41,54 @@ const pending = new Set<string>()
 // with a cooldown so a row that never comes back can't fence itself forever.
 const unconfirmed = new Map<string, { at: number; value: boolean }>()
 
+/**
+ * The ids `unconfirmed` currently fences, for readers outside this module.
+ *
+ * The sidebar's Pinned section falls back to the server `pinned` flag for rows
+ * the local set doesn't know about, and that fallback needs the same fence the
+ * pull pass uses: a row whose flag our own in-flight write contradicts is not
+ * news, it's the past. Without it an unpin re-lists the session under Pinned
+ * until the next page lands.
+ *
+ * Re-published only when the key set actually changes, so a sidebar memo keyed
+ * on it survives an ordinary session refresh.
+ */
+export const $unconfirmedPinWrites = atom<ReadonlySet<string>>(new Set())
+
 // How long an unconfirmed write outranks a page that contradicts it. Long
 // enough to cover a list request issued just before the PATCH (those are the
 // slow ones), short enough that a genuine server-side change still wins.
 const WRITE_GUARD_MS = 10_000
 
+function publishUnconfirmed(): void {
+  const published = $unconfirmedPinWrites.get()
+
+  if (published.size === unconfirmed.size && [...unconfirmed.keys()].every(id => published.has(id))) {
+    return
+  }
+
+  $unconfirmedPinWrites.set(new Set(unconfirmed.keys()))
+}
+
 function profileFor(pinId: string): null | string | undefined {
-  return $sessions.get().find(row => sessionMatchesStoredId(row, pinId))?.profile
+  return loadedRowFor(pinId)?.profile
+}
+
+function loadedSessionRows(): SessionInfo[] {
+  return [...$sessions.get(), ...$cronSessions.get(), ...$messagingSessions.get()]
+}
+
+/**
+ * The row a stored pin id resolves to, across every slice. Same tie-break as
+ * `rowsByPinId`: when two profiles share the id, the write must target the
+ * row the pull adopted — the active gateway's — or an unpin PATCHes the other
+ * profile and the next page re-adopts the pin.
+ */
+function loadedRowFor(pinId: string): SessionInfo | undefined {
+  const rows = loadedSessionRows().filter(row => sessionMatchesStoredId(row, pinId))
+  const gateway = normalizeProfileKey($activeGatewayProfile.get())
+
+  return rows.find(row => normalizeProfileKey(row.profile) === gateway) ?? rows[0]
 }
 
 /**
@@ -80,7 +98,8 @@ function profileFor(pinId: string): null | string | undefined {
  * databases). Iterating both would pin then unpin the same id in one pass and
  * re-fire `reconcile` forever — the runaway that overflows nanostores'
  * listenerQueue. Collapse to a single row per id, preferring the active
- * gateway's profile, so the pull is deterministic and never oscillates.
+ * gateway's profile (the same tie-break `resolveLoadedRow` uses), so the pull
+ * is deterministic and never oscillates.
  */
 function rowsByPinId(rows: readonly SessionInfo[]): Map<string, SessionInfo> {
   const byId = new Map<string, SessionInfo>()
@@ -120,6 +139,7 @@ function writePin(id: string, pinned: boolean, profile?: null | string): Promise
       // A failed write leaves the server on the old value, so the guard would
       // be fencing out the truth. Drop it and let the page win.
       unconfirmed.delete(id)
+      publishUnconfirmed()
       throw err
     }
   )
@@ -130,14 +150,14 @@ function writePin(id: string, pinned: boolean, profile?: null | string): Promise
  *
  * Runs after the push pass so local intent is already fenced (`pending` /
  * `unconfirmed`) by the time the page is read — a fresh local toggle whose
- * PATCH hasn't landed yet must win over the stale row, not be reverted by it.
- * Remote pins adopted here are marked mirrored before the local set changes, so
- * the re-entrant reconcile doesn't echo them back as a PATCH.
+ * PATCH hasn't landed yet must win over the stale row, not be reverted by it
+ * (#74570). Remote pins adopted here are marked mirrored before the local set
+ * changes, so the re-entrant reconcile doesn't echo them back as a PATCH.
  */
 function pullRemotePins(): void {
   const local = new Set($pinnedSessionIds.get())
 
-  for (const row of rowsByPinId($sessions.get()).values()) {
+  for (const row of rowsByPinId(loadedSessionRows()).values()) {
     // A backend without the flag has no opinion; never act on `undefined`.
     if (typeof row.pinned !== 'boolean') {
       continue
@@ -168,13 +188,6 @@ function pullRemotePins(): void {
 
     // Local intent still waiting on its PATCH (row unresolved when the push
     // pass ran) is also newer than the page — never revert it.
-    //
-    // Belt to the write guard's braces, and knowingly so: no mutation of this
-    // line can fail a test, because the push pass above always lifts a loaded
-    // row's id out of `pending`, and `writePin` sets `unconfirmed`
-    // SYNCHRONOUSLY before issuing its request — so by the time the pull reads a
-    // row, its id is fenced either way. Kept rather than deleted on that
-    // reasoning alone: it is desktop's, carried over with its race fixes.
     if (pending.has(pinId) || pending.has(row.id)) {
       continue
     }
@@ -194,20 +207,14 @@ function pullRemotePins(): void {
   }
 }
 
-// Re-entrancy guard, desktop's (0599b66de7). reconcile() is subscribed to BOTH
-// $sessions and $pinnedSessionIds, and pullRemotePins() mutates
-// $pinnedSessionIds (via pinSession/unpinSession) — so the pull re-enters
-// reconcile through a listener.
-//
-// Knowingly untestable, and said plainly: neutralising this guard leaves the
-// whole suite green, because nanostores QUEUES a listener fired during an
-// in-progress notify rather than calling it re-entrantly. That queueing is the
-// bug — the oscillation grows `listenerQueue` until `Array.push` throws
-// `RangeError: Invalid array length` — and `rowsByPinId` above is what actually
-// stops it (drop the dedup and this file's suite kills the test worker). The
-// guard is kept for the case the queue does not cover: a future DIRECT call to
-// reconcile() from inside the pull. Same reasoning as the `pending` fence at
-// the top of pullRemotePins, and desktop carries it too.
+// Re-entrancy guard: reconcile() is subscribed to every loaded-session slice
+// and $pinnedSessionIds, and pullRemotePins() mutates $pinnedSessionIds (via
+// pinSession/unpinSession), which fires reconcile() again synchronously.
+// Without this guard, a session whose pin state oscillates — two rows with the
+// same durable id but conflicting `pinned` flags, possible when profile
+// databases share session ids — drives an unbounded re-entrant loop that
+// overflows nanostores' shared listenerQueue and crashes the renderer with
+// `RangeError: Invalid array length`.
 let reconciling = false
 
 function reconcile(): void {
@@ -221,14 +228,15 @@ function reconcile(): void {
     reconcileInner()
   } finally {
     reconciling = false
+    // One publish per top-level pass: writePin adds guards and pullRemotePins
+    // retires them, and re-entrant calls above returned without touching either.
+    publishUnconfirmed()
   }
 }
 
 function reconcileInner(): void {
-  // One writer per install. A satellite or activity window shares this origin's
-  // localStorage, so letting it adopt rows too would have two windows authoring
-  // the same persisted set (and double every PATCH).
-  if (!ownsPersistedAppState()) {
+  // Config/session REST is only reachable through the Electron bridge.
+  if (!window.hermesDesktop) {
     return
   }
 
@@ -236,7 +244,7 @@ function reconcileInner(): void {
   // so this reconcile runs before the PATCH for that toggle exists anywhere.
   // The push pass below records the intent (`pending`, then `unconfirmed` via
   // writePin) — only then may the pull read the page, where those fences stop
-  // the still-stale row from silently reverting the user's action.
+  // the still-stale row from silently reverting the user's action (#74570).
   const current = new Set($pinnedSessionIds.get())
 
   // Unpinned: anything we were tracking that's no longer in the set.
@@ -256,9 +264,9 @@ function reconcileInner(): void {
   }
 
   // Flush whatever we can resolve now; unresolved ids (row not loaded yet)
-  // retry on the next $sessions change.
+  // retry on the next loaded-session slice change.
   for (const id of [...pending]) {
-    const row = $sessions.get().find(entry => sessionMatchesStoredId(entry, id))
+    const row = loadedRowFor(id)
 
     if (!row) {
       continue
@@ -276,108 +284,17 @@ function reconcileInner(): void {
   pullRemotePins()
 }
 
-// ---------------------------------------------------------------------------
-// GHOST PINS — a pinned session another client deleted.
-//
-// The pull above can only speak for rows that are IN the payload. A session
-// deleted elsewhere (a second app on this gateway, the CLI, or while this app
-// was closed) is simply not in any page: nothing says `pinned: false`, so the
-// pin survives, `$pinnedSessionCache` keeps serving its last-known row, and the
-// Pinned section renders a chat that no longer exists — permanently, since both
-// halves are persisted. It cannot even be opened.
-//
-// Absence alone is not the signal. The back-fill obeys the archived filter, so
-// an archived-but-pinned chat is absent from a page too, and unpinning on that
-// inference would quietly drop the pins of every archived conversation — worse
-// than the ghost. `sessionExistsOnBackends` asks by id instead, which answers
-// for archived rows and 404s only on real deletion.
-//
-// Three gates keep this cheap and safe:
-//  - only after a SUCCESSFUL full refresh (`$sessionsListEpoch`), the one moment
-//    a live pin cannot be missing from `$sessions`;
-//  - only for pins that are actually RENDERING from the cache fallback, which is
-//    the ghost by definition. A pin with no cached row shows nothing, and after
-//    a gateway switch (which clears the cache) that is exactly every pin the
-//    previous backend owned — so a switch can never spend probes on, or drop,
-//    another gateway's pins;
-//  - one verdict per id per cooldown, so the sidebar's frequent refreshes don't
-//    re-probe an archived pin on every poll.
-// ---------------------------------------------------------------------------
-
-/** How long a `present` verdict stands before the id is worth asking about
- *  again. Long enough that a steady-state archived pin costs ~nothing; short
- *  enough that a delete elsewhere clears within one coffee break, and instantly
- *  on the next app start (the map is per-process). */
-const PIN_EXISTENCE_RECHECK_MS = 300_000
-
-const existenceCheckedAt = new Map<string, number>()
-const probing = new Set<string>()
-
-/** Pins rendering purely from the cache — the ghost candidates. */
-function ghostCandidates(now: number): string[] {
-  const loaded = new Set<string>()
-
-  for (const row of $sessions.get()) {
-    loaded.add(row.id)
-    loaded.add(sessionPinId(row))
-  }
-
-  const cache = $pinnedSessionCache.get()
-
-  return $pinnedSessionIds.get().filter(id => {
-    const checkedAt = existenceCheckedAt.get(id)
-
-    return (
-      !loaded.has(id) &&
-      Boolean(cache[id]) &&
-      // A delete of our own already owns this id: it released the pin
-      // optimistically and will restore it if the RPC fails.
-      !isTombstonedSession(id) &&
-      !probing.has(id) &&
-      (checkedAt === undefined || now - checkedAt >= PIN_EXISTENCE_RECHECK_MS)
-    )
-  })
-}
-
-async function sweepGhostPins(): Promise<void> {
-  if (!ownsPersistedAppState()) {
-    return
-  }
-
-  for (const id of ghostCandidates(Date.now())) {
-    probing.add(id)
-
-    try {
-      const existence = await sessionExistsOnBackends(id)
-
-      if (existence === 'unknown') {
-        // No answer. Leave the pin, leave the stamp unset, ask again next time.
-        continue
-      }
-
-      existenceCheckedAt.set(id, Date.now())
-
-      if (existence === 'gone' && $pinnedSessionIds.get().includes(id)) {
-        // Forget the mirror BEFORE the set changes, exactly as pullRemotePins
-        // does: otherwise the reconcile this fires PATCHes pinned=false at a
-        // row we just proved is not there.
-        mirrored.delete(id)
-        pending.delete(id)
-        unconfirmed.delete(id)
-        unpinSession(id)
-      }
-    } finally {
-      probing.delete(id)
-    }
-  }
-}
-
 // Sync once, then re-sync on pin-set and session-list changes. Call once per app.
 export function watchSessionPins(): void {
+  // A connection rescope repaints $pinnedSessionIds from the new backend's
+  // storage scope; the mirrored/pending/unconfirmed bookkeeping describes
+  // the PREVIOUS backend and must reset before that reload reconciles.
+  onConnectionScopeChange(resetSessionPinMirror)
   reconcile()
   $pinnedSessionIds.listen(reconcile)
   $sessions.listen(reconcile)
-  $sessionsListEpoch.listen(() => void sweepGhostPins())
+  $cronSessions.listen(reconcile)
+  $messagingSessions.listen(reconcile)
 }
 
 /**
@@ -395,8 +312,5 @@ export function resetSessionPinMirror(): void {
   mirrored.clear()
   pending.clear()
   unconfirmed.clear()
-  // "This id exists" was a statement about the OLD gateway's state.db. Keeping
-  // it would let a pin the next backend has genuinely never had ride out the
-  // cooldown unexamined.
-  existenceCheckedAt.clear()
+  publishUnconfirmed()
 }

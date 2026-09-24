@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { I18nProvider, useI18n } from './context'
 import { createPluginI18n, registerPluginLocales, translatePlugin, usePluginI18n } from './plugin-i18n'
 import { setRuntimeI18nLocale } from './runtime'
-import type { Locale } from './types'
 
 const noopTrack = (dispose: () => void) => dispose
 
@@ -56,20 +55,6 @@ describe('plugin locale registry', () => {
     expect(translatePlugin('merge', 'en', 'a', [])).toBe('a')
   })
 
-  it('never resolves a bundle for a locale universal cannot select', () => {
-    // Desktop supports `ar`; universal's Locale union does not. A plugin shipping
-    // one is not an error — resolution falls through to the plugin's `en`.
-    const dispose = registerPluginLocales('wide', {
-      ar: { greet: 'مرحبا' },
-      en: { greet: 'hello' }
-    } as never)
-
-    expect(translatePlugin('wide', 'ar' as Locale, 'greet', [])).toBe('مرحبا')
-    expect(translatePlugin('wide', 'en', 'greet', [])).toBe('hello')
-
-    dispose()
-  })
-
   it('ctx.i18n.t reads the app runtime locale', () => {
     const i18n = createPluginI18n('runtime-plugin', noopTrack)
     i18n.register({ en: { greet: 'hello' }, ja: { greet: 'こんにちは' } })
@@ -79,28 +64,6 @@ describe('plugin locale registry', () => {
     setRuntimeI18nLocale('ja')
     expect(i18n.t('greet')).toBe('こんにちは')
   })
-
-  it('ctx.i18n.register routes its disposer through track', () => {
-    const tracked: Array<() => void> = []
-
-    const i18n = createPluginI18n('tracked', dispose => {
-      tracked.push(dispose)
-
-      return dispose
-    })
-
-    i18n.register({ en: { greet: 'hi' } })
-
-    expect(tracked).toHaveLength(1)
-    expect(i18n.t('greet')).toBe('hi')
-
-    // The loader tears bundles down through the tracked disposers on unload.
-    for (const dispose of tracked) {
-      dispose()
-    }
-
-    expect(i18n.t('greet')).toBe('greet')
-  })
 })
 
 function Probe({ pluginId }: { pluginId: string }) {
@@ -109,15 +72,12 @@ function Probe({ pluginId }: { pluginId: string }) {
   return <p data-testid="copy">{t('greet')}</p>
 }
 
-// Universal persists the locale in a localStorage-backed atom (desktop round-trips
-// it through Hermes config), so a test that switches must switch back or it leaks
-// into the next one.
-function LocaleSwitch({ to }: { to: Locale }) {
+function SwitchToJa() {
   const { setLocale } = useI18n()
 
   return (
-    <button onClick={() => void setLocale(to)} type="button">
-      to {to}
+    <button onClick={() => void setLocale('ja')} type="button">
+      to ja
     </button>
   )
 }
@@ -130,27 +90,24 @@ describe('usePluginI18n', () => {
     })
 
     render(
-      <I18nProvider>
-        <LocaleSwitch to="ja" />
-        <LocaleSwitch to="en" />
+      <I18nProvider configClient={null}>
+        <SwitchToJa />
         <Probe pluginId="hooked" />
       </I18nProvider>
     )
 
     expect(screen.getByTestId('copy').textContent).toBe('hello')
 
-    fireEvent.click(screen.getByRole('button', { name: 'to ja' }))
-    expect(screen.getByTestId('copy').textContent).toBe('こんにちは')
+    fireEvent.click(screen.getByRole('button'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'to en' }))
-    expect(screen.getByTestId('copy').textContent).toBe('hello')
+    expect(screen.getByTestId('copy').textContent).toBe('こんにちは')
 
     dispose()
   })
 
   it('picks up a bundle registered after mount', () => {
     render(
-      <I18nProvider>
+      <I18nProvider configClient={null}>
         <Probe pluginId="late" />
       </I18nProvider>
     )

@@ -1,10 +1,11 @@
+import { parseCommandDispatch, parseSlashCommand } from '@hermes/shared'
 import { useCallback } from 'react'
 
 import { requestComposerInsert } from '@/app/chat/composer/focus'
 import { useComposerScope } from '@/app/chat/composer/scope'
 import { branchSourceOf, useSessionView } from '@/app/chat/session-view'
 import { submitPromptToSurface } from '@/app/chat/surface-submit'
-import { PET_SETTINGS_ROUTE, STARMAP_ROUTE } from '@/app/routes'
+import { STARMAP_ROUTE } from '@/app/routes'
 import type {
   BrowserManageResponse,
   SessionCompressResponse,
@@ -13,7 +14,7 @@ import type {
 } from '@/app/types'
 import { getProfiles } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { parseCommandDispatch, parseSlashCommand, sessionTitle } from '@/lib/chat-runtime'
+import { sessionTitle } from '@/lib/chat-runtime'
 import {
   type CommandsCatalogLike,
   type DesktopActionId,
@@ -28,33 +29,31 @@ import { navigateTo } from '@/lib/route-nav'
 import { toChatMessages } from '@/lib/session-history'
 import { isSessionIdCandidate, renderCommandsCatalog, slashStatusText } from '@/lib/slash-utils'
 import { setSessionYolo } from '@/lib/yolo-session'
-import { syncApprovalModeForProfile } from '@/store/approval-mode'
 import { appendSessionSystemMessage, ensureSession } from '@/store/chat'
+import { openCommandPalettePage } from '@/store/command-palette'
 import { setSessionCompacting } from '@/store/compaction'
 import { $connection } from '@/store/connection'
 import { $focusView, pushFocusView } from '@/store/focus-view'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { handoffSession } from '@/store/handoff'
 import { setModelPickerOpen } from '@/store/model'
 import { startNewSession } from '@/store/new-session'
 import { dismissNotification, notify, notifyError } from '@/store/notifications'
 import { setPetScale } from '@/store/pet-gallery'
 import { openPetGenerate } from '@/store/pet-generate'
+import { $petGenInput } from '@/store/pet-generate'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from '@/store/profile'
+import { $sessions, $yoloActive, setSessions } from '@/store/session'
 import {
   $activeStoredSessionId,
-  $sessions,
-  $yoloActive,
   branchCurrentSession,
   openSession,
-  refreshSessions,
-  setSessionPickerOpen,
-  setSessions
-} from '@/store/session'
+  openSessionPickerRoute,
+  refreshSessions
+} from '@/store/session-lifecycle'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
-import { $activeSessionKey, $sessionStates, updateSession } from '@/store/session-state-types'
-import { openAppRoute } from '@/store/windows'
-import { useSkinCommand } from '@/themes'
+import { $activeSessionKey, $sessionKeyStates, updateSession } from '@/store/session-state-types'
+import { useSkinCommand } from '@/themes/use-skin-command'
 import type { UsageStats } from '@/types/hermes'
 
 /**
@@ -117,7 +116,7 @@ export function useSlashCommand() {
       const targetKey = (): string => view.$runtimeId.get() || $activeSessionKey.get()
 
       /** Its WIRE id, or null for a draft that has never been created. */
-      const targetSessionId = (): null | string => $sessionStates.get()[targetKey()]?.runtimeSessionId ?? null
+      const targetSessionId = (): null | string => $sessionKeyStates.get()[targetKey()]?.runtimeSessionId ?? null
 
       const appendTargetSystemMessage = (text: string) => appendSessionSystemMessage(targetKey(), text)
 
@@ -248,7 +247,7 @@ export function useSlashCommand() {
           const projected = 'display' in dispatch ? dispatch.display?.trim() : ''
           const displayText = projected || (dispatch.type === 'skill' ? `/${dispatch.name}` : undefined)
 
-          if ($sessionStates.get()[targetKey()]?.busy) {
+          if ($sessionKeyStates.get()[targetKey()]?.busy) {
             renderSlashOutput('session busy — /interrupt the current turn before sending this command')
 
             return
@@ -274,7 +273,7 @@ export function useSlashCommand() {
           // a function, so it already follows the slice a recovery moves.
           const { result } = await withSessionNotFoundResume(
             sessionId,
-            $sessionStates.get()[targetKey()]?.storedSessionId ?? $activeStoredSessionId.get(),
+            $sessionKeyStates.get()[targetKey()]?.storedSessionId ?? $activeStoredSessionId.get(),
             live =>
               requestGateway<unknown>('slash.exec', {
                 session_id: live,
@@ -325,27 +324,10 @@ export function useSlashCommand() {
         new: async () => {
           startNewSession()
         },
-        // /approvals shows or sets the PROFILE-WIDE dangerous-command approval
-        // mode. The mode itself is the backend's: `slash.exec` runs the CLI's
-        // own handler, which is the only place managed-scope policy ("this
-        // setting is managed and cannot be changed") is enforced — so this is
-        // exec plus one step, not a local reimplementation.
-        //
-        // That one step is the point. `approvals.mode` has a SECOND surface in
-        // this app — the statusbar's Zap menu — and it renders from
-        // `$approvalModes`, a cache `syncApprovalModeForProfile` fills once when
-        // the item mounts. Nothing invalidates it, so `/approvals off` moved the
-        // gateway's config while the bar kept saying Smart for the rest of the
-        // session, and the menu's next pick wrote the stale value back. Re-read
-        // after the command instead of trusting its text: `config.get` is what
-        // the menu itself trusts, so the two cannot disagree, and a REFUSED set
-        // (managed config) reconciles to the unchanged mode rather than to what
-        // was asked for. Bare `/approvals` re-reads too — it is a read, and a
-        // read is exactly when the two surfaces must not print different modes.
-        approvals: async ctx => {
-          await runExec(ctx)
-          await syncApprovalModeForProfile(requestGateway, $activeGatewayProfile.get()).catch(() => undefined)
-        },
+        stop: runExec,
+        btw: runExec,
+        reasoning: runExec,
+        wake: runExec,
         // The SURFACE's own chat, exactly like every other handler here (see
         // `targetKey` above). `/branch` typed into a tile's composer forked the
         // MAIN pane's conversation and left the tile untouched (MJXHRM-388).
@@ -396,7 +378,7 @@ export function useSlashCommand() {
             durationMs: 0,
             id: noticeId,
             kind: 'info',
-            message: focusTopic ? copy.compress.workingOn(focusTopic) : copy.compress.working
+            message: focusTopic ? `compressing context for: ${focusTopic}` : 'compressing context...'
           })
 
           try {
@@ -417,7 +399,7 @@ export function useSlashCommand() {
               sessionId: recoveredId
             } = await withSessionNotFoundResume(
               sessionId,
-              $sessionStates.get()[key]?.storedSessionId ?? $activeStoredSessionId.get(),
+              $sessionKeyStates.get()[key]?.storedSessionId ?? $activeStoredSessionId.get(),
               live =>
                 requestGateway<SessionCompressResponse>(
                   'session.compress',
@@ -477,8 +459,7 @@ export function useSlashCommand() {
             const hostOutput = result?.host_ack?.output?.trim()
             const removed = result?.removed ?? 0
 
-            const message =
-              hostOutput || (removed > 0 ? copy.compress.removed(removed) : copy.compress.nothingToCompress)
+            const message = hostOutput || (removed > 0 ? `compressed ${removed} messages` : 'nothing to compress')
 
             renderSlashOutput(message)
             notify({ durationMs: 5_000, id: noticeId, kind: 'success', message })
@@ -717,14 +698,20 @@ export function useSlashCommand() {
         // description seeds the prompt so `/hatch a cyber fox` lands on the
         // composer step prefilled.
         hatch: async ({ arg }) => {
-          openPetGenerate(arg.trim())
+          const concept = arg.trim()
+
+          if (concept) {
+            $petGenInput.set(concept)
+          }
+
+          openPetGenerate()
         },
         pet: async ctx => {
           const [sub = '', rawValue = ''] = ctx.arg.trim().split(/\s+/)
           const lower = sub.toLowerCase()
 
           if (lower === 'list' || lower === 'gallery' || lower === 'browse' || lower === 'all') {
-            openAppRoute(PET_SETTINGS_ROUTE)
+            openCommandPalettePage('pets')
 
             return
           }
@@ -741,7 +728,7 @@ export function useSlashCommand() {
               return
             }
 
-            setPetScale(value)
+            setPetScale(requestGateway, value)
 
             return
           }
@@ -850,7 +837,7 @@ export function useSlashCommand() {
         const query = ctx.arg.trim()
 
         if (!query) {
-          setSessionPickerOpen(true)
+          openSessionPickerRoute(true)
 
           return
         }

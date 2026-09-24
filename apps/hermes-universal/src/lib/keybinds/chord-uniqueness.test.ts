@@ -28,10 +28,14 @@ beforeAll(async () => {
   // The bundled plugins register their contributions here — the whole reason
   // this file exists as a separate suite from `actions.test.ts`, which must stay
   // able to run without booting the plugin host.
+  //
+  // Under a full-suite run the dynamic import can take >10s of wall time while
+  // hundreds of files are still transforming; the default hookTimeout is too
+  // tight for that contention, not for the discovery work itself.
   const { discoverBundledPlugins } = await import('@/contrib/plugins')
 
   discoverBundledPlugins()
-})
+}, 60_000)
 
 /** A chord is the same chord however its modifiers were typed. */
 const canonical = (combo: string): string =>

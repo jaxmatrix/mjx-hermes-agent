@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router'
 
 interface DeepLinkHighlightOptions {
   param: string
@@ -10,13 +10,11 @@ interface DeepLinkHighlightOptions {
 }
 
 // react-router's useSearchParams throws with no router context. Inside Settings
-// (every original caller) there always is one, so behaviour is unchanged; when a
-// consumer is embedded OUTSIDE the router (McpTab in a plugin dialog, a settings
-// row rendered by a secondary-window shell) there is none, and this degrades to
-// an inert [empty params, no-op setter] instead of crashing. Router presence is
-// stable for a mounted instance's lifetime, so the try/catch never changes the
-// hook count between renders (rules-of-hooks safe). Restores the guard
-// apps/desktop has had since the original — universal's port dropped it.
+// (every original caller) there always is one, so behavior is unchanged; when a
+// consumer is embedded OUTSIDE the router (a plugin dialog) there
+// is none, and this degrades to an inert [empty params, no-op setter] instead of
+// crashing. Router presence is stable for a mounted instance's lifetime, so the
+// try/catch never changes the hook count between renders (rules-of-hooks safe).
 function useOptionalSearchParams(): ReturnType<typeof useSearchParams> {
   try {
     return useSearchParams()
@@ -64,8 +62,6 @@ export function useDeepLinkHighlight({
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block })
 
-        // Move the keyboard to the row as well as the eye: a deep link that only
-        // scrolls leaves Tab continuing from wherever the palette left off.
         if (!element.hasAttribute('tabindex')) {
           element.tabIndex = -1
         }

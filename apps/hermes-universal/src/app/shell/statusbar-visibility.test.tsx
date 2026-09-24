@@ -1,104 +1,165 @@
-/**
- * The bar's right-click menu: which items it lists, what it can switch off, and
- * the one door that survives hiding the bar itself.
- */
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
-import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
+import { StatusbarControls, type StatusbarItem } from '@/app/shell/statusbar-controls'
 import {
   $statusbarHiddenIds,
   $statusbarVisible,
-  setStatusbarItemVisible,
   STATUSBAR_HIDDEN_BY_DEFAULT,
   toggleStatusbarVisible
 } from '@/store/statusbar-prefs'
+import { stubMenuDomApis, stubResizeObserver } from '@/test/jsdom'
 
-import { StatusbarControls, type StatusbarItem } from './statusbar-controls'
+beforeAll(() => {
+  stubResizeObserver()
+  stubMenuDomApis()
+})
 
-const renderBar = (items: StatusbarItem[] = []) =>
+afterEach(() => {
+  cleanup()
+  $statusbarHiddenIds.set([...STATUSBAR_HIDDEN_BY_DEFAULT])
+  $statusbarVisible.set(true)
+})
+
+const item = (id: string, label: string, extra: Partial<StatusbarItem> = {}): StatusbarItem => ({
+  id,
+  label,
+  toggleLabel: label,
+  variant: 'action',
+  ...extra
+})
+
+function bar(items: StatusbarItem[]) {
   render(
     <MemoryRouter>
       <StatusbarControls items={items} />
     </MemoryRouter>
   )
 
-// Radix needs both to open a context menu in jsdom.
-const openContextMenu = (target: HTMLElement) => {
-  fireEvent.pointerDown(target, { button: 2, pointerType: 'mouse' })
+  return screen.getByRole('contentinfo')
+}
+
+/** Radix opens a ContextMenu on contextmenu after a pointerdown positions it. */
+function openContextMenu(target: HTMLElement) {
+  fireEvent.pointerDown(target, { button: 2, ctrlKey: false, pointerType: 'mouse' })
   fireEvent.contextMenu(target, { button: 2 })
 }
 
-// Start each case from "everything shown" so a default-hidden id (cron, the
-// timers) doesn't stand in for a user choice.
-beforeEach(() => {
-  $statusbarHiddenIds.set([])
+describe('statusbar item visibility', () => {
+  it('shows an item once the user enables it from the bar context menu', async () => {
+    const statusbar = bar([item('cron', 'Cron'), item('gateway-health', 'Gateway')])
+
+    expect(screen.queryByText('Cron')).toBeNull()
+
+    openContextMenu(statusbar)
+
+    const row = await screen.findByRole('menuitemcheckbox', { name: 'Cron' })
+    fireEvent.click(row)
+
+    expect($statusbarHiddenIds.get()).not.toContain('cron')
+    expect(within(statusbar).getByText('Cron')).toBeTruthy()
+  })
+
+  it('never lets the user hide a locked item (system icon / update pill)', async () => {
+    const statusbar = bar([item('command-center', 'Command Center', { lockedVisible: true })])
+
+    openContextMenu(statusbar)
+
+    const row = await screen.findByRole('menuitemcheckbox', { name: 'Command Center' })
+    expect(row.getAttribute('data-disabled')).not.toBeNull()
+    expect(row.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('leaves items that never opted into the menu alone', () => {
+    $statusbarHiddenIds.set(['plugin-thing'])
+    bar([{ id: 'plugin-thing', label: 'Plugin thing', variant: 'action' }])
+
+    expect(screen.getByText('Plugin thing')).toBeTruthy()
+  })
 })
 
-afterEach(() => {
-  $statusbarHiddenIds.set([...STATUSBAR_HIDDEN_BY_DEFAULT])
-  $statusbarVisible.set(true)
+describe('reset to defaults', () => {
+  it('puts a customized bar back to the shipped show/hide set', async () => {
+    $statusbarHiddenIds.set(['gateway-health'])
+
+    const statusbar = bar([item('cron', 'Cron'), item('gateway-health', 'Gateway')])
+
+    expect(screen.queryByText('Gateway')).toBeNull()
+    expect(within(statusbar).getByText('Cron')).toBeTruthy()
+
+    openContextMenu(statusbar)
+    fireEvent.click(await screen.findByRole('menuitem', { name: /reset to defaults/i }))
+
+    expect($statusbarHiddenIds.get()).toEqual([...STATUSBAR_HIDDEN_BY_DEFAULT])
+    expect(within(statusbar).getByText('Gateway')).toBeTruthy()
+    // Scoped to the bar: the menu stays open after a reset, so an unscoped query
+    // matches its still-listed 'Cron' checkbox row rather than a bar item.
+    expect(within(statusbar).queryByText('Cron')).toBeNull()
+  })
+
+  it('disables the row when the layout is already default', async () => {
+    const statusbar = bar([item('cron', 'Cron'), item('gateway-health', 'Gateway')])
+
+    openContextMenu(statusbar)
+
+    const row = await screen.findByRole('menuitem', { name: /reset to defaults/i })
+    expect(row.getAttribute('data-disabled')).not.toBeNull()
+  })
+
+  it('enables the row as soon as one item differs, in either direction', async () => {
+    const statusbar = bar([item('cron', 'Cron'), item('gateway-health', 'Gateway')])
+
+    // Showing a default-hidden item counts…
+    $statusbarHiddenIds.set(STATUSBAR_HIDDEN_BY_DEFAULT.filter(id => id !== 'cron'))
+    openContextMenu(statusbar)
+    expect(
+      (await screen.findByRole('menuitem', { name: /reset to defaults/i })).getAttribute('data-disabled')
+    ).toBeNull()
+
+    // …and so does hiding a default-shown one.
+    $statusbarHiddenIds.set([...STATUSBAR_HIDDEN_BY_DEFAULT, 'gateway-health'])
+    expect(
+      (await screen.findByRole('menuitem', { name: /reset to defaults/i })).getAttribute('data-disabled')
+    ).toBeNull()
+  })
+
+  it('leaves whole-bar visibility alone — reset is about items, not the bar', async () => {
+    // Set to the NON-default so a reset that wrongly restored bar visibility too
+    // would flip this back to true and fail. StatusbarControls doesn't read the
+    // atom (the controller gates the mount), so the menu is still reachable here.
+    $statusbarVisible.set(false)
+    $statusbarHiddenIds.set([])
+
+    const statusbar = bar([item('gateway-health', 'Gateway')])
+
+    openContextMenu(statusbar)
+    fireEvent.click(await screen.findByRole('menuitem', { name: /reset to defaults/i }))
+
+    expect($statusbarHiddenIds.get()).toEqual([...STATUSBAR_HIDDEN_BY_DEFAULT])
+    expect($statusbarVisible.get()).toBe(false)
+  })
 })
 
-describe('statusbar visibility', () => {
-  it('hides an item the user switched off, and shows it again', () => {
-    const items: StatusbarItem[] = [{ id: 'cron', label: 'Cron', toggleLabel: 'Cron', variant: 'action' }]
+describe('whole-bar visibility', () => {
+  it('hides the bar from the context menu, leaving the keybind as the way back', async () => {
+    const statusbar = bar([item('gateway-health', 'Gateway')])
 
-    const { rerender } = renderBar(items)
-
-    expect(screen.getByText('Cron')).toBeInTheDocument()
-
-    setStatusbarItemVisible('cron', false)
-    rerender(
-      <MemoryRouter>
-        <StatusbarControls items={items} />
-      </MemoryRouter>
-    )
-
-    expect(screen.queryByText('Cron')).not.toBeInTheDocument()
-  })
-
-  it('leaves an item with no toggleLabel alone — a plugin chip always shows', () => {
-    // Same id as a hidden-by-default one, but it never opted into the menu.
-    $statusbarHiddenIds.set(['plugin-chip'])
-    renderBar([{ id: 'plugin-chip', label: 'Chip', variant: 'action' }])
-
-    expect(screen.getByText('Chip')).toBeInTheDocument()
-  })
-
-  it('lists only opted-in items in the menu, and locks the ones that must stay', () => {
-    renderBar([
-      { id: 'cron', label: 'Cron', toggleLabel: 'Cron', variant: 'action' },
-      { id: 'version-client', label: 'v1', lockedVisible: true, toggleLabel: 'Version & updates', variant: 'action' },
-      { id: 'anon', label: 'Anon', variant: 'action' }
-    ])
-
-    openContextMenu(screen.getByRole('contentinfo'))
-
-    expect(screen.getByText('Version & updates')).toBeInTheDocument()
-    // Radix marks a disabled menu item with data-disabled, not the DOM property.
-    expect(screen.getByRole('menuitemcheckbox', { name: /Version & updates/ })).toHaveAttribute('data-disabled')
-    expect(screen.queryByRole('menuitemcheckbox', { name: /Anon/ })).not.toBeInTheDocument()
-  })
-
-  it('toggles the whole bar off and back on', () => {
-    expect($statusbarVisible.get()).toBe(true)
-
-    toggleStatusbarVisible()
+    openContextMenu(statusbar)
+    fireEvent.click(await screen.findByRole('menuitem', { name: /hide status bar/i }))
 
     expect($statusbarVisible.get()).toBe(false)
 
     toggleStatusbarVisible()
-
     expect($statusbarVisible.get()).toBe(true)
   })
 
-  it('keeps an emptied hidden set — turning everything on survives a reload', () => {
-    for (const id of STATUSBAR_HIDDEN_BY_DEFAULT) {
-      setStatusbarItemVisible(id, true)
-    }
+  it('offers the hide row even when no item opted into the show/hide list', async () => {
+    const statusbar = bar([{ id: 'plugin-thing', label: 'Plugin thing', variant: 'action' }])
 
-    expect($statusbarHiddenIds.get()).toEqual([])
+    openContextMenu(statusbar)
+
+    expect(await screen.findByRole('menuitem', { name: /hide status bar/i })).toBeTruthy()
+    expect(screen.queryByRole('menuitemcheckbox')).toBeNull()
   })
 })

@@ -1,60 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { $connection } from '@/store/connection'
 import { notify, notifyError } from '@/store/notifications'
-import { voiceInputGain } from '@/store/voice-prefs'
-import { voiceEngine } from '@/voice/engine'
-import { VoiceBusyError, voiceErrorMessage } from '@/voice/errors'
-import type { VoiceEvent, VoiceLease, VoiceTarget, VoiceVad } from '@/voice/types'
 
 import type { VoiceActivityState, VoiceStatus } from '../types'
+
+import { useMicRecorder } from './use-mic-recorder'
 
 interface VoiceRecorderOptions {
   maxRecordingSeconds: number
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   focusInput: () => void
   onTranscript: (text: string) => void
-}
-
-// Push-to-talk dictation on the shared voice engine (MJX-96). Press to open the
-// mic and record; press again (or hit the cap) to force the turn — Rust
-// transcribes and emits `transcript`, which we insert into the draft. Unlike the
-// conversation loop there is no auto-turn: VAD auto-end is disabled (a huge
-// silence window + a zero speech threshold that keeps every frame "voiced"), so
-// only an explicit `forceTurn` ends the take.
-//
-// The user's input GAIN still applies — it only scales the level, which is what
-// the recording pill's meter draws — but their input THRESHOLD deliberately does
-// not: push-to-talk ends when the button is pressed again, and threading a
-// threshold in here would hand dictation the auto-end it is defined not to have.
-function dictationVad(capSeconds: number, levelGain: number): VoiceVad {
-  return {
-    levelGain,
-    speechLevel: 0, // every frame counts as speech → records immediately, never auto-ends
-    onsetMs: 0,
-    minTurnMs: 0,
-    prerollMs: 0,
-    silenceMs: 3_600_000,
-    idleSilenceMs: 3_600_000,
-    maxTurnMs: capSeconds * 1_000
-  }
-}
-
-function currentTarget(): VoiceTarget | null {
-  const conn = $connection.get()
-
-  if (!conn) {
-    return null
-  }
-
-  const headers: Record<string, string> = {}
-
-  if (conn.token) {
-    headers['X-Hermes-Session-Token'] = conn.token
-  }
-
-  return { baseUrl: conn.baseUrl, headers }
 }
 
 export function useVoiceRecorder({
@@ -65,17 +22,12 @@ export function useVoiceRecorder({
 }: VoiceRecorderOptions) {
   const { t } = useI18n()
   const voiceCopy = t.notifications.voice
+  const { handle, level, recording } = useMicRecorder(voiceCopy)
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle')
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [level, setLevel] = useState(0)
-
-  const leaseRef = useRef<VoiceLease | null>(null)
   const startedAtRef = useRef(0)
   const intervalRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
-  // Live refs so the (stable) event handler reads current callbacks.
-  const cbRef = useRef({ focusInput, onTranscript, voiceCopy })
-  cbRef.current = { focusInput, onTranscript, voiceCopy }
 
   const clearTimers = () => {
     if (intervalRef.current) {
@@ -89,65 +41,39 @@ export function useVoiceRecorder({
     }
   }
 
-  const teardown = () => {
-    clearTimers()
-    const lease = leaseRef.current
-    leaseRef.current = null
+  useEffect(() => () => clearTimers(), [])
 
-    if (lease) {
-      void lease.close()
+  const stop = async () => {
+    clearTimers()
+    const result = await handle.stop()
+
+    if (!result) {
+      setVoiceStatus('idle')
+
+      return
     }
 
-    setLevel(0)
-    setVoiceStatus('idle')
-  }
+    if (!onTranscribeAudio) {
+      setVoiceStatus('idle')
 
-  // UNMOUNT only. `teardown` is deliberately omitted: it is redeclared every
-  // render, so depending on it would run this cleanup on every render — closing
-  // the microphone lease and resetting the recorder to idle mid-recording.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => () => teardown(), [])
+      return
+    }
 
-  const onEvent = (event: VoiceEvent) => {
-    const { focusInput, onTranscript, voiceCopy } = cbRef.current
+    setVoiceStatus('transcribing')
 
-    switch (event.type) {
-      case 'level':
-        setLevel(event.level)
+    try {
+      const transcript = (await onTranscribeAudio(result.audio)).trim()
 
-        break
-
-      case 'state':
-        if (event.state === 'finalizing') {
-          setVoiceStatus('transcribing')
-        }
-
-        break
-      case 'transcript': {
-        const transcript = event.text.trim()
-
-        if (transcript) {
-          onTranscript(transcript)
-        }
-
-        teardown()
-        focusInput()
-
-        break
-      }
-
-      case 'turnEmpty':
+      if (!transcript) {
         notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
-        teardown()
-        focusInput()
-
-        break
-
-      case 'error':
-        notifyError(new Error(event.message || event.code), voiceErrorMessage(event.code, voiceCopy))
-        teardown()
-
-        break
+      } else {
+        onTranscript(transcript)
+      }
+    } catch (error) {
+      notifyError(error, voiceCopy.transcriptionFailed)
+    } finally {
+      setVoiceStatus('idle')
+      focusInput()
     }
   }
 
@@ -158,55 +84,22 @@ export function useVoiceRecorder({
       return
     }
 
-    const target = currentTarget()
-
-    if (!target) {
-      notifyError(new Error('not connected'), voiceCopy.recordingFailed)
-
-      return
-    }
-
-    const cap = Math.max(1, Math.min(Math.trunc(maxRecordingSeconds), 600))
-
     try {
-      const lease = await voiceEngine.open('dictation', { target, vad: dictationVad(cap, voiceInputGain()) })
-      leaseRef.current = lease
-      lease.on(onEvent)
-      await lease.arm('normal')
-
+      await handle.start({ onError: error => notifyError(error, voiceCopy.recordingFailed) })
       startedAtRef.current = Date.now()
       setElapsedSeconds(0)
       setVoiceStatus('recording')
       intervalRef.current = window.setInterval(() => setElapsedSeconds((Date.now() - startedAtRef.current) / 1000), 250)
-      timeoutRef.current = window.setTimeout(() => void stop(), cap * 1_000)
+      const cap = Math.max(1, Math.min(Math.trunc(maxRecordingSeconds), 600))
+      timeoutRef.current = window.setTimeout(() => void stop(), cap * 1000)
     } catch (error) {
-      leaseRef.current = null
       setVoiceStatus('idle')
-
-      if (error instanceof VoiceBusyError) {
-        notify({ kind: 'warning', title: voiceCopy.unavailable, message: voiceCopy.microphoneInUse })
-      } else {
-        notifyError(error, voiceErrorMessage(error instanceof Error ? error.message : '', voiceCopy))
-      }
+      notifyError(error, voiceCopy.recordingFailed)
     }
-  }
-
-  // Release: end the take. `forceTurn` finalizes → the transcript event tears down.
-  const stop = async () => {
-    clearTimers()
-    const lease = leaseRef.current
-
-    if (!lease) {
-      setVoiceStatus('idle')
-
-      return
-    }
-
-    await lease.forceTurn().catch(() => undefined)
   }
 
   const dictate = () => {
-    if (voiceStatus === 'recording') {
+    if (recording) {
       void stop()
     } else if (voiceStatus === 'idle') {
       void start()

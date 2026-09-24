@@ -5,6 +5,7 @@ import { getTerminalBackends, selectTerminalBackend } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { AlertTriangle, Check, Loader2, RefreshCw } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 import type { TerminalBackendInfo, TerminalBackendsResponse } from '@/types/hermes'
 
@@ -42,8 +43,10 @@ function StatusPill({ backend }: { backend: TerminalBackendInfo }) {
  * `terminal.backend` config enum. Each backend row carries a live health probe
  * (Docker daemon reachable, SSH host configured, Modal/Daytona credentials
  * present) so users see Ready / Needs-setup guidance instead of a bare
- * dropdown. Selecting a needs-setup backend is allowed — the row shows what's
- * missing rather than blocking, matching the CLI configurator.
+ * dropdown. Selecting a needs-setup backend is still allowed (matching the CLI
+ * configurator) but goes through a confirm step first: the write persists
+ * immediately and every later session inherits a backend with no terminal or
+ * file tools, so one ambient click must not do that silently.
  */
 export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPanelProps) {
   const { t } = useI18n()
@@ -76,19 +79,33 @@ export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPane
     setSelecting(backend.name)
 
     try {
-      await selectTerminalBackend(backend.name)
-      // Re-read rather than mirror the write: `terminal.backend` is pinned into
-      // TERMINAL_ENV at gateway startup, so a selection made now may not be what
-      // the process is actually running. Only the server can say which it is —
-      // optimistically marking the row active is how the panel used to lie.
-      const fresh = await getTerminalBackends()
+      if (backend.status === 'needs_setup') {
+        const proceed = await confirm({
+          title: copy.needsSetupConfirmTitle(backend.label),
+          description: backend.detail
+            ? copy.needsSetupConfirmDescription(backend.detail)
+            : copy.needsSetupConfirmDescriptionGeneric,
+          confirmLabel: copy.needsSetupConfirmAction
+        })
 
-      setData(fresh)
-      notify({
-        kind: 'success',
-        message: fresh.restart_required ? copy.restartHint(backend.label) : copy.selectedMessage(backend.label),
-        title: copy.selectedTitle
-      })
+        if (!proceed) {
+          return
+        }
+      }
+
+      await selectTerminalBackend(backend.name)
+      // Mirror the backend write locally so the active highlight tracks the
+      // new selection without a refetch (probes are unchanged by a select).
+      setData(current =>
+        current
+          ? {
+              ...current,
+              active: backend.name,
+              backends: current.backends.map(b => ({ ...b, active: b.name === backend.name }))
+            }
+          : current
+      )
+      notify({ kind: 'success', title: copy.selectedTitle, message: copy.selectedMessage(backend.label) })
       onConfiguredChange?.()
     } catch (err) {
       notifyError(err, copy.failedSelect(backend.label))
@@ -118,16 +135,6 @@ export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPane
           <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
         </Button>
       </div>
-      <p className="px-0.5 text-[0.68rem] text-muted-foreground">{copy.sandboxHint}</p>
-      {/* The saved selection is not what the gateway is running. Say so at the
-          section level, not just on the row, because the user's mental model
-          after clicking is "done" — and it isn't until a restart. */}
-      {data.restart_required && data.configured && (
-        <p className="flex items-start gap-1 px-0.5 text-[0.68rem] text-(--ui-yellow)">
-          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-          {copy.restartBanner(data.configured, data.active)}
-        </p>
-      )}
       <div className="grid gap-1">
         {data.backends.map(backend => (
           <button
@@ -152,18 +159,11 @@ export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPane
                   {copy.inUse}
                 </Pill>
               )}
-              {/* Chosen in config, but the process is still on something else. */}
-              {backend.pending && (
-                <Pill tone="muted">
-                  <AlertTriangle className="size-3" />
-                  {copy.restartRequired}
-                </Pill>
-              )}
               {selecting === backend.name && <Loader2 className="size-3 animate-spin" />}
             </span>
             <span className="text-[0.68rem] text-muted-foreground">{backend.description}</span>
             {backend.status !== 'ready' && backend.detail && (
-              <span className="flex items-start gap-1 text-[0.68rem] text-(--ui-yellow)">
+              <span className="flex items-start gap-1 text-[0.68rem] text-amber-600 dark:text-amber-300">
                 <AlertTriangle className="mt-0.5 size-3 shrink-0" />
                 {backend.detail}
                 {backend.active && ` ${copy.needsSetupHint}`}

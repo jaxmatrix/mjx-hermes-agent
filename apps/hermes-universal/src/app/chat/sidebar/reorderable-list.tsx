@@ -1,60 +1,36 @@
-import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors
-} from '@dnd-kit/core'
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy
-} from '@dnd-kit/sortable'
+import type { useSensors } from '@dnd-kit/core'
+import { closestCenter, DndContext, type DragEndEvent } from '@dnd-kit/core'
+import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type * as React from 'react'
 
-import { TAP_SLOP_PX } from '@/lib/touch'
-
-// Sidebar reordering is a strictly vertical list. Ported verbatim from desktop
-// `app/chat/sidebar/reorderable-list.tsx`.
+// Sidebar reordering is a strictly vertical list. The dragged item's transform
+// is rendered Y-only in useSortableBindings (no x, no scale); this just stops
+// dnd-kit's auto-scroll from dragging the rail — or the window — sideways when
+// the pointer nears an edge, killing the horizontal "drag to valhalla".
 const reorderAutoScroll = { threshold: { x: 0, y: 0.2 } }
 
-// MODULE-LEVEL, and load-bearing (MJXHRM-383). `useSensor` memoizes on
-// `[sensor, options]`, `useSensors` on the descriptors it is handed, and
-// `useDraggable` derives its synthetic `listeners` from that array. Built as
-// fresh object literals inside the component, every render of this list minted a
-// new sensor array → a new DndContext value → a NEW `onPointerDown` for every
-// row. That lands in `dragHandleProps`, which `rowPropsEqual` compares, so
-// `SidebarSessionRow`'s memo could never bail in the sortable path — which is
-// the default Recents list and the Pinned list. Rows repainted on every write to
-// any of the ~30 stores `sidebar-content` subscribes to, no matter how stable
-// the handlers above them were.
-const reorderPointerSensorOptions = { activationConstraint: { distance: TAP_SLOP_PX } }
-const reorderKeyboardSensorOptions = { coordinateGetter: sortableKeyboardCoordinates }
-
+// One self-contained, nesting-safe reorderable list. It owns its DndContext, so a
+// drag only ever collides with THIS list's own items — drop it at any depth (repos,
+// worktrees, sessions) and reordering "just works" without leaking into the lists
+// around or inside it. Pair each item with useSortableBindings(id); the list reports
+// the new id order and the caller persists it. This is the single generic primitive
+// behind every reorderable surface in the sidebar.
 export function ReorderableList({
   children,
   ids,
-  onReorder
+  onReorder,
+  sensors
 }: {
   children: React.ReactNode
   ids: string[]
   onReorder: (ids: string[]) => void
+  sensors?: ReturnType<typeof useSensors>
 }) {
-  // dnd-kit's DEFAULT PointerSensor has no activation constraint: the first
-  // pointermove starts a reorder. That is survivable with a mouse and not with a
-  // thumb — and the grab handle is `touch-none`, so a touch landing on it could
-  // neither scroll the list nor stay a tap. This used to take a `sensors` prop
-  // threaded down from `sessions-section`, which nothing ever passed.
-  const sensors = useSensors(
-    useSensor(PointerSensor, reorderPointerSensorOptions),
-    useSensor(KeyboardSensor, reorderKeyboardSensorOptions)
-  )
-
   const handleDragEnd = ({ activatorEvent, active, over }: DragEndEvent) => {
+    // dnd-kit only restores focus for keyboard drags; after a pointer drop the
+    // browser leaves :focus on the grab handle, which keeps a focus-within
+    // grabber/affordance reveal stuck "on". Drop that focus so the row returns
+    // to its resting state once the pointer moves away.
     if (!(activatorEvent instanceof KeyboardEvent)) {
       ;(document.activeElement as HTMLElement | null)?.blur()
     }
@@ -87,17 +63,44 @@ export function ReorderableList({
 
 export function useSortableBindings(id: string) {
   const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({ id })
+  // The FULL handle (role/tabIndex + dnd-kit's keyboard and pointer
+  // activators) belongs on the grabber only. Row shells forward just
+  // `onPointerDown` from it: a keyboard activator on a container makes every
+  // focused descendant control (the ⋯ menu button) arm a drag on Space, and
+  // an armed KeyboardSensor then eats Space/Enter window-wide — the rename
+  // dialog swallowed spaces (#83617).
+  const dragHandleProps: React.HTMLAttributes<HTMLElement> = { ...attributes, ...listeners }
 
   return {
     dragging: isDragging,
-    dragHandleProps: { ...attributes, ...listeners },
+    dragHandleProps,
     ref: setNodeRef,
     reorderable: true as const,
     style: {
-      // Uniform vertical list: only ever translate on Y.
+      // Uniform vertical list: only ever translate on Y. Ignoring x and the
+      // scaleX/scaleY that CSS.Transform.toString would emit keeps a dragged
+      // group/row from drifting sideways or morphing its size mid-drag.
       transform: transform ? `translate3d(0px, ${transform.y}px, 0)` : undefined,
       transition: isDragging ? undefined : transition,
       willChange: isDragging ? 'transform' : undefined
     }
   }
+}
+
+/**
+ * A row shell owns the presses that STARTED inside its own DOM, and nothing
+ * else. React re-dispatches an event fired in a PORTAL along the REACT tree,
+ * so a pointerdown on a dialog's input — `DialogContent` portals into `<body>`
+ * — still arrives at the row shell that rendered the dialog, carrying a
+ * `target` outside the row. Those presses belong to the dialog: selecting a
+ * session title in the rename input must not arm a reorder or lift the row onto
+ * the shared drag session (the pointer-side sibling of the Space leak #83617
+ * fixed on the keyboard side). Gate the shell's own `onPointerDown` with this
+ * BEFORE its `[data-reorder-handle], [data-row-actions]` exclusion — that
+ * selector walks the DOM, where a portal's content has neither marker.
+ */
+export function shellOwnsPress(event: React.PointerEvent<HTMLElement>) {
+  const target = event.target
+
+  return target instanceof Node && event.currentTarget.contains(target)
 }

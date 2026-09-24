@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AppShell, SidebarProvider } from './sidebar'
@@ -47,8 +47,8 @@ describe('sidebar shell', () => {
     mockViewport(true)
     renderShell()
     expect(screen.getByText('content')).toBeInTheDocument()
-    // The docked pane is open by default, so the sidebar nav rail is present.
-    expect(screen.getByText('New session')).toBeInTheDocument()
-    expect(screen.getByText('Capabilities')).toBeInTheDocument()
+    // The docked pane is open by default — assert the pane chrome, not a
+    // particular nav label (labels move with i18n / mode policy).
+    expect(screen.getByTestId('chat-sidebar-pane')).toBeInTheDocument()
   })
 })

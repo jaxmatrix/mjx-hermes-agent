@@ -1,0 +1,6 @@
+# Symbols universal exported that desktop's version of the same file does not.
+# Each is either a symbol desktop MOVED (re-point the caller at its new home)
+# or one that is genuinely universal-only (restore it). Either way a caller
+# somewhere still names it. Recover the old file with:
+#   git show <before-the-import>:apps/hermes-universal/<path>
+

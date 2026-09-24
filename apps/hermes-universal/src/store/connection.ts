@@ -1,4 +1,5 @@
 import { GatewaySignInBusyError, GatewaySignInRequiredError, isGatewayReauthRequired } from '@/gateway'
+import { translateNow } from '@/i18n/runtime'
 import {
   fetchAuthProviders,
   oauthLogin,
@@ -41,7 +42,7 @@ import {
   type StatusInfo
 } from '@/store/connection-atoms'
 import { isLatched, latchBackendFailure, releaseLatch } from '@/store/connection-latches'
-import { $gatewayState, closeGateway, connectGateway, lastGatewayCloseCode } from '@/store/gateway'
+import { $gatewayState, closeGateway, connectGateway, lastGatewayCloseCode } from '@/store/gateway-client'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
 import {
   clearGatewayTarget,
@@ -56,13 +57,16 @@ import { getInstallationId } from '@/store/installation-id'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import {
   $sshStep,
+  attachSshPrompts,
   cancelSsh,
   connectSshBackend,
   disconnectSsh,
+  isQuietSshError,
   newAttemptId,
   onSshDisconnected,
   onSshProgress,
-  type SshConnectConfig
+  type SshConnectConfig,
+  sshScopeOf
 } from '@/store/ssh-backend'
 import { httpRequest } from '@/transport/http'
 
@@ -106,12 +110,16 @@ export interface ConnectInput {
    * **Defaults to false, and that default is the point.** An interactive sign-in
    * is a one-way door on mobile — it navigates the app's only webview away — and
    * an unrequested window on desktop. It must only ever happen because a person
-   * pressed something, so the single caller that passes `true` is the gateway
-   * configurator's connect button. Everything else (boot restore, the reconnect
-   * supervisor, a peer's gateway-switch broadcast) leaves it false and gets a
-   * {@link GatewaySignInRequiredError} it can surface as a CTA instead.
+   * pressed something: `selectConnection` passes `true` for a click (its own
+   * default, desktop's contract) and `false` for anything else. Every other
+   * caller (boot restore, the reconnect supervisor, a post-sign-in resume)
+   * leaves it false and gets a {@link GatewaySignInRequiredError} it can surface
+   * as a CTA instead.
    */
   allowInteractive?: boolean
+  /** The registry row being signed in to. Parked in the mobile resume marker,
+   *  so the post-reload boot lands on it (see `beginOAuthLogin`). */
+  connectionId?: string
 }
 
 // Non-secret conveniences live in localStorage for a synchronous prefill; the
@@ -120,6 +128,8 @@ const URL_KEY = 'hermes.url'
 const USER_KEY = 'hermes.username'
 
 export const lastUrl = (): string => loadString(URL_KEY)
+/** The connect form's prefill for next time. Non-secret. */
+export const rememberLastUrl = (url: string): void => saveString(URL_KEY, url.trim())
 export const lastUsername = (): string => loadString(USER_KEY)
 
 /** Read the saved token/password from the keyring (silent; null if none). */
@@ -182,7 +192,12 @@ export async function probeStatus(rawUrl: string): Promise<StatusInfo> {
  * Both mobile flows navigate away — the RFC 8252 one to `/auth/native/authorize`, the
  * cookie cascade to `/auth/login` — so the marker is right for either.
  */
-async function beginOAuthLogin(base: string, provider?: string, username?: string): Promise<void> {
+async function beginOAuthLogin(
+  base: string,
+  provider?: string,
+  username?: string,
+  connectionId?: string
+): Promise<void> {
   if (!IS_NATIVE_MOBILE) {
     const outcome = await oauthLogin(base, provider)
 
@@ -193,11 +208,11 @@ async function beginOAuthLogin(base: string, provider?: string, username?: strin
     return
   }
 
-  // The marker carries the SOURCE (MJXHRM-446). The navigation destroys this JS
-  // context, so without an id the post-reload resume can only guess which
-  // gateway it just signed into — and on a multi-source install a guess means
-  // coming back on the wrong machine.
-  savePendingOAuth({ base, connectionId: $activeConnection.get()?.connectionId, provider, username })
+  // The marker carries the SOURCE being signed in to (MJXHRM-446). The
+  // navigation destroys this JS context, so without an id the post-reload
+  // resume can only guess which gateway it just signed into — and on a
+  // multi-source install a guess means coming back on the wrong machine.
+  savePendingOAuth({ base, connectionId, provider, username })
 
   let outcome: SignInOutcome
 
@@ -242,14 +257,95 @@ function unknownOauthStatus(): OauthStatus {
  * retryable — a missing credential does not come back on its own, so spinning on
  * it only delays the CTA the user actually needs.
  */
-function requireInteractive(input: ConnectInput, base: string): void {
+function requireInteractive(input: ConnectInput): void {
   if (input.allowInteractive) {
     return
   }
 
-  throw new GatewaySignInRequiredError(`Sign in to ${base} to continue`)
+  // Copy, never the base: this message reaches a toast (`notifyError`).
+  throw new GatewaySignInRequiredError(translateNow('settings.connections.tunnelSignInMessage'))
 }
 
+/** How `input`'s gateway authenticates, with a session held for it. */
+async function negotiate(input: ConnectInput): Promise<{ conn: Connection; provider?: string }> {
+  const base = normalizeBaseUrl(input.url)
+  const status = await probeStatus(base)
+
+  $status.set(status)
+
+  if (!status.auth_required) {
+    const token = input.token?.trim()
+
+    return {
+      conn: token
+        ? { baseUrl: base, mode: 'remote', authMode: 'token', token }
+        : { baseUrl: base, mode: 'remote', authMode: 'none' }
+    }
+  }
+
+  // Gated: pick the concrete path from the advertised providers. Password
+  // login (→ ticket) wins only when the operator supplied credentials AND a
+  // provider supports it; otherwise the interactive OAuth path.
+  const providers = await fetchAuthProviders(base)
+  const choice = chooseGatedAuth(providers, Boolean(input.username && input.password))
+
+  if (choice.authMode === 'ticket') {
+    if (!input.username || !input.password) {
+      throw new Error('This backend requires a username and password')
+    }
+
+    // password-login sets the session cookie in Rust; the WS authorizes with
+    // a per-dial ?ticket=.
+    await passwordLogin(base, input.username, input.password, choice.provider)
+
+    return { conn: { baseUrl: base, mode: 'remote', authMode: 'ticket' } }
+  }
+
+  // Reuse a still-live session (e.g. a restored cookie jar, R2b) rather than
+  // forcing an interactive sign-in; only open the webview when signed out.
+  const live = await oauthStatus(base).catch(() => unknownOauthStatus())
+
+  // "Could not tell" is not "signed out". A gateway we cannot reach says
+  // nothing about the credential we hold, and treating it as signed out is
+  // what sent users with perfectly good sessions to a login page whenever
+  // the network wobbled. Fail as a network fault so the caller's retry
+  // ladder handles it.
+  // Not `live.error`: that is Rust's text, which names the host, and this
+  // message reaches a toast through `selectConnection`'s preflight.
+  if (oauthStatusIsUnknown(live)) {
+    throw new Error(translateNow('settings.connections.verdict', 'unreachable'))
+  }
+
+  if (!live.signedIn) {
+    requireInteractive(input)
+    // On mobile this navigates the app away and never returns here — the reload
+    // resumes via the pending marker (see beginOAuthLogin / restoreLaunchConnection).
+    await beginOAuthLogin(base, choice.provider, input.username, input.connectionId)
+  }
+
+  return { conn: { baseUrl: base, mode: 'remote', authMode: 'oauth' }, provider: choice.provider }
+}
+
+/**
+ * The preflight of a switch onto a URL (MJXHRM-602): learn how the gateway
+ * authenticates and hold a session for it, publishing and dialling nothing — a
+ * failure leaves whatever the window is on untouched. The descriptor carries no
+ * ticket: the gateway socket mints its own per dial.
+ */
+export async function authenticate(input: ConnectInput): Promise<Connection> {
+  return (await negotiate(input)).conn
+}
+
+/**
+ * A person's connect just landed: its session is theirs to keep. Undoes a
+ * sign-out's persistence latch, then snapshots the jar. No-op in token/none mode.
+ */
+export async function keepSession(): Promise<void> {
+  resumeSessionCookiePersistence()
+  await persistSessionCookies()
+}
+
+/** LEGACY (retires in MJXHRM-602 F4): authenticate, publish, then dial `gateway-client`. */
 export async function connect(input: ConnectInput): Promise<void> {
   const base = normalizeBaseUrl(input.url)
   // Taken SYNCHRONOUSLY, before the first await. The hint is one-shot and
@@ -263,58 +359,7 @@ export async function connect(input: ConnectInput): Promise<void> {
   $connectionPhase.set('probing')
 
   try {
-    const status = await probeStatus(base)
-    $status.set(status)
-
-    let conn: Connection
-    let oauthProvider: string | undefined
-
-    if (status.auth_required) {
-      // Gated: pick the concrete path from the advertised providers. Password
-      // login (→ ticket) wins only when the operator supplied credentials AND a
-      // provider supports it; otherwise the interactive OAuth path.
-      $connectionPhase.set('connecting')
-      const providers = await fetchAuthProviders(base)
-      const choice = chooseGatedAuth(providers, Boolean(input.username && input.password))
-
-      if (choice.authMode === 'ticket') {
-        if (!input.username || !input.password) {
-          throw new Error('This backend requires a username and password')
-        }
-
-        // password-login sets the session cookie in Rust; the WS authorizes with
-        // a per-connect ?ticket= (built in connectGateway).
-        await passwordLogin(base, input.username, input.password, choice.provider)
-        conn = { baseUrl: base, mode: 'remote', authMode: 'ticket' }
-      } else {
-        oauthProvider = choice.provider
-        // Reuse a still-live session (e.g. a restored cookie jar, R2b) rather than
-        // forcing an interactive sign-in; only open the webview when signed out.
-        const live = await oauthStatus(base).catch(() => unknownOauthStatus())
-
-        // "Could not tell" is not "signed out". A gateway we cannot reach says
-        // nothing about the credential we hold, and treating it as signed out is
-        // what sent users with perfectly good sessions to a login page whenever
-        // the network wobbled. Fail as a network fault so the caller's retry
-        // ladder handles it.
-        if (oauthStatusIsUnknown(live)) {
-          throw new Error(live.error || 'Could not reach the gateway')
-        }
-
-        if (!live.signedIn) {
-          requireInteractive(input, base)
-          // On mobile this navigates the app away and never returns here — the reload
-          // resumes via the pending marker (see beginOAuthLogin / autoRestoreConnection).
-          await beginOAuthLogin(base, oauthProvider, input.username)
-        }
-
-        conn = { baseUrl: base, mode: 'remote', authMode: 'oauth' }
-      }
-    } else if (input.token && input.token.trim()) {
-      conn = { baseUrl: base, mode: 'remote', authMode: 'token', token: input.token.trim() }
-    } else {
-      conn = { baseUrl: base, mode: 'remote', authMode: 'none' }
-    }
+    const { conn, provider: oauthProvider } = await negotiate(input)
 
     // ONE notification: the descriptor, its profile and its identity land
     // together, so nothing can fire REST at the new base under the old source's
@@ -330,7 +375,7 @@ export async function connect(input: ConnectInput): Promise<void> {
       // honours `allowInteractive` too: the expiry is real either way, but only a
       // user-driven connect may answer it by opening a login page.
       if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
-        requireInteractive(input, base)
+        requireInteractive(input)
         await beginOAuthLogin(base, oauthProvider, input.username)
         await dial(conn)
       } else {
@@ -440,6 +485,9 @@ export async function connectSsh(
   // screen during a boot restore, and the tunnel re-bootstrap. Subscribed before
   // the invoke so no step is missed.
   const unlistenProgress = await onSshProgress(attemptId, progress => $sshStep.set(progress.step)).catch(() => null)
+  // A dial that may ask gets its questions on screen: attached before the invoke,
+  // because Rust can ask during the very first auth exchange.
+  const detachPrompts = options.interactive ? await attachSshPrompts(attemptId).catch(() => null) : null
 
   try {
     // Secrets come from the keyring, never from the saved target.
@@ -473,7 +521,8 @@ export async function connectSsh(
       profile,
       remoteHost: backend.hostLabel,
       // Stable across re-tunnels, unlike baseUrl — see connectionCacheKey.
-      remoteIdentity: backend.ownershipId
+      remoteIdentity: backend.ownershipId,
+      sshScope: backend.scope
     }
 
     publishActiveConnection(describeConnection(conn, hint))
@@ -492,8 +541,22 @@ export async function connectSsh(
     }
 
     saveGatewayTarget({ connectionId: activeConnectionId(), mode: 'ssh', profile, ssh: target })
-    await watchSshTunnel(profile, hint?.dialConnectionId ?? null)
+    // The scope Rust dialled, not one derived here from the profile: one backend
+    // serves every profile of a connection. An older core keyed it per profile.
+    await watchSshTunnel(backend.scope ?? sshScopeOf(hint?.dialConnectionId ?? null, profile))
   } catch (err) {
+    // The QUIET flag: the row was retargeted mid-dial, so a NEWER primary
+    // attempt owns this connection and is publishing its own result
+    // (MJXHRM-592). Tearing down here would release the primary hold under that
+    // attempt and cancel its dial, so this one only reports upwards.
+    //
+    // The flag, never the kind: Rust mints `superseded` for a failure that IS
+    // this caller's own (a newer dial won the install race), and skipping the
+    // teardown for that one latched the primary hold with no owner here.
+    if (isQuietSshError(err)) {
+      throw err
+    }
+
     // Drop the tunnel so a failed connect does not leave one open. The remote
     // backend is deliberately left alone — Rust already reaped it if the failure
     // was its own.
@@ -504,6 +567,7 @@ export async function connectSsh(
     throw err
   } finally {
     unlistenProgress?.()
+    detachPrompts?.()
     $sshStep.set(null)
 
     if (activeSshAttempt === attemptId) {
@@ -673,23 +737,19 @@ export async function signOut(): Promise<void> {
 
 let sshWatcher: null | (() => void) = null
 
-async function watchSshTunnel(profile: null | string, connectionId: null | string): Promise<void> {
+async function watchSshTunnel(scope: string): Promise<void> {
   sshWatcher?.()
   sshWatcher = null
 
-  const unlisten = await onSshDisconnected(
-    profile,
-    () => {
-      // A deliberate disconnect does not emit this, but the user may have torn the
-      // connection down between the event firing and it arriving.
-      if (intentionalClose || $connection.get()?.mode !== 'ssh') {
-        return
-      }
+  const unlisten = await onSshDisconnected(scope, () => {
+    // A deliberate disconnect does not emit this, but the user may have torn the
+    // connection down between the event firing and it arriving.
+    if (intentionalClose || $connection.get()?.mode !== 'ssh') {
+      return
+    }
 
-      void rebootstrapSsh()
-    },
-    connectionId
-  ).catch(() => null)
+    void rebootstrapSsh()
+  }).catch(() => null)
 
   if (unlisten) {
     sshWatcher = unlisten
@@ -753,7 +813,9 @@ async function rebootstrapSsh(): Promise<void> {
     await connectSsh({ ...ssh, profile }, { interactive: false })
   } catch {
     // connectSsh already set $connectionError + phase; the connecting screen
-    // surfaces it and the ordinary supervisor keeps retrying the socket.
+    // surfaces it and the ordinary supervisor keeps retrying the socket. Except
+    // for a rejection carrying the QUIET flag: a newer primary attempt owns the
+    // connection and publishes its own result, so there is nothing to surface.
   } finally {
     rebootstrapping = false
   }

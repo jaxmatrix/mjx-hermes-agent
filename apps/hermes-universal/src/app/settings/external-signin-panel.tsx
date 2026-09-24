@@ -1,11 +1,11 @@
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { writeClipboardText } from '@/components/ui/copy-button'
 import { useI18n } from '@/i18n'
-import { writeClipboardText } from '@/lib/clipboard'
 import { openExternalLink } from '@/lib/external-link'
 import { Loader2 } from '@/lib/icons'
-import { recheckExternalSignin } from '@/store/onboarding'
+import { type OnboardingContext, recheckExternalSignin } from '@/store/onboarding'
 import type { OAuthProvider } from '@/types/hermes'
 
 import { providerTitle } from './oauth-provider-display'
@@ -69,14 +69,22 @@ export function ExternalDocsButton({ className, provider }: { className?: string
 }
 
 /** "I've signed in" — re-lists providers and advances when the CLI creds landed. */
-export function ExternalRecheckButton({ className, rechecking }: { className?: string; rechecking: boolean }) {
+export function ExternalRecheckButton({
+  className,
+  ctx,
+  rechecking
+}: {
+  className?: string
+  ctx: OnboardingContext
+  rechecking: boolean
+}) {
   const { t } = useI18n()
 
   return (
     <Button
       className={className}
       disabled={rechecking}
-      onClick={() => void recheckExternalSignin()}
+      onClick={() => void recheckExternalSignin(ctx)}
       size="sm"
       type="button"
     >

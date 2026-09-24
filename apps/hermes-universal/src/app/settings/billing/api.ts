@@ -1,6 +1,6 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useMemo } from 'react'
 
-import { requestGateway } from '@/store/gateway'
+import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
 
 import type {
   BillingChargeResponse,
@@ -37,13 +37,11 @@ export interface UpdateAutoReloadInput {
   threshold_usd?: string
 }
 
-// Universal's gateway seam takes no AbortSignal (desktop's did), and nothing in
-// billing ever passed one — the type stops at `timeoutMs` rather than
-// advertising a cancellation this transport cannot honor.
 export type BillingRequestGateway = <T>(
   method: string,
   params?: Record<string, unknown>,
-  timeoutMs?: number
+  timeoutMs?: number,
+  signal?: AbortSignal
 ) => Promise<T>
 
 export interface BillingApi {
@@ -186,11 +184,10 @@ const BillingApiContext = createContext<BillingApi | null>(null)
 
 export const BillingApiProvider = BillingApiContext.Provider
 
-// Universal's `requestGateway` is a stable module-level function (desktop's came
-// from a hook and was re-created per render), so the real api is built once here
-// rather than memoized inside the hook.
-const realBillingApi = createBillingApi(requestGateway)
-
 export function useBillingApi(): BillingApi {
-  return useContext(BillingApiContext) ?? realBillingApi
+  const override = useContext(BillingApiContext)
+  const { requestGateway } = useGatewayRequest()
+  const real = useMemo(() => createBillingApi(requestGateway), [requestGateway])
+
+  return override ?? real
 }

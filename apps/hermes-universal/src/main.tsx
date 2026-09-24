@@ -1,280 +1,132 @@
-import 'katex/dist/katex.min.css'
-import '@vscode/codicons/dist/codicon.css'
+// MUST stay first: `store/session-states` (pulled in by `./store/active-work`)
+// reads its persisted tabs at module evaluation, and this moves them there.
+import './store/persisted-tiles-migration'
+// Second, where Electron's preload would have run: the side-effect stores below
+// reach `window.hermesDesktop` while they evaluate, and imports evaluate before
+// this module's body does.
+import './lib/hermes-desktop/install'
 import './styles.css'
-// Dev-only render counter. MUST precede the `react-dom` import below: react-dom
-// captures the devtools hook at module init, so bippy has to install during THIS
-// import's evaluation or every commit goes unseen. `vite.config.ts` aliases this
-// specifier to a no-op module for non-dev builds, so neither the counter nor
-// bippy reaches a shipped renderer.
+// Side-effect: reports in-flight turns to the main process for the quit guard.
+import './store/active-work'
+// Side-effect: mirrors the machine's AC/battery state for poll demotion.
+import './store/power'
+// Side-effect: applies the persisted window translucency on load.
+import './store/translucency'
+// Side-effect: applies the persisted user-bubble transparency on load.
+import './store/user-bubble-transparency'
+// Dev-only render/state churn counters. MUST precede the `react-dom` import
+// below: react-dom captures the devtools hook at module init, so bippy has to
+// install during THIS import's evaluation or every commit goes unseen
+// (verified — a late install reports renderers=0, commits=0). `vite.config.ts`
+// aliases this specifier to a no-op module for non-dev builds, so neither the
+// counters nor bippy reach a shipped renderer.
 import '@/debug/dev-only'
-// Side-effect import: the hermes-media:// scheme handler lives in Rust and can't
-// read the connection store, so this subscription pushes the gateway target in.
-import './lib/media-stream'
-// Side-effect import: the gateway event router must be listening before any
-// connection is opened below. It self-registers, so this import IS the wiring.
-import './store/event-router'
-// Likewise: every WebView must be listening for another WebView's gateway switch
-// before it dials, or it keeps serving the gateway the user just moved off.
-import './store/gateway-switch-sync'
-// Likewise again: `preview.read.request` / `window.read.request` park a running
-// agent tool until the client answers, so the responder has to be listening
-// before the first turn — see store/agent-read-requests.ts.
-import './store/agent-read-requests'
-// And its non-blocking sibling: `agent.terminal.output` arrives for every
-// `terminal(background=true)` run whether or not any pane is mounted, and it is
-// only ever sent once — nothing replays it — so the buffer has to exist before
-// the first turn, not when the terminal pane happens to open.
-import './store/agent-terminal-bridge'
-// And the same for appearance: a skin or light/dark switch is global, but each
-// WebView holds its own copy, so without this one every OTHER surface — a
-// detached tile, the HUD, Quick Entry — keeps painting the appearance it booted
-// with. Imported here (not from themes/index) so the wiring sits with the other
-// cross-WebView listeners it mirrors.
-import './themes/appearance-sync'
-// And the terminal font, which has the same split with a sharper edge: on Android
-// the picker lives in the Settings ACTIVITY while the terminal it re-faces lives
-// in the chat one, and a detached tile window can host the terminal pane itself.
-// Without this, changing the font only repainted whichever WebView the picker
-// happened to be in.
-import './app/right-pane/terminal/terminal-font-sync'
-// And the transcript tail cache's lifecycle (MJXHRM-480): it hangs off the
-// cold-open rekey and the turn-settle edge, both of which can fire before any
-// chat surface has mounted — a tile restored into a layout, a session resumed by
-// the HUD. This import IS the wiring.
-import './store/transcript-cache-sync'
-// And the core `hermes://` route table (MJXHRM-455). The registrations have to
-// exist before `startDeepLinkRouter` drains Rust's cold-start buffer, and a
-// link that cold-started the app is delivered within milliseconds of the first
-// paint — so this import IS the wiring, exactly like the event router above.
-import './store/deep-link-builtins'
-// And the multi-connection registry's two hook fills (MJXHRM-446). Both are
-// LAST-WRITER-WINS module side effects — MJXHRM-480 registers the
-// single-gateway `SessionRequestRouter` and MJXHRM-455 the single-connection
-// `PluginConnectionSource` at THEIR module load — so these two imports must be
-// ordered AFTER them or the registry's implementations lose the race and every
-// cross-source dispatch silently falls back to the ambient socket. The ordering
-// is pinned by `main-boot-order.test.ts`.
-import './store/connection-session-router'
-import './store/connection-plugin-source'
-
-import { registerBrowserContributions } from './app/browser/context-target'
-import { installContextMenuBridge } from './app/context-menu/bridge'
-import { installBrowserBridge } from './store/browser-bridge'
-import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
-import { initDownloadSync } from './store/downloads'
-import { installNotificationActivation } from './store/plugin-notify-handlers'
-import { installTourDriver } from './store/tour-bridge'
-import { installWindowBelowReader } from './store/window-below'
-import { initWorkspaceProfileSync } from './store/workspace-events'
-
-// And the reader that gives `window.read.request` something to say. Installed at
-// boot, next to the responder it feeds, because the first turn can ask before
-// any component has mounted (MJXHRM-213).
-installWindowBelowReader()
-// Downloads are app-global but the transfer runs in whichever WebView started
-// it, so every OTHER window has to be told or its tray is blank for a file that
-// is very much being written to this device. Armed here rather than at the
-// store's module scope: the tray lives in the titlebar, so a module-scope
-// subscription would be established by anything that merely imports that graph
-// — every window, and every test that renders a shell. A store that is imported
-// should hold state, not start listening.
-initDownloadSync()
-// `/api/fs/default-cwd` answers inside the active profile's scope — that
-// profile's active project folder, else its `terminal.cwd`, else the gateway
-// default — so `$workspaceCwd` / `$workspaceHome` are per-profile values that a
-// profile switch would leave describing a workspace the app no longer talks to.
-// Armed at boot rather than by the file tree, because the statusbar cwd segment,
-// the terminal's initial directory and the review base read the same atoms.
-initWorkspaceProfileSync()
-// Same contract for `tour.request` (MJXHRM-473): the frame parks a blocked tool,
-// so the driver has to be registered before the first turn rather than when some
-// component happens to mount. driver.js itself stays off this path — the driver
-// dynamic-imports `@/lib/tour` on the first request.
-installTourDriver()
-// And the notification tap listeners (MJXHRM-455). A tap can arrive while the
-// app is cold — the notification outlives the process that sent it — so the
-// listener has to exist before any surface mounts. A no-op on desktop, where the
-// notification plugin registers no click hook at all.
-installNotificationActivation()
-// And the context menu's platform bridge (MJXHRM-478). Idempotent, and armed at
-// boot rather than from the coordinator because Rust keys its per-engine
-// handlers by WINDOW LABEL — a component that mounts, unmounts and remounts must
-// not re-wire them. In v1 every platform answers "nothing suppressed, nothing
-// promised", which is a true answer rather than a stub that lies.
-installContextMenuBridge()
-// And the in-app browser's agent half (MJXHRM-447): `preview.open`/`close`, the
-// page reader behind `read_preview`, and the actor behind `drive_preview`. Same
-// reason as the tour driver — the frame parks a BLOCKED tool, so a registration
-// that waited for a component to mount would burn the gateway's 45 s budget on
-// every early call. The act engine itself stays off this path (the actor
-// dynamic-imports it), which `entry-graph.test.ts` pins.
-installBrowserBridge()
-// Its contributions: the `webview` context-menu target kind, the "Open in
-// in-app browser" row on every web link, and the ⌘K palette row.
-registerBrowserContributions()
 
 import { QueryClientProvider } from '@tanstack/react-query'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { HashRouter } from 'react-router-dom'
+import { HashRouter } from 'react-router'
 
-import { App } from './app'
+import App from './app'
+import { bootUniversal } from './boot'
 import { RootErrorBoundary } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { RootTooltipProvider } from './components/ui/tooltip'
 import { I18nProvider } from './i18n'
-import { warmKatexFonts } from './lib/katex-fonts'
-import { IS_MOBILE } from './lib/platform'
+import { installClipboardShim } from './lib/clipboard'
 import { queryClient } from './lib/query-client'
-import { RouterNavBridge } from './lib/router-nav-bridge'
-import { initSafeAreaInsets } from './lib/safe-area'
-import { restoreSessionCookies } from './lib/session-persist'
-import { installObservability } from './observability/install'
-import { initAppLifecycle } from './store/app-lifecycle'
-import { initBackgroundMode } from './store/background-mode'
-import { resumePortalSignIn } from './store/cloud'
-import { initConnectionLifecycle } from './store/connection'
-import { initDataUrlReadMax } from './store/data-url-read-max'
-import { autoRestoreConnection } from './store/gateway-restore'
-import { initKeepAwake } from './store/keep-awake'
-import { initTranslucency } from './store/translucency'
-import { initTray } from './store/tray'
-import { installWindowCloseGuard, ownsPersistedAppState, sweepStaleSurfaceGrants } from './store/windows'
-import { ThemeProvider } from './themes'
-// Span tracing. Installed FIRST so boot-time work falls inside the trace rather
-// than before it. Recording is off by default, so this is a no-op until someone
-// asks for it — see src/observability/index.ts.
-installObservability()
+import { installRendererAnimationPauseState } from './lib/renderer-loop-pause'
+import { installSelectionCopyColorGuard } from './lib/selection-copy-colors'
+import { ThemeProvider } from './themes/context'
 
-// App foreground/background, installed BEFORE the restore so the first edge after
-// launch is already being listened for. On a phone the socket always dies while the
-// app is away and the process is eventually killed outright (neither platform grants
-// this app any background execution), so the return trip is where the session is
-// actually saved or lost: coming back wakes a backed-off reconnect and refunds the
-// auth retry budget, and going away snapshots the cookie jar while there is still a
-// process to do it.
-initAppLifecycle()
-initConnectionLifecycle()
+// Universal's platform levers, before the first render — see `boot.ts`.
+bootUniversal()
+installClipboardShim()
+// Chromium serializes selection copies (Cmd+C, right-click Copy) with the
+// theme's computed colors inlined; without this guard a dark-theme selection
+// pastes as near-white text into light-background targets.
+installSelectionCopyColorGuard()
 
-// Rehydrate a persisted gateway/cloud session into the Rust cookie jar (R2b), THEN
-// auto-reconnect to the last-used gateway (D8). Cookies first so a cookie-backed
-// login (ticket/oauth/cloud) re-dials without an interactive sign-in; the restore
-// runs even if the cookie read fails (it degrades to a fresh sign-in). `$restoring`
-// is seeded true synchronously from the saved target, so the connecting screen —
-// not the picker — shows from the first paint while this resolves.
-void restoreSessionCookies().finally(() => {
-  void autoRestoreConnection()
-})
-
-// An Android Hermes Cloud sign-in comes back through a full page reload, and the
-// marker it left has to be read by the boot rather than by whichever panel happens
-// to mount — the statusbar gateway popover, one of the surfaces you can start the
-// sign-in from, is gone by the time we get here. See store/cloud.ts.
-void resumePortalSignIn()
-
-// The keep-awake preference lives in the webview but the inhibitor lives in
-// Rust and dies with the process, so a relaunch has to re-arm it — otherwise the
-// toggle reads "on" while the machine is free to sleep. No-op off desktop.
-initKeepAwake()
-
-// Same shape, same reason: the attachment size cap is persisted in the webview
-// but ENFORCED in Rust, whose copy is a plain atomic that boots at the default.
-// Without this a device configured down to 2 MB would spend the whole session
-// letting 16 MB through — the one number the guard exists to get right.
-initDataUrlReadMax()
-
-// The window's own translucency. The native lever dies with the process, so a
-// persisted preference has to be re-asserted or a tuned window comes back
-// opaque on every relaunch.
-initTranslucency()
-
-// Background mode (MJXHRM-436). Three pieces, all at boot:
-//
-//  • the close guard, which is the ONLY `tauri://close-requested` listener this
-//    window gets. It used to be armed lazily by the first satellite summon, and
-//    that was a latent bug on its own: Tauri's core prevents the close for any
-//    window that has such a listener and the JS wrapper's fallback `destroy()`
-//    is not in `capabilities/default.json`, so a window that had opened a
-//    satellite could not be closed by its titlebar button at all. It now always
-//    ends in an explicit Rust destroy — or, with background mode on, in a hide.
-//  • the preference, re-mirrored down because `BackgroundState` is process-local
-//    and starts false.
-//  • the tray's copy, which is native and cannot read the i18n catalog.
-//
-// All three are scoped to the window that owns the app's persisted state. The
-// preference and the tray copy are process-global levers, and a tile window or an
-// activity screen re-asserting them would mean N toasts for one refusal. The
-// guard is scoped for a different reason: registering a close listener is what
-// makes Tauri's core prevent the close in the first place, so arming one inside a
-// SATELLITE would turn `closeSatelliteWindow`'s direct `close()` into a round
-// trip through that satellite's own JS — and a satellite whose page had not
-// finished booting would then survive the teardown that is supposed to take it
-// down with its summoner. Tile windows still arm it lazily from
-// `openSatelliteWindow`, because a window that claims a satellite has to be able
-// to close it; a satellite never gets that far (`canOpenSatelliteWindow` is false
-// inside one).
-// Every window follows the registry: a rename made in a settings Activity has to
-// reach the shell painting the source chip. Outside the `ownsPersistedAppState`
-// block on purpose — following is not restoring.
-startConnectionsWatcher()
-
-if (ownsPersistedAppState()) {
-  void installWindowCloseGuard()
-  initBackgroundMode()
-  initTray()
-
-  // The gateway registry (MJXHRM-446). Deliberately AFTER the restore above and
-  // deliberately not awaited: `autoRestoreConnection()` has already dialled the
-  // saved target, and this only re-points it when the launch mode disagrees.
-  // Firing its own dial here is how desktop ends up with two sockets and a
-  // flickering picker at launch. Satellites and activity screens skip it — they
-  // follow the switch broadcast instead of replaying a restore.
-  void initializeConnectionsRegistry()
-
-  // `hermes:surface-grant:<surface>` is localStorage and outlives the PROCESS,
-  // so an explicit Quit (or a crash) leaves one behind with nothing alive to
-  // hear the native close event. The next run's HUD would lay itself out for a
-  // layer surface it never got. Asks the window system what is actually up, so
-  // an instance window booting beside a live HUD sweeps nothing.
-  void sweepStaleSurfaceGrants()
+// The perf probe ships in dev, and in a production build ONLY when explicitly
+// opted in (VITE_PERF_PROBE=1) — this lets the perf harness measure a real,
+// minified production renderer for representative absolute numbers. Normal
+// `npm run build` leaves the flag unset, so the probe never reaches users.
+if (import.meta.env.MODE !== 'production' || import.meta.env.VITE_PERF_PROBE === '1') {
+  import('./app/chat/perf-probe')
 }
 
-// Pull KaTeX's faces in at idle. They are `font-display: block`, so the first
-// equation of a session otherwise renders INVISIBLE until they land (see
-// lib/katex-fonts).
-warmKatexFonts()
+const winParam = new URLSearchParams(window.location.search).get('win')
 
-// Publish deterministic `--safe-area-inset-*` CSS vars so mobile chrome sits
-// correctly from the first frame instead of flashing at the 0 that env()
-// reports before the webview resolves it (see lib/safe-area). No-op on web/
-// desktop. Mark the platform so mobile-only CSS can key off `html.is-mobile`.
-initSafeAreaInsets()
-document.documentElement.classList.toggle('is-mobile', IS_MOBILE)
-
-const container = document.getElementById('root')
-
-if (!container) {
-  throw new Error('root container missing')
+if (winParam === 'hud') {
+  document.title = 'Hermes HUD'
 }
 
-createRoot(container).render(
-  <RootErrorBoundary>
-    <I18nProvider>
-      <ThemeProvider>
+// The `?win=` kinds whose Electron window is `transparent: true` and so paints
+// nothing but its own surface over the user's desktop. `secondary` (a session
+// window) and `browser` are ordinary opaque windows and are deliberately not
+// in here. index.html's pre-paint script skips exactly this list — keep the
+// two in step.
+const TRANSPARENT_WINDOWS = new Set(['hud', 'overlay', 'quick', 'wake', 'intro'])
+
+// Each transparent root used to force its host layers see-through when it
+// MOUNTED. That is far too late: `styles.css` above paints the theme's opaque
+// `--background` as soon as it lands, and the root behind it is a dynamic
+// import — a couple of seconds of module fetches under the dev server. The gap
+// rendered as a full-screen near-white rectangle. Claim it here instead, in the
+// same task as the stylesheet, so no window ever paints a background it does
+// not want.
+if (winParam && TRANSPARENT_WINDOWS.has(winParam)) {
+  const transparent = document.createElement('style')
+
+  transparent.textContent = 'html,body,#root{background:transparent !important;}'
+  document.head.appendChild(transparent)
+}
+
+if (winParam === 'overlay') {
+  void import('./app/pet-overlay/overlay-root').then(({ mountPetOverlay }) => mountPetOverlay())
+} else if (winParam === 'quick') {
+  void import('./app/quick-entry/quick-entry-root').then(({ mountQuickEntry }) => mountQuickEntry())
+} else if (winParam === 'wake') {
+  void import('./app/wake-indicator/wake-indicator-root').then(({ mountWakeIndicator }) => mountWakeIndicator())
+} else if (winParam === 'intro') {
+  void import('./components/intro-reveal/intro-root').then(({ mountIntroReveal }) => mountIntroReveal())
+} else {
+  // CSS animations do not inherit Chromium's JS-loop pause policy. Mirror the
+  // main window's visibility state to :root so decorative infinite
+  // animations stop producing frames when nobody can see them.
+  installRendererAnimationPauseState()
+
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <RootErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <HapticsProvider>
-            {/* ONE tooltip provider for the whole app. Every `Tip` used to carry
-                its own, and with ~100 call sites those subtrees dominated
-                unrelated interactions. Radix's provider holds only refs and
-                stable callbacks, so hoisting is what it is for. */}
-            <RootTooltipProvider>
-              <HashRouter>
-                <RouterNavBridge />
-                <App />
-              </HashRouter>
-            </RootTooltipProvider>
-          </HapticsProvider>
+          <I18nProvider>
+            <ThemeProvider>
+              <HapticsProvider>
+                {/* ONE tooltip provider for the whole app. Every `Tip` used to
+                    carry its own, and with ~107 call sites those subtrees
+                    dominated unrelated interactions (52,784 TooltipProvider
+                    renders in a single sash drag). Radix's provider holds only
+                    refs and stable callbacks, so hoisting is what it's for. */}
+                <RootTooltipProvider>
+                  {/* useTransitions={false}: react-router v7's HashRouter wraps every
+                    route state update in React.startTransition() by default. In
+                    React 19's concurrent renderer, transitions are non-urgent — React
+                    can yield mid-render and resume later. When the app is under load
+                    (streaming token deltas, gateway events, store updates), those
+                    higher-priority updates keep interrupting the transition, starving
+                    the route change commit. The session sidebar highlight + main pane
+                    both freeze for seconds despite the main thread being free.
+                    Disabling transitions makes navigate() commit at default priority. */}
+                  <HashRouter useTransitions={false}>
+                    <App />
+                  </HashRouter>
+                </RootTooltipProvider>
+              </HapticsProvider>
+            </ThemeProvider>
+          </I18nProvider>
         </QueryClientProvider>
-      </ThemeProvider>
-    </I18nProvider>
-  </RootErrorBoundary>
-)
+      </RootErrorBoundary>
+    </StrictMode>
+  )
+}

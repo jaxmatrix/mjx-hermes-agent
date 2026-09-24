@@ -3,17 +3,24 @@ import { Streamdown } from 'streamdown'
 
 import { CodeEditor, type CodeEditorApi } from '@/components/ui/code-editor'
 import { Codicon } from '@/components/ui/codicon'
-import { getFileDiff, getGitRoot, readFileDataUrl, readFileText, writeFileText } from '@/hermes'
 import { useI18n } from '@/i18n'
+import {
+  desktopFileDiff,
+  desktopGitRoot,
+  readDesktopFileDataUrl,
+  readDesktopFileText,
+  writeDesktopFileText
+} from '@/lib/desktop-fs'
 import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { useDisplayPath } from '@/store/display-home'
+import { $workspaceCwd } from '@/store/effective-cwd'
 import { notifyError } from '@/store/notifications'
-import { $previewReloadNonce, type PreviewTarget, requestPreviewReload } from '@/store/preview'
+import { $previewReloadRequest, type PreviewTarget, requestPreviewReload } from '@/store/preview'
 import { setPreviewDirty } from '@/store/preview-edit'
 import { $previewModes, seedPreviewMode, setPreviewCaps, setPreviewMode } from '@/store/preview-view'
-import { $workspaceCwd, notifyWorkspaceChanged } from '@/store/workspace-events'
+import { notifyWorkspaceChanged } from '@/store/workspace-events'
 
 import { MobileKeyRow } from './mobile-key-row'
 import { PreviewSource } from './preview-source'
@@ -73,6 +80,20 @@ const EXT_LANG: Record<string, string> = {
   yml: 'yaml'
 }
 
+function filePathForTarget(target: PreviewTarget): string {
+  if (target.path) {
+    return target.path
+  }
+
+  try {
+    const url = new URL(target.url)
+
+    return url.protocol === 'file:' ? decodeURIComponent(url.pathname) : target.url
+  } catch {
+    return target.url
+  }
+}
+
 function extOf(path: string): string {
   const name = path.slice(path.lastIndexOf('/') + 1)
   const dot = name.lastIndexOf('.')
@@ -112,7 +133,7 @@ interface Loaded {
 export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarget; variant?: 'rail' | 'tile' }) {
   const { t } = useI18n()
   const copy = t.preview
-  const reloadNonce = useStore($previewReloadNonce)
+  const reloadNonce = useStore($previewReloadRequest)
   const workspaceCwd = useStore($workspaceCwd)
 
   const [loaded, setLoaded] = useState<Loaded | null>(null)
@@ -128,7 +149,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
   const baselineRef = useRef('')
   const draftRef = useRef('')
 
-  const path = target.path
+  const path = filePathForTarget(target)
   const ext = extOf(path)
   // The header tooltip is the file's absolute path on the GATEWAY (MJXHRM-394).
   const displayPath = useDisplayPath()
@@ -145,7 +166,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
     setEditing(false)
     setConflict(false)
 
-    void readFileText(path)
+    void readDesktopFileText(path)
       .then(async res => {
         if (cancelled) {
           return
@@ -156,9 +177,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
         let dataUrl: string | undefined
 
         if (image) {
-          dataUrl = await readFileDataUrl(path)
-            .then(r => r.dataUrl)
-            .catch(() => undefined)
+          dataUrl = await readDesktopFileDataUrl(path).catch(() => undefined)
         }
 
         if (cancelled) {
@@ -236,7 +255,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
       try {
         if (!force) {
           // Stale-on-disk guard: re-read and compare to the baseline we opened.
-          const fresh = await readFileText(path).catch(() => null)
+          const fresh = await readDesktopFileText(path).catch(() => null)
 
           if (fresh && fresh.text !== baselineRef.current) {
             setConflict(true)
@@ -246,7 +265,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
           }
         }
 
-        await writeFileText(path, draftRef.current)
+        await writeDesktopFileText(path, draftRef.current)
         baselineRef.current = draftRef.current
         setPreviewDirty(path, false)
         setConflict(false)
@@ -279,7 +298,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
     >
       {railChrome ? (
         <span className="min-w-0 flex-1 truncate text-(--ui-text-secondary)" title={displayPath(path)}>
-          {target.name}
+          {target.label}
         </span>
       ) : (
         <span className="flex-1" />
@@ -394,13 +413,13 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
         ) : loaded.image ? (
           <div className="flex h-full items-center justify-center overflow-auto p-4">
             {loaded.dataUrl ? (
-              <img alt={target.name} className="max-h-full max-w-full object-contain" src={loaded.dataUrl} />
+              <img alt={target.label} className="max-h-full max-w-full object-contain" src={loaded.dataUrl} />
             ) : (
               <Centered>{copy.unavailable}</Centered>
             )}
           </div>
         ) : loaded.binary ? (
-          <Centered>{copy.binaryBody(target.name)}</Centered>
+          <Centered>{copy.binaryBody(target.label)}</Centered>
         ) : mode === 'rendered' ? (
           <div className="h-full overflow-auto px-4 py-3 text-sm">
             <Streamdown>{loaded.text}</Streamdown>
@@ -451,15 +470,13 @@ function DiffView({ cwd, path }: { cwd: string; path: string }) {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    void getGitRoot(path)
-      .then(async ({ root }) => {
+    void desktopGitRoot(path)
+      .then(async root => {
         if (!root) {
           return ''
         }
 
-        const res = await getFileDiff(root, path).catch(() => ({ diff: '' }))
-
-        return res.diff
+        return await desktopFileDiff(root, path).catch(() => '')
       })
       .then(d => {
         if (!cancelled) {

@@ -3,9 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { getMemoryProviderOAuthStatus, startMemoryProviderOAuth } from '@/hermes'
 import { Check, ExternalLink, Loader2 } from '@/lib/icons'
-import { useStore } from '@/store/atom'
 import { notifyError } from '@/store/notifications'
-import { $settingsScopeOverride } from '@/store/settings-scope'
 import type { MemoryProviderOAuthStatus } from '@/types/hermes'
 
 const POLL_MS = 1500
@@ -13,11 +11,8 @@ const POLL_TIMEOUT_MS = 120_000
 
 // Small connect affordance rendered under the provider dropdown. Capability is
 // backend-driven: the status route 404s for providers without an oauth_flow
-// module, so non-OAuth providers render nothing. Ported from apps/desktop.
-export function MemoryConnect({ provider }: { provider: string }) {
-  // Memory credentials are per profile, so connect/poll the profile this page
-  // is editing ("Applies to"), not the app-wide active one.
-  const scopeProfile = useStore($settingsScopeOverride)
+// module, so non-OAuth providers render nothing.
+export function MemoryConnect({ profile, provider }: { profile?: string; provider: string }) {
   const [capable, setCapable] = useState<'no' | 'unknown' | 'yes'>('unknown')
   const [connected, setConnected] = useState(false)
   const [auth, setAuth] = useState<MemoryProviderOAuthStatus['auth']>(null)
@@ -36,7 +31,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
   useEffect(() => {
     let active = true
     setCapable('unknown')
-    getMemoryProviderOAuthStatus(provider, scopeProfile ?? undefined)
+    getMemoryProviderOAuthStatus(provider, profile)
       .then(s => {
         if (!active) {
           return
@@ -56,7 +51,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
       active = false
       stop()
     }
-  }, [provider, scopeProfile, stop])
+  }, [profile, provider, stop])
 
   // An error message isn't sticky — it clears back to the steady state
   // (Connect link, plus the connected badge if a credential is stored).
@@ -77,7 +72,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
     setPhase('pending')
 
     try {
-      await startMemoryProviderOAuth(provider, scopeProfile ?? undefined)
+      await startMemoryProviderOAuth(provider, profile)
     } catch (err) {
       setPhase('error')
       setDetail('Could not start the connection.')
@@ -91,40 +86,34 @@ export function MemoryConnect({ provider }: { provider: string }) {
     timer.current = setInterval(() => {
       void (async () => {
         try {
-          const next = await getMemoryProviderOAuthStatus(provider, scopeProfile ?? undefined)
+          const next = await getMemoryProviderOAuthStatus(provider, profile)
 
-          if (next.state !== 'pending') {
-            stop()
-            setConnected(next.connected)
-            setAuth(next.auth)
-
-            if (next.state === 'error') {
+          if (next.state === 'pending') {
+            if (Date.now() > deadline.current) {
+              stop()
               setPhase('error')
-              setDetail(next.detail || 'Connection failed.')
-            } else {
-              setPhase('idle')
+              setDetail('Timed out — try again.')
             }
 
             return
           }
-          // Still pending — fall through to the deadline check below.
-        } catch {
-          // Transient poll failure — falls through to the same deadline check.
-          // A gateway that is DOWN rather than slow answers this way EVERY
-          // time, and returning here (as this used to) meant the deadline was
-          // never read on the one path that most needs it: the spinner said
-          // "Waiting for browser consent…" forever and the poll kept firing
-          // every 1.5s for as long as the page stayed mounted.
-        }
 
-        if (Date.now() > deadline.current) {
           stop()
-          setPhase('error')
-          setDetail('Timed out — try again.')
+          setConnected(next.connected)
+          setAuth(next.auth)
+
+          if (next.state === 'error') {
+            setPhase('error')
+            setDetail(next.detail || 'Connection failed.')
+          } else {
+            setPhase('idle')
+          }
+        } catch {
+          // Transient poll failure — keep trying until the deadline.
         }
       })()
     }, POLL_MS)
-  }, [provider, scopeProfile, stop])
+  }, [profile, provider, stop])
 
   const cancel = useCallback(() => {
     stop()

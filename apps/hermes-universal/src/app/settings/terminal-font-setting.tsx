@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { useOnProfileSwitch } from '@/app/hooks/use-on-profile-switch'
 import {
+  normalizeTerminalFontFamily,
   resolveTerminalFontFamily,
   setTerminalFontFamilyFromConfig,
-  TERMINAL_FONT_SUGGESTIONS,
-  terminalFontFamilyFromConfig
+  TERMINAL_FONT_SUGGESTIONS
 } from '@/app/right-pane/terminal/terminal-font'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,33 +13,31 @@ import { useI18n } from '@/i18n'
 import { notifyError } from '@/store/notifications'
 import type { HermesConfigRecord } from '@/types/hermes'
 
-import { setNested } from './helpers'
-import { ListRow } from './primitives'
-import { settingRowElementId } from './settings-search'
-import { setHermesConfigCache, useHermesConfigRecord } from './use-config-record'
+import { setHermesConfigCache, useHermesConfigRecord } from '../hooks/use-config-record'
+import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
+import { useProfileSwitchLatch } from '../hooks/use-profile-switch-latch'
 
-// The Settings half of `terminal.font_family` — the consumption half lives in
-// `app/right-pane/terminal/terminal-font.ts`. Ported from desktop
-// `app/settings/terminal-font-setting.tsx`; the only adaptations are the import
-// paths (universal's terminal is `right-pane`, not `right-sidebar`) and reading
-// the family through `terminalFontFamilyFromConfig` instead of `getNested`.
-//
-// Free text with a datalist rather than a closed <select>: the useful families
-// are whatever the host happens to have installed, which the webview cannot
-// enumerate, and an authored CSS stack has to stay typeable.
+import { getNested, setNested } from './helpers'
+import { ListRow } from './primitives'
+
 const AUTOSAVE_DELAY_MS = 550
+
+function fontFamilyFromConfig(config: HermesConfigRecord): string {
+  return normalizeTerminalFontFamily(getNested(config, 'terminal.font_family'))
+}
 
 export function TerminalFontSetting() {
   const { t } = useI18n()
   const copy = t.settings.appearance
-  const { data: loadedConfig } = useHermesConfigRecord()
+  const { data: loadedConfig, dataUpdatedAt, writeScope } = useHermesConfigRecord()
   // draft === null ⇔ unseeded: nothing painted yet for this profile. The
-  // profile-switch handler resets it to null and records the config object it
-  // was looking at (`staleConfig`) — the seed effect refuses to re-seed from
-  // that same object, so the previous profile's cached record can't repopulate
-  // the field; the next profile's fetch (a new object) seeds it.
-  const [draft, setDraft] = useState<null | string>(null)
-  const [staleConfig, setStaleConfig] = useState<HermesConfigRecord | null>(null)
+  // profile-switch handler keeps it unseeded until a config refetch completes;
+  // the timestamp is the freshness proof because React Query can reuse the
+  // same config object when the next profile has identical settings.
+  const [draft, setDraft] = useState<string | null>(null)
+  // The seed effect refuses to reseed while the query still carries the
+  // previous profile's stamp.
+  const { arm: armProfileLatch, pending: profilePending } = useProfileSwitchLatch({ dataUpdatedAt })
   const [saveVersion, setSaveVersion] = useState(0)
   const saveVersionRef = useRef(0)
 
@@ -51,19 +48,19 @@ export function TerminalFontSetting() {
   }
 
   useEffect(() => {
-    if (!loadedConfig || draft !== null || loadedConfig === staleConfig) {
+    if (!loadedConfig || draft !== null || profilePending) {
       return
     }
 
-    const value = terminalFontFamilyFromConfig(loadedConfig)
+    const value = fontFamilyFromConfig(loadedConfig)
     setDraft(value)
     setTerminalFontFamilyFromConfig(value)
-  }, [draft, loadedConfig, staleConfig])
+  }, [draft, loadedConfig, profilePending])
 
   useOnProfileSwitch(() => {
     saveVersionRef.current += 1
     setDraft(null)
-    setStaleConfig(loadedConfig ?? null)
+    armProfileLatch()
     setSaveVersion(0)
     // Do not show the previous profile's font while the new profile loads.
     setTerminalFontFamilyFromConfig('')
@@ -75,24 +72,26 @@ export function TerminalFontSetting() {
     }
 
     const version = saveVersion
-    const value = draft.trim()
+    const value = normalizeTerminalFontFamily(draft)
 
     // Already persisted (or a cache refresh confirmed it) — nothing to save.
     // This also terminates the effect re-run after a successful save updates
     // the shared config cache.
-    if (value === terminalFontFamilyFromConfig(loadedConfig)) {
+    if (value === fontFamilyFromConfig(loadedConfig)) {
       return
     }
 
-    // The last successfully saved value IS what the shared config cache holds —
-    // successful saves write it back via setHermesConfigCache, so rollback
-    // re-derives from there instead of mirroring into a ref.
-    const rollback = terminalFontFamilyFromConfig(loadedConfig)
+    // The last successfully saved value IS what the shared config cache
+    // holds — successful saves write it back via setHermesConfigCache, so
+    // rollback re-derives from there instead of mirroring into a ref.
+    const rollback = fontFamilyFromConfig(loadedConfig)
 
     const timeout = window.setTimeout(() => {
       const next = setNested(loadedConfig, 'terminal.font_family', value)
 
-      void saveHermesConfig(next)
+      // Sparse patch: PUT /api/config deep-merges, and echoing the cached
+      // snapshot would overwrite keys other surfaces changed since it loaded.
+      void saveHermesConfig(setNested({}, 'terminal.font_family', value), writeScope)
         .then(result => {
           if (!result.ok) {
             throw new Error(t.settings.config.autosaveFailed)
@@ -103,13 +102,6 @@ export function TerminalFontSetting() {
           }
 
           setHermesConfigCache(next)
-          // Re-assert the atom against what the gateway now holds. Idempotent in
-          // the normal case (it already says `value`, so nothing changes and
-          // nothing broadcasts) — it exists for the race where a PEER WebView
-          // revalidated its config record during the debounce, read the
-          // pre-save value, and pushed that back over the bus. This is the
-          // moment we know which of the two is authoritative.
-          setTerminalFontFamilyFromConfig(value)
         })
         .catch(error => {
           if (saveVersionRef.current !== version) {
@@ -125,10 +117,8 @@ export function TerminalFontSetting() {
     }, AUTOSAVE_DELAY_MS)
 
     return () => window.clearTimeout(timeout)
-  }, [draft, loadedConfig, saveVersion, t.settings.config.autosaveFailed])
+  }, [draft, loadedConfig, saveVersion, t.settings.config.autosaveFailed, writeScope])
 
-  // Every keystroke pushes the atom, so an open terminal re-renders in the new
-  // face while the save is still being debounced.
   const update = (value: string) => {
     saveVersionRef.current += 1
     setDraft(value)
@@ -175,7 +165,6 @@ export function TerminalFontSetting() {
         </div>
       }
       description={copy.terminalFontDesc}
-      id={settingRowElementId('appearance.terminal-font')}
       title={copy.terminalFontTitle}
       wide
     />

@@ -1,36 +1,55 @@
 /**
  * Runtime SDK injection — the other half of the vscode-module model. Bundled
  * plugins resolve `@hermes/plugin-sdk` through the vite alias; RUNTIME-loaded
- * plugins (disk / gateway) import the same specifier and get the same object:
+ * plugins (disk / fetched) import the same specifier and get the same object:
  * the loader rewrites bare specifiers to shim modules that re-export the
  * live namespaces installed here. React ships as the app's singletons —
  * a second React instance would break hooks.
- *
- * The shim modules are `blob:` URLs, which is why `script-src` in
- * `src-tauri/tauri.conf.json` must allow `blob:`.
  */
 
 import * as React from 'react'
 import * as jsxDevRuntime from 'react/jsx-dev-runtime'
 import * as jsxRuntime from 'react/jsx-runtime'
 
-import * as sdk from './index'
+// Universal's one line in desktop's file: the namespace a runtime plugin gets is
+// the module the `@hermes/plugin-sdk` alias resolves to (`./universal` — desktop's
+// barrel plus universal's additions), so it sees what a bundled plugin sees.
+import * as sdk from './universal'
 
-const GLOBALS = {
-  __HERMES_PLUGIN_SDK__: sdk,
-  __HERMES_REACT__: React,
-  __HERMES_REACT_JSX__: jsxRuntime,
-  __HERMES_REACT_JSX_DEV__: jsxDevRuntime
-} as const
+// Resolved LAZILY, never as a module-scope literal. This module sits in an
+// import cycle — `sdk/index` → `contrib/*` → `contrib/runtime-loader` →
+// `sdk/runtime` — so a module-scope `{ __HERMES_PLUGIN_SDK__: sdk, … }` is
+// evaluated BEFORE `sdk/index`'s own body runs. In the bundled app that read
+// yields `undefined` (the bundler emits the namespace as a hoisted `var`), so
+// `Object.keys(GLOBALS.__HERMES_PLUGIN_SDK__)` threw
+// "Cannot convert undefined or null to object" and EVERY runtime (disk)
+// plugin failed to load. Reading them at call time — installPluginSdk() and
+// the shim builder only ever run once the app is up — gets the live
+// namespaces.
+function pluginNamespaces() {
+  return {
+    __HERMES_PLUGIN_SDK__: sdk,
+    __HERMES_REACT__: React,
+    __HERMES_REACT_JSX__: jsxRuntime,
+    __HERMES_REACT_JSX_DEV__: jsxDevRuntime
+  }
+}
+
+type PluginGlobalKey = keyof ReturnType<typeof pluginNamespaces>
 
 export function installPluginSdk(): void {
-  Object.assign(globalThis, GLOBALS)
+  // Finish universal host doors if the index↔runtime↔universal cycle deferred
+  // them past module evaluation.
+  void import('./plugin-host-universal').then(m => m.installUniversalHost())
+  Object.assign(globalThis, pluginNamespaces())
 }
 
 /** Build a shim ESM blob that re-exports a global namespace's live members.
  *  Export names come from the namespace itself, so the list can't drift. */
-function shimUrl(globalKey: keyof typeof GLOBALS): string {
-  const names = Object.keys(GLOBALS[globalKey]).filter(name => name !== 'default' && /^[A-Za-z_$][\w$]*$/.test(name))
+function shimUrl(globalKey: PluginGlobalKey): string {
+  const names = Object.keys(pluginNamespaces()[globalKey]).filter(
+    name => name !== 'default' && /^[A-Za-z_$][\w$]*$/.test(name)
+  )
 
   const source =
     `const m = globalThis.${globalKey};\n` +

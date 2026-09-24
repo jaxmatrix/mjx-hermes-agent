@@ -90,7 +90,7 @@ vi.mock('@tauri-apps/api/core', () => ({
       return undefined
     }
 
-    if (command === 'local_backend_stop') {
+    if (command === 'local_backend_kill') {
       stopBackend()
 
       return undefined
@@ -240,13 +240,19 @@ describe('satellite windows', () => {
     // are Rust's, so the only things that cross are which surface and where in
     // the app it opens. A `new WebviewWindow(...)` here would throw — see the
     // mock, which models the ACL that no longer grants it.
-    expect(opens).toEqual([{ route: null, surface: 'hud' }])
+    expect(opens).toEqual([{ profile: null, route: null, surface: 'hud' }])
   })
 
   it('carries an in-app route for Rust to place after the hash', async () => {
     await openSatelliteWindow('hud', '/settings')
 
     expect(opens[0].route).toBe('/settings')
+  })
+
+  it('carries an optional profile before the hash for non-primary backends', async () => {
+    await openSatelliteWindow('hud', '/sess-1', 'work')
+
+    expect(opens[0]).toEqual({ profile: 'work', route: '/sess-1', surface: 'hud' })
   })
 
   it('records the grant a fresh attach answers with', async () => {

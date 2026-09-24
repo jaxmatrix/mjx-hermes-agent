@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PluginDiskModule from '@/contrib/plugin-disk'
@@ -29,7 +29,10 @@ vi.mock('@/store/agent-plugins', async importActual => {
 
   return { ...actual, loadAgentPlugins, toggleAgentPlugin }
 })
-vi.mock('@/hermes', async importActual => ({ ...(await importActual<typeof HermesModule>()), setEnvVar }))
+vi.mock('@/hermes', async importActual => ({
+  ...(await importActual<typeof HermesModule>()),
+  setEnvVar
+}))
 
 import { $restDoorEnabled } from '@/contrib/plugin-disk'
 import { $pluginRecords, type PluginRecord, setPluginEnabled } from '@/contrib/plugins-store'
@@ -40,7 +43,6 @@ import {
   $agentPluginsError,
   $agentPluginsStatus,
   type AgentPluginRow,
-  resetAgentPlugins
 } from '@/store/agent-plugins'
 import { $connection } from '@/store/connection'
 
@@ -92,14 +94,17 @@ const loadedWith = (rows: AgentPluginRow[]) => {
 beforeEach(() => {
   $pluginRecords.set({})
   $restDoorEnabled.set(true)
-  resetAgentPlugins()
+  $agentPlugins.set([])
+  $agentPluginsStatus.set('idle')
+  $agentPluginsError.set(null)
   resolvePluginDisk.mockResolvedValue(localDoor)
 })
 
 afterEach(() => {
   $pluginRecords.set({})
   $connection.set(null)
-  resetAgentPlugins()
+  $agentPlugins.set([])
+  $agentPluginsStatus.set('idle')
   vi.clearAllMocks()
 })
 
@@ -107,7 +112,7 @@ describe('PluginsSettings', () => {
   it('shows the empty state with no plugins', async () => {
     renderPage()
 
-    expect(await screen.findByText('No plugins installed yet.')).toBeInTheDocument()
+    expect(await screen.findByText('No desktop plugins installed yet.')).toBeInTheDocument()
   })
 
   it('lists a plugin with its kind, and toggles it live', async () => {
@@ -135,7 +140,7 @@ describe('PluginsSettings', () => {
   it('names the active door and its root', async () => {
     renderPage()
 
-    expect(await screen.findByText('Reading from this device')).toBeInTheDocument()
+    expect(await screen.findByText('Local plugins folder')).toBeInTheDocument()
     expect(screen.getByText('/home/u/.hermes/desktop-plugins')).toBeInTheDocument()
   })
 
@@ -143,7 +148,7 @@ describe('PluginsSettings', () => {
     resolvePluginDisk.mockResolvedValue(gatewayDoor)
     renderPage()
 
-    expect(await screen.findByText('Reading from the connected backend')).toBeInTheDocument()
+    expect(await screen.findByText('Gateway plugins folder')).toBeInTheDocument()
     expect(screen.getByText('/srv/hermes/desktop-plugins')).toBeInTheDocument()
   })
 
@@ -151,14 +156,14 @@ describe('PluginsSettings', () => {
     resolvePluginDisk.mockResolvedValue(gatewayDoor)
     renderPage()
 
-    await screen.findByText('Reading from the connected backend')
-    expect(screen.queryByRole('button', { name: /Open plugins folder/ })).not.toBeInTheDocument()
+    await screen.findByText('Gateway plugins folder')
+    expect(screen.queryByRole('button', { name: /Open Desktop plugins folder/ })).not.toBeInTheDocument()
   })
 
   it('reveals the local root', async () => {
     renderPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: /Open plugins folder/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Open Desktop plugins folder/ }))
 
     await waitFor(() => expect(reveal).toHaveBeenCalledWith('/home/u/.hermes/desktop-plugins'))
   })
@@ -174,11 +179,11 @@ describe('PluginsSettings', () => {
   it('exposes the gateway-door switch with its authority warning', async () => {
     renderPage()
 
-    const toggle = await screen.findByRole('switch', { name: /Load plugins from the connected backend/ })
+    const toggle = await screen.findByRole('switch', { name: /Load plugins from the connected gateway/ })
 
     expect(toggle).toBeChecked()
     expect(
-      screen.getByText('Plugin code from the backend runs with the same access as the app itself.')
+      screen.getByText('When on, desktop plugins can be read from the remote gateway’s plugin folder.')
     ).toBeInTheDocument()
 
     fireEvent.click(toggle)
@@ -189,8 +194,8 @@ describe('PluginsSettings', () => {
     resolvePluginDisk.mockResolvedValue(null)
     renderPage()
 
-    expect(await screen.findByText('This backend did not report a plugins folder.')).toBeInTheDocument()
-    expect(screen.getByText('No plugin folder available')).toBeInTheDocument()
+    expect(await screen.findByText('Plugins unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Gateway plugin folder is not reachable on this connection.')).toBeInTheDocument()
   })
 
   it('sorts disk plugins before bundled ones, then by name', async () => {
@@ -225,7 +230,7 @@ describe('PluginsSettings ▸ agent plugins', () => {
 
     expect(await screen.findByText('fal')).toBeInTheDocument()
 
-    for (const label of ['user', 'git', 'bundled', 'pip']) {
+    for (const label of ['user', 'git', 'bundled', 'entrypoint']) {
       expect(screen.getByText(label)).toBeInTheDocument()
     }
 
@@ -268,7 +273,9 @@ describe('PluginsSettings ▸ agent plugins', () => {
 
     expect(await screen.findByText('legacy')).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Disable legacy' })).toBeDisabled()
-    expect(screen.getByText('Update the Hermes backend to turn this one on or off from here.')).toBeInTheDocument()
+    expect(screen.getByText(
+      'This is the desktop half of a bundled plugin, but its agent half is not installed on the currently connected backend/profile. Install it from Capabilities → Plugins.'
+    )).toBeInTheDocument()
   })
 
   // `busy === row.key` compares undefined to undefined, so an unrelated in-flight
@@ -300,7 +307,7 @@ describe('PluginsSettings ▸ agent plugins', () => {
     fireEvent.click(switches[1]!)
 
     expect(toggleAgentPlugin).toHaveBeenCalledTimes(1)
-    expect(toggleAgentPlugin).toHaveBeenCalledWith(expect.anything(), 'video_gen/fal', false, 'Could not toggle fal')
+    expect(toggleAgentPlugin).toHaveBeenCalledWith(expect.anything(), 'video_gen/fal', false, 'failed')
   })
 
   // Both guards together, deliberately: the `disabled` switch is what stops the
@@ -357,7 +364,7 @@ describe('PluginsSettings ▸ agent plugins', () => {
     ])
     renderPage()
 
-    const search = await screen.findByPlaceholderText('Search plugins…')
+    const search = await screen.findByPlaceholderText('Search plugins')
 
     fireEvent.change(search, { target: { value: 'image_gen' } })
     expect(screen.getByText('fal')).toBeInTheDocument()
@@ -369,8 +376,8 @@ describe('PluginsSettings ▸ agent plugins', () => {
 
     // A query that matches nothing is not the same as having nothing installed.
     fireEvent.change(search, { target: { value: 'zzzz' } })
-    expect(screen.getByText('No plugins match your search.')).toBeInTheDocument()
-    expect(screen.queryByText('No agent plugins installed yet.')).not.toBeInTheDocument()
+    expect(screen.getByText('No matches')).toBeInTheDocument()
+    expect(screen.queryByText('No agent plugins installed for this profile.')).not.toBeInTheDocument()
   })
 
   it('surfaces a load failure instead of an endless skeleton', async () => {
@@ -378,7 +385,7 @@ describe('PluginsSettings ▸ agent plugins', () => {
     $agentPluginsError.set('gateway down')
     renderPage()
 
-    expect(await screen.findByText('Could not load agent plugins')).toBeInTheDocument()
+    expect(await screen.findByText('Failed to load plugins')).toBeInTheDocument()
     expect(screen.getByText('gateway down')).toBeInTheDocument()
   })
 
@@ -397,42 +404,7 @@ describe('PluginsSettings ▸ agent plugins', () => {
     // Exactly one — the client half's, for the local door. A second would be the
     // agent section's, which cannot work on this platform (jsdom is not Tauri,
     // and neither is Android or iOS).
-    expect(screen.getAllByRole('button', { name: /Open plugins folder/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /Open Desktop plugins folder/ })).toHaveLength(1)
   })
 })
 
-// The manifest's declared env vars (API keys) edited under the plugin itself.
-describe('PluginsSettings ▸ agent plugin keys', () => {
-  const falKey = {
-    description: 'FAL API key',
-    is_set: false,
-    name: 'FAL_KEY',
-    password: true,
-    required: true,
-    url: null
-  }
-
-  it('saves a declared key through /api/env and refetches the list', async () => {
-    loadedWith([agentRow({ env: [falKey], key: 'video_gen/fal', name: 'fal' })])
-    renderPage()
-
-    const input = await screen.findByLabelText('FAL_KEY')
-    const save = screen.getByRole('button', { name: 'Save' })
-
-    expect(input).toHaveAttribute('type', 'password')
-    expect(save).toBeDisabled()
-
-    fireEvent.change(input, { target: { value: 'fal-secret' } })
-    fireEvent.click(save)
-
-    await waitFor(() => expect(setEnvVar).toHaveBeenCalledWith('FAL_KEY', 'fal-secret'))
-    await waitFor(() => expect(loadAgentPlugins).toHaveBeenCalled())
-  })
-
-  it('shows nothing extra for a row without declared env', () => {
-    loadedWith([agentRow({ env: [] }), agentRow({ key: 'kanban', name: 'kanban' })])
-    renderPage()
-
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
-  })
-})

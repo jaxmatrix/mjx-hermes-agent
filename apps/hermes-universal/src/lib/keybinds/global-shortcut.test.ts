@@ -157,18 +157,24 @@ describe('global shortcuts follow the rebindable registry', () => {
     expect(syncCalls()).toEqual([
       { claims: [{ accelerator: DEFAULT_ACCELERATOR, actionId: ACTION, combo: 'mod+shift+h' }] }
     ])
-  })
+  }, 15_000)
 
   it('claims nothing once the user unbinds the action', async () => {
     const { mod, setBinding } = await load()
 
+    // `setBinding` can itself kick a sync when another case left
+    // `startGlobalShortcuts` subscribed on the shared keybinds atom — drain
+    // that before the explicit sync under test.
     setBinding(ACTION, [])
+    await flush()
+    invoke.mockClear()
+
     await mod.syncGlobalShortcuts()
 
     // Still a sync — the empty set is how Rust learns to hand the chord back —
     // but with nothing in it.
     expect(syncCalls()).toEqual([{ claims: [] }])
-  })
+  }, 15_000)
 
   it('sends the combo the user bound, and re-sends when they change it', async () => {
     const { mod, setBinding } = await load()

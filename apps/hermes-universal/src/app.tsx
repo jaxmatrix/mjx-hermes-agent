@@ -1,159 +1,155 @@
-import { ActivityScreenRoot } from '@/app/activity-screen'
+import { type ComponentType, lazy, type LazyExoticComponent, Suspense, useState } from 'react'
+
 import { BackgroundCloseDialog } from '@/app/background-close-dialog'
-import { CloseConfirm } from '@/app/close-confirm'
-import { AppContextMenu } from '@/app/context-menu/coordinator'
-import { ExplorerPathDialog } from '@/app/explorer-path-dialog'
-import { HUD_SURFACE } from '@/app/hud/hud'
-import { HudWindowRoot } from '@/app/hud/hud-window'
-import { McpInstallDeepLinkDialog } from '@/app/mcp-install-deeplink-dialog'
-import { MobileController } from '@/app/mobile-controller'
-import { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
-import { QuickEntryWindowRoot } from '@/app/quick-entry/quick-entry-window'
-import { RemoteFolderPicker } from '@/app/right-pane/files/remote-picker'
-import { PluginInstallModal } from '@/app/settings/plugin-install-modal'
-import { TileWindowRoot } from '@/app/tile-window'
+import { SshPromptDialog } from '@/app/gateway/ssh-prompt-dialog'
+import type { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
+import { WindowChrome } from '@/app/shell/window-chrome'
 import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
-import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-window'
-import { ConfirmHost } from '@/components/confirm-host'
-import { FindBar } from '@/components/find-bar'
+import { hostsWindowChrome } from '@/lib/hermes-desktop/window-chrome'
+import { IS_MOBILE } from '@/lib/platform'
 import { startDeepLinkRouter } from '@/store/deep-link'
-import { startMcpHealthChecker } from '@/store/mcp-health'
-import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
+import { HUD_SURFACE, isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
 /**
- * Every window root, plus the surfaces that must exist in ALL of them.
- *
- * `RemoteFolderPicker` is one such surface: it is not a view, it is the
- * registration that gives `selectDesktopPaths` / `selectRemotePaths` somewhere
- * to send a pick. Unregistered, both resolve `[]`, which every caller reads as
- * "cancelled" — so the composer's `Files… ▸ Remote…`, Settings ▸ Archived's
- * "choose folder" and Profiles ▸ import were dead clicks in exactly the roots
- * that skip `ContribController`: the detached tile window, the HUD, and the
- * Android/iOS activity screen (which IS the Settings/Profiles surface there).
- *
- * `FindBar` (MJXHRM-387) is the second. It used to mount inside
- * `MobileController` only, so ⌘F searched the main shell and nothing else —
- * dead in a detached chat window showing a whole transcript, dead in the HUD
- * holding the same conversation, dead on the Android activity screen. It renders
- * nothing until opened and carries its own accelerator where no dispatcher
- * exists, so mounting it per window is free.
- *
- * `WakeIndicatorOverlay` (MJXHRM-389) is the fourth, for the same reason as
- * `FindBar`: it renders nothing until "Hey Hermes" fires, and the window that
- * armed the detector is not necessarily the one the app shell is in. Mounting it
- * per root costs one atom subscription and removes the question entirely.
- *
- * `CloseConfirm` (MJXHRM-390) is the third, and it was the same mistake one
- * level down: the "close a working chat?" gate mounted inside
- * `ContribController`, i.e. only in the DOCKED TILE TREE. A phone renders
- * `MobileShell` and a narrow window renders `AppShell`, so on both the gate
- * could park a pending close and nothing would ever draw the question — which
- * is why the mobile bubble strip dropped a chat mid-turn without asking.
- *
- * `ExplorerPathDialog` is the sixth, and it is the `CloseConfirm` shape again:
- * "move this chat to this folder, or only start new ones there?" is asked by a
- * titlebar button, a tree row's context menu and a search hit's kebab — three
- * transient surfaces, one of which Radix unmounts the instant it is selected.
- * The asker cannot own the dialog, so the window does.
- *
- * `BackgroundCloseDialog` is the fifth, and it is the same shape as
- * `CloseConfirm`: the WINDOW close guard is installed at boot for any window
- * that owns the app's persisted state, so the surface that answers it has to
- * exist wherever that guard does. A window whose shell forgot it would park the
- * first close and never draw the question, which is a dead titlebar button.
- *
- * `AppContextMenu` (MJXHRM-478) is the ninth, and it is the sharpest case of
- * the same rule: on Tauri every engine pops its OWN context menu for a gesture
- * the page does not cancel, so a root without the coordinator does not merely
- * lose the Hermes menu — it shows WebKitGTK's "Reload / Inspect Element" over
- * the app instead. Right-click and long-press exist in every window.
- *
- * `ConfirmHost` (MJXHRM-479) is the sixth, and it is the strongest case of all:
- * `confirm()` is called from plain async handlers and store actions that have no
- * component of their own, so the promise is parked with NOTHING on screen unless
- * a host is mounted in that window. A settings panel, a command-center action
- * and a sidebar row each reach it from a different shell, so the shell level is
- * again one level too low.
- *
- * `PluginInstallModal` (MJXHRM-455) is the eighth, and it is the seventh's
- * twin: `hermes://plugin/install` is the same "an outside link asked for
- * something" shape, and the same window must be able to draw the question.
- *
- * `McpInstallDeepLinkDialog` (MJXHRM-454) is the seventh, and it is the
- * `ConfirmHost` case again from outside the app: a `hermes://mcp/install` link
- * is opened by the OS, so whichever window happens to be listening has to be
- * able to draw the confirmation — and nothing is written to config until it is
- * answered. The router is armed here for the same reason — and it claims only
- * the window that owns the app's persisted state, so a detached tile cannot
- * race the main shell for the same link (MJXHRM-455).
- *
- * Mounted HERE rather than once per root so the next root cannot forget them —
- * the failure mode is silence, which is the kind that ships.
+ * What this window is. Constant for the window's life — the platform is decided
+ * at boot and the window kind is in the URL — so it is read once, synchronously,
+ * before anything is chosen.
  */
-export function App() {
-  startDeepLinkRouter()
-  // Both are idempotent and refuse to arm twice; the health checker also
-  // refuses in a satellite window, so the fleet gets ONE sweeper.
-  startMcpHealthChecker()
+type WindowKind = 'activity' | 'desktop' | 'hud' | 'phone' | 'quick' | 'tile' | 'wake'
 
-  return (
-    <>
-      <AppRoot />
-      <RemoteFolderPicker />
-      <FindBar />
-      <CloseConfirm />
-      <BackgroundCloseDialog />
-      {/* "Move this chat to this folder, or only start new ones there?" is asked
-          from a tree row's context menu and a search hit's menu — transient
-          surfaces Radix unmounts the instant a row is selected — so the window
-          owns the dialog, like CloseConfirm. */}
-      <ExplorerPathDialog />
-      <ConfirmHost />
-      <AppContextMenu />
-      <McpInstallDeepLinkDialog />
-      <PluginInstallModal />
-      <WakeIndicatorOverlay />
-    </>
-  )
-}
-
-function AppRoot() {
+function windowKind(): WindowKind {
   // A native screen activity (`?win=activity`, Android/iOS) renders a single
   // full-screen windowable surface — Settings / Command Center / Profiles, chosen
   // live by the current route — with its own top bar + Home, bypassing the chat
   // shell (MJX-141).
   if (isActivityWindow()) {
-    return <ActivityScreenRoot />
+    return 'activity'
   }
 
+  const surface = satelliteSurface()
+
   // The HUD (`?win=hud`) — a floating surface over other applications, holding
-  // the same conversation the summoning window had (MJXHRM-213). Branched here
-  // rather than inside the tile root because it is not a detached pane: it is a
-  // different SHAPE of the app, and the window it lives in is a native surface
-  // negotiated before this code runs (`lib/surface.ts`).
-  if (satelliteSurface() === HUD_SURFACE) {
-    return <HudWindowRoot />
+  // the same conversation the summoning window had (MJXHRM-213). Not a detached
+  // pane: a different SHAPE of the app, in a native surface negotiated before
+  // this code runs (`lib/surface.ts`).
+  if (surface === HUD_SURFACE) {
+    return 'hud'
   }
 
   // Quick Entry (`?win=quick`) — a one-line capture surface summoned by a global
-  // chord (MJXHRM-384). Branched beside the HUD because it is the same KIND of
-  // thing and the opposite trade: the HUD is the whole conversation moved
-  // somewhere else, this is a single prompt with no gateway of its own, handed
-  // to the primary window to send.
-  if (satelliteSurface() === QUICK_ENTRY_SURFACE) {
-    return <QuickEntryWindowRoot />
+  // chord (MJXHRM-384): a single prompt with no gateway of its own, handed to
+  // the primary window to send. The literal, tied to the constant by type: the
+  // module that owns it is part of Quick Entry's own chunk.
+  const quick: typeof QUICK_ENTRY_SURFACE = 'quick'
+
+  if (surface === quick) {
+    return 'quick'
   }
 
   // The wake indicator (`?win=wake`) — a light over other applications saying
-  // the phrase was heard (MJXHRM-228). The third satellite, and the one that is
-  // not a surface to work in at all: it takes no input, no focus and no route,
+  // the phrase was heard (MJXHRM-228). It takes no input, no focus and no route,
   // and it is opened and closed by the state it mirrors rather than by the user.
-  if (satelliteSurface() === WAKE_INDICATOR_SURFACE) {
-    return <WakeIndicatorWindowRoot />
+  if (surface === WAKE_INDICATOR_SURFACE) {
+    return 'wake'
   }
 
   // A tile window (`?win=tile`, or the legacy `?win=secondary`) hosts exactly
   // ONE tile — a detached pane, or the single-chat pop-out — bypassing the full
   // shell/overlays entirely (MJX-104, generalized in MJXHRM-173).
-  return isTileWindow() ? <TileWindowRoot /> : <MobileController />
+  if (isTileWindow()) {
+    return 'tile'
+  }
+
+  // The window a desktop user works in is desktop's own root; what is left is
+  // the phone (and a satellite surface nothing above claims).
+  return IS_MOBILE || surface !== null ? 'phone' : 'desktop'
 }
+
+/**
+ * One chunk per window kind: a window fetches, parses and links ITS tree and no
+ * other. A phone never loads the desktop shell, the HUD never loads the phone's,
+ * and under the dev server — native ESM, linked on demand — a root that does not
+ * link yet cannot blank a window that never mounts it.
+ *
+ * `@/app/index` is desktop's root, exactly as desktop mounts it
+ * (`ContribController`). Desktop's main.tsx does `import App from './app'`, where
+ * `./app` resolves to that file; universal has a real `src/app.tsx` — this one —
+ * and a file wins over a sibling directory, so the same specifier lands here.
+ * The shadow is deliberate: it keeps main.tsx's import line desktop's.
+ */
+const ROOTS: Record<WindowKind, LazyExoticComponent<ComponentType>> = {
+  activity: lazy(() => import('@/app/activity-screen').then(m => ({ default: m.ActivityScreenRoot }))),
+  desktop: lazy(() => import('@/app/index')),
+  hud: lazy(() => import('@/app/hud/hud-window').then(m => ({ default: m.HudWindowRoot }))),
+  phone: lazy(() => import('@/app/mobile-controller').then(m => ({ default: m.MobileController }))),
+  quick: lazy(() => import('@/app/quick-entry/quick-entry-window').then(m => ({ default: m.QuickEntryWindowRoot }))),
+  tile: lazy(() => import('@/app/tile-window').then(m => ({ default: m.TileWindowRoot }))),
+  wake: lazy(() =>
+    import('@/app/wake-indicator/wake-indicator-window').then(m => ({ default: m.WakeIndicatorWindowRoot }))
+  )
+}
+
+/** The hosts every universal root needs and desktop's root already has — see
+ *  `app/window-hosts.tsx`. Their own chunk, fetched beside the root. */
+const WindowHosts = lazy(() => import('@/app/window-hosts').then(m => ({ default: m.WindowHosts })))
+
+/**
+ * The root for this window, plus the surfaces that must exist in ALL of them.
+ *
+ * Three hosts are mounted here, statically, because desktop has no counterpart
+ * for them and every window needs them from its first frame:
+ *
+ *  - `SshPromptDialog`: an SSH dial (a switch, a tunnel's Connect, an install)
+ *    can ask for a credential or a host key from anywhere, so the window owns
+ *    the question. Desktop runs `ssh` in batch mode and never asks.
+ *  - `BackgroundCloseDialog`: the WINDOW close guard (`store/windows`) is
+ *    installed at boot for any window that owns the app's persisted state, and
+ *    parks the first close until this answers it. A window without it has a dead
+ *    titlebar button. Desktop has no tray/background mode.
+ *  - `WakeIndicatorOverlay` (MJXHRM-389): the in-window fallback light, and the
+ *    driver of the native one. It renders nothing until "Hey Hermes" fires, and
+ *    the window that armed the detector is not necessarily the one the app shell
+ *    is in. On desktop that is Electron main's job.
+ *
+ * A fourth is mounted for the windows that render desktop's root on a desktop
+ * OS: `WindowChrome` — the min / max / close buttons and the titlebar drag,
+ * which Electron's frame supplies there and a frameless Tauri window does not.
+ * Outside the Suspense boundary on purpose: a root that is still loading, or
+ * that failed to, is still a window the user has to be able to move and close.
+ *
+ * Everything else a universal root needs is `WindowHosts`. The DESKTOP MAIN
+ * WINDOW skips it: `ContribController` / `ContribWiring` already mount
+ * `AppContextMenu`, `ConfirmHost`, `FindBar`, `RemoteFolderPicker`,
+ * `PluginInstallModal`, the MCP deep-link dialog, `SessionTileCloseConfirm`
+ * (the close gate), the toasts and the palette, and `use-desktop-integrations`
+ * arms the MCP health checker.
+ *
+ * The fallback is nothing at all. `#root` is already the window's own rectangle
+ * and background before React renders (`styles.css`, `boot.ts`, and `main.tsx`'s
+ * transparent claim for the HUD), so an empty root is the correct first frame
+ * for every kind: no desktop chrome on a phone, nothing opaque in the HUD.
+ */
+export function App() {
+  // Armed here, not in a root: a `hermes://` link is opened by the OS, and the
+  // router claims only the window that owns the app's persisted state, so a
+  // detached tile cannot race the main shell for the same link (MJXHRM-455).
+  startDeepLinkRouter()
+
+  const [kind] = useState(windowKind)
+  const Root = ROOTS[kind]
+
+  return (
+    <>
+      <Suspense fallback={null}>
+        <Root />
+        {kind !== 'desktop' && <WindowHosts />}
+      </Suspense>
+      {kind === 'desktop' && hostsWindowChrome() && <WindowChrome />}
+      <BackgroundCloseDialog />
+      <SshPromptDialog />
+      <WakeIndicatorOverlay />
+    </>
+  )
+}
+
+export default App

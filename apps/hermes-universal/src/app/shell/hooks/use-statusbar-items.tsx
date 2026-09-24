@@ -1,209 +1,359 @@
-import { type ReactNode, useCallback, useEffect, useMemo } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useStore } from '@nanostores/react'
+import { useMemo } from 'react'
+import { useNavigate } from 'react-router'
 
-import { jobState } from '@/app/cron/job-state'
-import { PlatformGlyph } from '@/app/messaging/platform-icon'
-import { appViewForPath, PLUGINS_SETTINGS_ROUTE } from '@/app/routes'
+import { ConnectionSwitcher } from '@/app/chat/sidebar/connection-switcher'
+import { ProfileSwitcher } from '@/app/chat/sidebar/profile-dropdown-switcher'
+import type { CommandCenterSection } from '@/app/command-center'
 import { useApprovalModeStatusbarItem } from '@/app/shell/approval-mode-menu'
 import { ContextUsagePanel } from '@/app/shell/context-usage-panel'
-import { useFocusViewStatusbarItem } from '@/app/shell/focus-view-item'
 import { GatewayMenuPanel } from '@/app/shell/gateway-menu-panel'
-import type { StatusbarItem } from '@/app/shell/statusbar-controls'
-import { StatusDot } from '@/components/status-dot'
+import { useContextBreakdown } from '@/app/shell/hooks/use-context-breakdown'
+import { useSystemResourcesStatusbarItem } from '@/app/shell/system-resources-statusbar'
+import { $paneVisible, togglePaneVisible } from '@/components/pane-shell/tree/store'
+import { Badge } from '@/components/ui/badge'
 import { Codicon } from '@/components/ui/codicon'
-import { $pluginRecords } from '@/contrib/plugins-store'
+import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { useI18n } from '@/i18n'
-import { writeClipboardText } from '@/lib/clipboard'
-import { pathLeaf } from '@/lib/display-path'
-import { platformStatusId } from '@/lib/gateway-platforms'
-import { Activity, AlertCircle, Clock, Command, FolderOpen, Hash, Loader2, Plug, Sun, Terminal, Zap } from '@/lib/icons'
-import { IS_DESKTOP, IS_MOBILE } from '@/lib/platform'
-import { revealPathInFileManager } from '@/lib/reveal-path'
-import { projectForCwd } from '@/lib/session-membership'
-import { contextBarLabel, LiveDuration, usageContextLabel } from '@/lib/statusbar'
+import { displayPath, pathLeaf } from '@/lib/display-path'
+import {
+  Activity,
+  AlertCircle,
+  Clock,
+  Command,
+  FolderOpen,
+  Globe,
+  Hash,
+  Layers3,
+  Loader2,
+  Terminal,
+  Zap
+} from '@/lib/icons'
+import { runtimeReadinessDisplay, type RuntimeReadinessResult } from '@/lib/runtime-readiness'
+import { cacheHitLabel, contextBarLabel, LiveDuration, tokensPerSecondLabel, usageContextLabel } from '@/lib/statusbar'
+import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/store/atom'
-import { $busy, $currentUsage, $sessionId, $sessionStartedAt, $turnStartedAt } from '@/store/chat'
-import { $connection, $status } from '@/store/connection'
-import { $cronJobs, refreshCronJobs } from '@/store/cron'
-import { useDisplayPath } from '@/store/display-home'
-import { $gatewayState, requestGateway } from '@/store/gateway'
-import { $keepAwake, toggleKeepAwake } from '@/store/keep-awake'
-import { $terminalOpen, revealFileInTree, toggleTerminalOpen } from '@/store/layout'
-import { notify, notifyError } from '@/store/notifications'
-import { $activeProfile } from '@/store/profiles'
-import { $projects } from '@/store/projects'
+import { resolveVersionStatus } from '@/lib/version-status'
+import { copyFilePath, revealFile, shouldOfferLocalReveal } from '@/store/file-actions'
+import { $freeTierStatus, FREE_TIER_MODEL } from '@/store/free-tier'
+import { openFreeTierSignIn } from '@/store/free-tier-sign-in'
+import { revealFileInTree } from '@/store/layout'
+import { $onboardingGate, guidedOnboardingActive } from '@/store/onboarding-gate'
+import { $activeGatewayProfile } from '@/store/profile'
+import { $profileRailVisible } from '@/store/profile-rail-prefs'
+import { $projectTree, projectNameForCwd } from '@/store/projects'
+import {
+  $activeSessionId,
+  $busy,
+  $connection,
+  $currentCwd,
+  $currentUsage,
+  $selectedStoredSessionId,
+  $sessions,
+  $sessionStartedAt,
+  $turnStartedAt,
+  idsShareLineage,
+  sessionMatchesStoredId
+} from '@/store/session'
+import {
+  $focusedRuntimeId,
+  $focusedSessionState,
+  $focusedStoredSessionId,
+  $sessionTiles,
+  isSessionRemote
+} from '@/store/session-states'
+import { $statusbarHiddenIds } from '@/store/statusbar-prefs'
 import { $subagentsBySession, activeSubagentCount, failedSubagentCount } from '@/store/subagents'
-import { $appVersion, $gatewayRestarting, $inferenceStatus, $statusSnapshot } from '@/store/system-status'
-import { openAgentsScreen, openCronScreen, openSettingsScreen, openSystemScreen } from '@/store/windows'
-import { $effectiveCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
+import { $gatewayRestarting } from '@/store/system-actions'
+import {
+  $backendUpdateApply,
+  $backendUpdateStatus,
+  $desktopVersion,
+  $updateApply,
+  $updateStatus,
+  openUpdateOverlayFor
+} from '@/store/updates'
+import type { StatusResponse, UsageStats } from '@/types/hermes'
 
-// Emphasized (accent/blue) value for the rich list — the status VALUE stays
-// highlighted; the row's label uses the plain nav-row typography. Module scope
-// so it is not a fresh closure per render (MJXHRM-303).
-const accent = (node: ReactNode) => <span className="font-medium text-(--ui-accent)">{node}</span>
+import { CRON_ROUTE, SETTINGS_ROUTE, WEBHOOKS_ROUTE } from '../../routes'
+import type { StatusbarItem } from '../statusbar-controls'
 
-// Copy the ABSOLUTE cwd to the clipboard, toasting on success (mirrors the
-// file-tree context menu's copy-path behavior). Deliberately not the tildified
-// form the bar displays: a copied path is going into a terminal or an issue,
-// where `~` means the reader's home rather than this machine's.
-//
-// Through the OS seam, not `navigator.clipboard`: this ran on WebKitGTK, where
-// the web API is refused in cases Chromium allows, so the write could fail —
-// and with no rejection handler that failure was an unhandled promise rejection
-// with no toast either way, i.e. a menu item that looked inert (MJXHRM-415).
-function copyWorkspacePath(cwd: string, copiedMsg: string, failedMsg: string): void {
-  void writeClipboardText(cwd).then(
-    () => notify({ kind: 'success', message: copiedMsg }),
-    error => notifyError(error, failedMsg)
-  )
+const EMPTY_USAGE: UsageStats = { calls: 0, input: 0, output: 0, total: 0 }
+
+interface StatusbarItemsOptions {
+  agentsOpen: boolean
+  chatOpen: boolean
+  commandCenterOpen: boolean
+  extraLeftItems: readonly StatusbarItem[]
+  extraRightItems: readonly StatusbarItem[]
+  gatewayState: string
+  inferenceStatus: RuntimeReadinessResult | null
+  openAgents: () => void
+  openCommandCenterSection: (section: CommandCenterSection) => void
+  freshDraftReady: boolean
+  requestGateway: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>
+  statusSnapshot: StatusResponse | null
+  toggleCommandCenter: () => void
 }
 
-// Ported/adapted from apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx.
-// Assembles the left/right statusbar item descriptors from universal stores.
-// Divergences from desktop, all driven by the remote-client shape:
-//   • command-center / cron / agents open as windowable screens instead of
-//     toggling in-window panels;
-//   • version items link to the Command Center system panel (no client
-//     self-updater by design; the backend-update flow lives there);
-//   • the workspace-cwd menu drops desktop's OS-reveal entry unless we're a
-//     desktop app on a LOCAL backend (the cwd is a remote path otherwise);
-//   • chrome-y items (command-center / cron / versions) hide on phones so the
-//     touch bar stays a compact live-status strip.
-
-export function useStatusbarItems(opts?: {
-  /** `statusBar.left` contributions, appended AFTER the core left group. */
-  extraLeftItems?: readonly StatusbarItem[]
-  /** `statusBar.right` contributions, prepended BEFORE the core right group so
-   *  they sit inboard of the version/terminal cluster (desktop's ordering). */
-  extraRightItems?: readonly StatusbarItem[]
-  includeAll?: boolean
-  rich?: boolean
-}): {
-  leftStatusbarItems: readonly StatusbarItem[]
-  statusbarItems: readonly StatusbarItem[]
-} {
-  // `includeAll` re-surfaces the chrome-y items normally hidden on phones
-  // (command-center / cron / versions) — the mobile Status list wants the full
-  // set. Desktop calls with no args, so IS_MOBILE is false and nothing changes.
-  const hideOnMobile = IS_MOBILE && !opts?.includeAll
-  // `rich` (the mobile Status list) reformats a few details for at-a-glance
-  // reading — emphasized values, cron active/paused bullets. Off for the bar.
-  const rich = Boolean(opts?.rich)
+export function useStatusbarItems({
+  agentsOpen,
+  chatOpen,
+  commandCenterOpen,
+  extraLeftItems,
+  extraRightItems,
+  gatewayState,
+  inferenceStatus,
+  openAgents,
+  openCommandCenterSection,
+  requestGateway,
+  statusSnapshot,
+  toggleCommandCenter
+}: StatusbarItemsOptions) {
   const { t } = useI18n()
   const copy = t.shell.statusbar
-  const view = appViewForPath(useLocation().pathname)
-
-  // Bound to the GATEWAY's home, not this client's: the cwd is a path on the
-  // machine the session runs on (MJXHRM-394).
-  const displayPath = useDisplayPath()
-
-  const gatewayState = useStore($gatewayState)
-  const statusSnapshot = useStore($statusSnapshot)
-  const inferenceStatus = useStore($inferenceStatus)
-  const gatewayRestarting = useStore($gatewayRestarting)
-  const appVersion = useStore($appVersion)
-  const connection = useStore($connection)
-  const status = useStore($status)
-  const activeProfile = useStore($activeProfile)
-  const busy = useStore($busy)
-  const turnStartedAt = useStore($turnStartedAt)
-  const sessionStartedAt = useStore($sessionStartedAt)
-  const currentUsage = useStore($currentUsage)
-  const sessionId = useStore($sessionId)
-  const subagentsBySession = useStore($subagentsBySession)
-  const terminalOpen = useStore($terminalOpen)
-  const keepAwake = useStore($keepAwake)
-  // The active chat's project directory, falling back to the workspace root.
-  const currentCwd = useStore($effectiveCwd)
-  const cronJobs = useStore($cronJobs)
-  const pluginRecords = useStore($pluginRecords)
-  const projects = useStore($projects)
-
-  // ACTIVE PROJECT IDENTITY — the one place the bar answers "which project am I
-  // in". A cwd owned by an explicit project shows that project's name and its
-  // color/icon glyph, so the bar, the sidebar rows and the pane tabs all name
-  // the same thing the same way. Falls back to the bare workspace label when no
-  // project owns the directory.
-  const activeProject = useMemo(() => projectForCwd(currentCwd, projects), [currentCwd, projects])
-
+  const freeTierCopy = t.freeTier
   const fileMenu = t.fileMenu
-  const copyFailed = t.common.copyFailed
-  const contextUsage = usageContextLabel(currentUsage)
-  const contextBar = contextBarLabel(currentUsage)
-  const approvalModeItem = useApprovalModeStatusbarItem(activeProfile ?? '', requestGateway)
-  // Null while focus view is off — the badge only exists to explain a
-  // transcript that is hiding things.
-  const focusViewItem = useFocusViewStatusbarItem(requestGateway)
+  const primaryActiveSessionId = useStore($activeSessionId)
+  const activeGatewayProfile = useStore($activeGatewayProfile)
+  // What the button paints and flips is whether the terminal is ON SCREEN —
+  // the takeover store alone stays true behind a stacked sibling tab or a
+  // minimized zone, which lit the button for a pane the user couldn't see.
+  const terminalShowing = useStore($paneVisible('terminal'))
+  const sessionsShowing = useStore($paneVisible('sessions'))
+  const profileRailVisible = useStore($profileRailVisible)
+  const botsShowing = useStore($paneVisible('hermes-bots:pane'))
+  const primaryBusy = useStore($busy)
+  // Draft / primary composer atom — used only while the focused surface is the
+  // primary (or a draft with no runtime slice yet). A focused TILE keeps its
+  // own cwd in `$sessionStates` and must not paint the primary's workspace.
+  const primaryCwd = useStore($currentCwd)
+  const primaryUsage = useStore($currentUsage)
+  const gatewayRestarting = useStore($gatewayRestarting)
+  const primarySessionStartedAt = useStore($sessionStartedAt)
+  const primaryTurnStartedAt = useStore($turnStartedAt)
 
-  const { subagentsFailed, subagentsRunning } = useMemo(() => {
-    const lists = Object.values(subagentsBySession)
+  // The indicator must speak the same scope as the Spawn-tree panel it opens:
+  // every session's subagents, never background system actions. Only two
+  // COUNTS are read, so select scalars — a whole-map `useStore` re-ran this
+  // hook (rebuilding all ~9 statusbar items) on every subagent progress tick
+  // in ANY session, including background ones.
+  const subagentsRunning = useStoreSelector($subagentsBySession, bySession =>
+    Object.values(bySession).reduce((sum, items) => sum + activeSubagentCount(items), 0)
+  )
 
-    return {
-      subagentsFailed: lists.reduce((sum, items) => sum + failedSubagentCount(items), 0),
-      subagentsRunning: lists.reduce((sum, items) => sum + activeSubagentCount(items), 0)
+  const subagentsFailed = useStoreSelector($subagentsBySession, bySession =>
+    Object.values(bySession).reduce((sum, items) => sum + failedSubagentCount(items), 0)
+  )
+
+  // Backend truth for the free-tier chip. Refreshed on the ambient status
+  // cadence (use-status-snapshot), never polled from here.
+  const freeTier = useStore($freeTierStatus)
+  // The chip is a standing invitation to sign in. During the guided first
+  // launch that invitation lives on the guide's own ready screen; a second
+  // one in the statusbar is a distraction from the chat they are in. The
+  // subscription is what makes the check reactive.
+  useStore($onboardingGate)
+  const guideOwnsSignIn = guidedOnboardingActive()
+  const updateStatus = useStore($updateStatus)
+  const updateApply = useStore($updateApply)
+  const backendUpdateStatus = useStore($backendUpdateStatus)
+  const backendUpdateApply = useStore($backendUpdateApply)
+  const desktopVersion = useStore($desktopVersion)
+  const connection = useStore($connection)
+
+  // The FOCUSED session (interacted tile, else the primary — the same
+  // derivation the titlebar title follows): every session-scoped readout
+  // below (workspace cwd, context count, timers, busy pulse) tracks it, so
+  // clicking into a tile makes the statusbar describe THAT session.
+  const focusedStoredSessionId = useStore($focusedStoredSessionId)
+  const focusedRuntimeId = useStore($focusedRuntimeId)
+  // Whether the FOCUSED session's workspace lives on another machine: a
+  // Connections-tagged tile on a remote gateway inside a local-primary window
+  // (and vice versa) is decided by the tile's owner route, falling back to the
+  // ambient connection only when no owner is known (#115167).
+  const focusedWorkspaceRemote = useStoreSelector($sessionTiles, () => isSessionRemote(focusedStoredSessionId))
+  // `$focusedSessionState` is a projection of `$sessionStates`, which is
+  // republished on EVERY message delta — tens of times a second during a turn.
+  // Only the fields read here are selected, so an unchanged readout bails out
+  // instead of rebuilding all ~9 statusbar items per token.
+  const focusedBusy = useStoreSelector($focusedSessionState, state => Boolean(state?.busy))
+  const focusedTurnStartedAt = useStoreSelector($focusedSessionState, state => state?.turnStartedAt ?? null)
+  // `usage` is an object, so it can't be compared as a scalar. It IS however
+  // replaced wholesale rather than mutated, and only changes when the backend
+  // reports new usage — far rarer than a delta — so its reference is a valid
+  // bail-out key on its own.
+  const focusedUsage = useStoreSelector($focusedSessionState, state => state?.usage ?? null)
+  const focusedStateCwd = useStoreSelector($focusedSessionState, state => state?.cwd?.trim() || '')
+
+  // Runtime slices carry the stored id they were bound for. During a primary
+  // tab switch the runtime id can lag a frame behind the new selection — the
+  // slice still describes the PREVIOUS chat. Gate live cwd on ownership so we
+  // never paint session A's workspace while the tab already shows session B.
+  const focusedStateStoredId = useStoreSelector($focusedSessionState, state => state?.storedSessionId?.trim() || null)
+
+  const selectedStoredSessionId = useStore($selectedStoredSessionId)
+  const primaryFocused = !focusedStoredSessionId || focusedStoredSessionId === selectedStoredSessionId
+
+  const activeSessionId = primaryFocused ? primaryActiveSessionId : (focusedRuntimeId ?? null)
+  const busy = primaryFocused ? primaryBusy : focusedBusy
+
+  // EMPTY_USAGE (module constant) keeps the fallback referentially stable —
+  // a fresh `{...}` each render would bust the usage-label memos below.
+  const currentUsage = primaryFocused ? primaryUsage : (focusedUsage ?? EMPTY_USAGE)
+
+  const turnStartedAt = primaryFocused ? primaryTurnStartedAt : focusedTurnStartedAt
+
+  // A tile's session-start + cold cwd come from its stored row (the cache only
+  // knows runtime state). Only these scalars are read off `$sessions`, so
+  // select them — a whole-list `useStore` re-ran the hook on every session-list
+  // write (title updates, poll refreshes, archives).
+  const focusedRowStartedAt = useStoreSelector($sessions, sessions =>
+    focusedStoredSessionId
+      ? (sessions.find(s => sessionMatchesStoredId(s, focusedStoredSessionId))?.started_at ?? null)
+      : null
+  )
+
+  const focusedRowCwd = useStoreSelector($sessions, sessions => {
+    if (!focusedStoredSessionId) {
+      return ''
     }
-  }, [subagentsBySession])
 
-  // ---- gateway-health derivation (matches the desktop hook) ----
+    const row = sessions.find(s => sessionMatchesStoredId(s, focusedStoredSessionId))
+
+    return row?.cwd?.trim() || ''
+  })
+
+  // Which backend the focused row runs on: a Connections-tagged row names its
+  // gateway; an untagged one is the window's primary. Decides whether the OS
+  // file manager on this computer can show its workspace at all.
+  const focusedRowConnectionId = useStoreSelector($sessions, sessions =>
+    focusedStoredSessionId
+      ? sessions.find(s => sessionMatchesStoredId(s, focusedStoredSessionId))?.connection_id?.trim() || ''
+      : ''
+  )
+
+  const offerLocalReveal = shouldOfferLocalReveal(focusedRowConnectionId, connection?.mode === 'remote')
+
+  // Live runtime cwd is authoritative once it belongs to the focused chat
+  // (agent can relocate mid-turn). Until then — cold tabs, mid-switch lag —
+  // the stored session row is the selection's project. Primary drafts fall
+  // through to `$currentCwd`. A focused TILE must never inherit the primary's
+  // workspace — an empty tile cwd stays empty rather than lying about another
+  // project's path.
+  //
+  // Lineage match is a pure derivation of ($sessions + the two ids). Select it
+  // so a session-list write only re-renders when the answer actually flips —
+  // not on every title/archive refresh of an unrelated row.
+  const liveCwdSharesFocusLineage = useStoreSelector($sessions, sessions => {
+    if (!focusedStoredSessionId || !focusedStateStoredId) {
+      return false
+    }
+
+    return idsShareLineage(focusedStoredSessionId, focusedStateStoredId, sessions)
+  })
+
+  const liveCwdBelongsToFocus =
+    Boolean(focusedStateCwd) &&
+    (!focusedStoredSessionId ||
+      !focusedStateStoredId ||
+      focusedStateStoredId === focusedStoredSessionId ||
+      liveCwdSharesFocusLineage)
+
+  const currentCwd = (
+    (liveCwdBelongsToFocus ? focusedStateCwd : '') ||
+    focusedRowCwd ||
+    (primaryFocused ? primaryCwd : '') ||
+    ''
+  ).trim()
+
+  // Derive the workspace's project name from the already-cached project tree
+  // (backend truth via projects.*), so the status item labels by project without
+  // a second per-session copy of the same fact. Re-derives whenever the cwd or
+  // the tree changes; null (no named project) falls back to the cwd leaf below.
+  const projectTree = useStore($projectTree)
+  const projectName = useMemo(() => projectNameForCwd(currentCwd), [currentCwd, projectTree])
+
+  const sessionStartedAt = primaryFocused
+    ? primarySessionStartedAt
+    : focusedRowStartedAt
+      ? focusedRowStartedAt * 1000
+      : null
+
+  // The backend only knows a session's MEASURED occupancy once a turn has run
+  // in this process, so a resumed conversation reports none and the gauge had
+  // nothing to paint — turning it on looked like it did nothing until you sent
+  // a message. Estimate from the live prompt + transcript instead, on the same
+  // read-only RPC the popover uses, so the readout is right the moment it's on
+  // screen. Gated on the gauge being shown — the bar itself is unmounted while
+  // toggled off, so this covers the rest.
+  const contextItemHidden = useStore($statusbarHiddenIds).includes('context-usage')
+
+  const { breakdown: contextBreakdown, loading: contextBreakdownLoading } = useContextBreakdown({
+    busy,
+    enabled: !contextItemHidden,
+    requestGateway,
+    sessionId: activeSessionId
+  })
+
+  // The breakdown wins whenever we have one, for two reasons: it reports the
+  // MEASURED occupancy once the backend has it (falling back to the estimate
+  // only before that), and it is keyed to the session it describes. The global
+  // `$currentUsage` is neither — a resumed session reports no context fields,
+  // and the store merges rather than replaces, so the PREVIOUS session's gauge
+  // numbers survive the switch. Mid-turn there's no breakdown by design and
+  // the streamed usage carries the gauge.
+  const gaugeUsage = useMemo<UsageStats>(
+    () =>
+      contextBreakdown
+        ? {
+            ...currentUsage,
+            context_estimated: contextBreakdown.context_estimated,
+            context_source: contextBreakdown.context_source,
+            context_max: contextBreakdown.context_max,
+            context_percent: contextBreakdown.context_percent,
+            context_used: contextBreakdown.context_used
+          }
+        : currentUsage,
+    [contextBreakdown, currentUsage]
+  )
+
+  const contextUsage = useMemo(() => usageContextLabel(gaugeUsage), [gaugeUsage])
+  const contextBar = useMemo(() => contextBarLabel(gaugeUsage), [gaugeUsage])
+  // Both ride the same usage payload the context meter does (session.usage
+  // ticks mid-turn, message.complete after) — no extra RPC, no polling.
+  const cacheHit = cacheHitLabel(currentUsage)
+  const tokensPerSecond = tokensPerSecondLabel(currentUsage)
+
+  const approvalModeItem = useApprovalModeStatusbarItem(activeGatewayProfile, requestGateway)
+  const systemResourcesItem = useSystemResourcesStatusbarItem()
+
+  const gatewayMenuContent = useMemo(
+    () => (close: () => void) => (
+      <GatewayMenuPanel
+        gatewayState={gatewayState}
+        inferenceStatus={inferenceStatus}
+        onClose={close}
+        onOpenSystem={() => openCommandCenterSection('system')}
+        statusSnapshot={statusSnapshot}
+      />
+    ),
+    [gatewayState, inferenceStatus, openCommandCenterSection, statusSnapshot]
+  )
+
   const gatewayOpen = gatewayState === 'open'
   const gatewayConnecting = gatewayState === 'connecting'
   const inferenceReady = gatewayOpen && inferenceStatus?.ready === true
   const gatewayDegraded = gatewayOpen || gatewayConnecting
-
-  // Load the backend workspace root so the cwd segment can render. Re-runs when
-  // the gateway (re)opens: `resetWorkspaceCwd` clears it on reconnect, and
-  // `ensureWorkspaceCwd` no-ops when it's already loaded.
-  useEffect(() => {
-    if (gatewayOpen) {
-      void ensureWorkspaceCwd()
-    }
-  }, [gatewayOpen])
-
-  // The rich (mobile) list shows cron active/paused counts, so pull the job list
-  // when it mounts. The bar doesn't use counts, so this only runs for `rich`.
-  useEffect(() => {
-    if (rich && gatewayOpen) {
-      void refreshCronJobs()
-    }
-  }, [rich, gatewayOpen])
-
-  // Cron active/paused split (rich only) — active = scheduled/enabled/running,
-  // paused = paused; the rest (disabled/completed/error) aren't counted here.
-  const { cronActive, cronPaused } = useMemo(() => {
-    let active = 0
-    let paused = 0
-
-    for (const job of cronJobs) {
-      const state = jobState(job)
-
-      if (state === 'paused') {
-        paused += 1
-      } else if (state === 'scheduled' || state === 'enabled' || state === 'running') {
-        active += 1
-      }
-    }
-
-    return { cronActive: active, cronPaused: paused }
-  }, [cronJobs])
-
-  // Plugin inventory counts for the mobile Plugins row. A failed plugin is worth
-  // surfacing here: it's the only place a phone user would notice one.
-  const { pluginFailedCount, pluginLoadedCount } = useMemo(() => {
-    const records = Object.values(pluginRecords)
-
-    return {
-      pluginFailedCount: records.filter(record => record.status === 'error').length,
-      pluginLoadedCount: records.filter(record => record.status === 'loaded').length
-    }
-  }, [pluginRecords])
+  const readinessDisplay = runtimeReadinessDisplay(inferenceStatus)
 
   const gatewayDetail = gatewayOpen
-    ? inferenceStatus?.ready
-      ? copy.gatewayReady
-      : inferenceStatus
-        ? copy.gatewayNeedsSetup
-        : copy.gatewayChecking
+    ? {
+        checking: copy.gatewayChecking,
+        needs_setup: copy.gatewayNeedsSetup,
+        ready: copy.gatewayReady,
+        unavailable: copy.gatewayUnavailable
+      }[readinessDisplay]
     : gatewayConnecting
       ? copy.gatewayConnecting
       : copy.gatewayOffline
@@ -211,466 +361,398 @@ export function useStatusbarItems(opts?: {
   const gatewayClassName = inferenceReady
     ? undefined
     : gatewayDegraded
-      ? 'text-(--ui-yellow) hover:text-(--ui-yellow)'
+      ? 'text-amber-600 hover:text-amber-600'
       : 'text-destructive hover:text-destructive'
 
-  const gatewayMenuContent = useCallback(
-    (close: () => void) => (
-      <GatewayMenuPanel
-        gatewayState={gatewayState}
-        // The rich (mobile Status) list renders this panel in a cramped drawer
-        // where a connect form doesn't fit — so there "Change gateway" hands off
-        // to Settings ▸ Gateway (the phone's only route to it) instead of
-        // expanding in place.
-        gatewaySwitch={rich ? 'link' : 'embedded'}
-        inferenceStatus={inferenceStatus}
-        onClose={close}
-        onOpenSystem={() => void openSystemScreen()}
-        statusSnapshot={statusSnapshot}
-      />
-    ),
-    [gatewayState, inferenceStatus, rich, statusSnapshot]
-  )
+  const clientVersionItem = useMemo<StatusbarItem>(() => {
+    const applying = updateApply.applying || updateApply.stage === 'restart'
 
-  const isRemoteBackend = connection?.mode === 'remote' || connection?.mode === 'cloud' || connection?.mode === 'ssh'
-
-  const backendVersion = status?.version
-
-  // Gateway status glyphs for the rich gateway row: a thunder (api-server
-  // running = accent/blue, else orange) + up to 3 messaging platforms, painted
-  // in brand color when connected and greyed otherwise. Connected first.
-  const gatewayRunning = statusSnapshot?.gateway_running === true
-
-  const messagingPlatforms = useMemo(
-    () =>
-      Object.entries(statusSnapshot?.gateway_platforms ?? {})
-        // A secondary profile's adapters report as `<profile>:<platform>`, so
-        // both the api_server filter and the icon lookup have to read the bare
-        // platform id — otherwise `work:api_server` renders as a messaging
-        // platform and `work:telegram` loses its brand glyph to a "W" monogram.
-        .map(([id, platform]) => [platformStatusId(id), platform, id] as const)
-        .filter(([id]) => id !== 'api_server')
-        .sort(([, a], [, b]) => Number(b.state === 'connected') - Number(a.state === 'connected'))
-        .slice(0, 3),
-    [statusSnapshot]
-  )
-
-  const gatewayIcons = useMemo(
-    () => (
-      <span className="flex items-center gap-1.5">
-        <Zap className={cn('size-4', gatewayRunning ? 'text-(--ui-accent)' : 'text-(--ui-orange)')} />
-        {messagingPlatforms.map(([id, platform, key]) => (
-          <PlatformGlyph key={key} muted={platform.state !== 'connected'} platformId={id} platformName={id} />
-        ))}
-      </span>
-    ),
-    [gatewayRunning, messagingPlatforms]
-  )
-
-  // Inference readiness text ("Ready" / "Needs setup" / …) — accent when ready.
-  const gatewayReadyText = gatewayRestarting ? copy.gatewayRestarting : gatewayDetail
-
-  const gatewayRichDetail = useMemo(
-    () => (
-      <span className="flex items-center gap-2">
-        {inferenceReady ? accent(gatewayReadyText) : gatewayReadyText}
-        {gatewayIcons}
-      </span>
-    ),
-    [gatewayIcons, gatewayReadyText, inferenceReady]
-  )
-
-  // Cron active/paused bullet counts for the rich cron row.
-  const cronDetail = useMemo(
-    () => (
-      <span className="flex items-center gap-2">
-        <span className="flex items-center gap-1">
-          <StatusDot tone="good" />
-          {cronActive}
-        </span>
-        <span className="flex items-center gap-1">
-          <StatusDot tone="warn" />
-          {cronPaused}
-        </span>
-      </span>
-    ),
-    [cronActive, cronPaused]
-  )
-
-  // MEMOIZED (MJXHRM-303). These arrays used to be bare literals in the function
-  // body, so every item object, every JSX `icon` and every inline `onSelect` was
-  // a fresh identity on every render — and the hook re-runs on any of the 20
-  // stores subscribed above. `StatusbarItemView` could therefore never bail out;
-  // desktop measured 1,446 wasted renders of 2,174 during a five-tab streaming
-  // run at the equivalent site.
-  //
-  // The dependency lists are LONGER than desktop's, deliberately: universal has
-  // `rich` (the mobile Status list) and `hideOnMobile` gating that desktop lacks,
-  // and both change what several items render.
-  // MEMOIZED PER ITEM (MJXHRM-303), not per array — and the difference is the
-  // whole ticket. One `useMemo` around each array would still rebuild all 14
-  // items whenever any of its ~20 dependencies moved, so a terminal toggle would
-  // hand `StatusbarItemView` a fresh `running-timer` and the memo would miss on
-  // 13 of 14 items. Each item now changes only when its OWN inputs change; the
-  // arrays below are assembled from those stable references.
-  //
-  // The dependency lists are LONGER than desktop's, deliberately: universal has
-  // `rich` (the mobile Status list) and `hideOnMobile` gating that desktop lacks,
-  // and both change what several items render.
-  const commandCenterItem: StatusbarItem = useMemo(
-    () => ({
-      className: cn('w-7 justify-center px-0', view === 'command-center' && 'bg-accent/55 text-foreground'),
-      hidden: hideOnMobile,
-      icon: <Command className="size-3.5" />,
-      id: 'command-center',
-      // Locked: hiding the door to the Command Center from the bar it lives in
-      // would strand the user.
-      lockedVisible: true,
-      onSelect: () => void openSystemScreen(),
-      title: copy.openCommandCenter,
-      toggleLabel: copy.toggleCommandCenter,
-      variant: 'action'
-    }),
-    [copy, hideOnMobile, view]
-  )
-
-  const gatewayItem: StatusbarItem = useMemo(
-    () => ({
-      className: gatewayRestarting ? undefined : gatewayClassName,
-      // Rich: readiness text (is inference ready) + status glyphs (api-server
-      // thunder + messaging platforms). Bar: the plain state text.
-      detail: rich ? gatewayRichDetail : gatewayReadyText,
-      icon: gatewayRestarting ? (
-        <Codicon className="size-3 animate-spin" name="loading" size="0.75rem" />
-      ) : inferenceReady ? (
-        <Activity className="size-3" />
-      ) : (
-        <AlertCircle className="size-3" />
-      ),
-      id: 'gateway-health',
-      toggleLabel: copy.gateway,
-      label: copy.gateway,
-      // Wider than the other menus: it hosts the embedded gateway configurator
-      // (mode cards + URL/token inputs), which is unusable at w-72.
-      menuClassName: 'w-[22rem]',
-      menuContent: gatewayMenuContent,
-      title: inferenceStatus?.reason || copy.gatewayTitle,
-      variant: 'menu'
-    }),
-    [
+    const status = resolveVersionStatus({
+      applying,
+      applyMessage: updateApply.message,
+      behind: updateStatus?.behind ?? 0,
+      branch: updateStatus?.branch,
       copy,
-      gatewayClassName,
-      gatewayMenuContent,
-      gatewayReadyText,
-      gatewayRestarting,
-      gatewayRichDetail,
-      inferenceReady,
-      inferenceStatus,
-      rich
-    ]
-  )
+      remote: connection?.mode === 'remote',
+      restarting: updateApply.stage === 'restart',
+      sha: updateStatus?.currentSha?.slice(0, 7) ?? null,
+      target: 'client',
+      updateAvailable: updateStatus?.updateAvailable,
+      version: desktopVersion?.appVersion
+    })
 
-  const workspaceItem: StatusbarItem = useMemo(
-    () => ({
-      // The rich list shows the full path as the value; the bar keeps the short
-      // workspace label only.
-      //
-      // Tildified. `lib/display-path.ts` existed for exactly this and nothing
-      // under `app/shell/` was calling it, so every full-path surface in the bar
-      // showed a raw `/home/<user>/…` — the one part of the path that is never
-      // the information the reader wants, and the widest.
-      detail: rich && currentCwd ? displayPath(currentCwd) : undefined,
-      hidden: !currentCwd,
-      // A project-owned cwd wears the project's own glyph, tinted by its color;
-      // an unowned one keeps the neutral folder.
-      icon: activeProject ? (
-        <Codicon
-          name={activeProject.icon || 'folder-library'}
-          size="0.75rem"
-          style={activeProject.color ? { color: activeProject.color } : undefined}
-        />
-      ) : (
-        <FolderOpen className="size-3" />
-      ),
-      id: 'workspace-cwd',
-      toggleLabel: copy.toggleWorkspace,
-      label: activeProject?.name || (currentCwd ? pathLeaf(currentCwd) : undefined),
-      menuItems: currentCwd
-        ? [
-            {
-              id: 'copy-workspace-path',
-              label: fileMenu.copyPath,
-              onSelect: () => copyWorkspacePath(currentCwd, fileMenu.pathCopied, copyFailed),
-              title: displayPath(currentCwd)
-            },
-            {
-              // OS reveal only makes sense on a desktop app talking to a local
-              // backend — on remote/cloud the cwd is a path on the remote box.
-              hidden: !(IS_DESKTOP && !isRemoteBackend),
-              id: 'reveal-workspace-finder',
-              label: fileMenu.revealFileManager,
-              onSelect: () => void revealPathInFileManager(currentCwd),
-              title: displayPath(currentCwd)
-            },
-            {
-              id: 'reveal-workspace-sidebar',
-              label: fileMenu.revealInSidebar,
-              onSelect: () => revealFileInTree(currentCwd),
-              title: displayPath(currentCwd)
-            }
-          ]
-        : undefined,
-      title: displayPath(currentCwd) || undefined,
-      variant: 'menu'
-    }),
-    [activeProject, copy, copyFailed, currentCwd, displayPath, fileMenu, isRemoteBackend, rich]
-  )
-
-  const agentsItem: StatusbarItem = useMemo(
-    () => ({
-      className: cn(
-        view === 'agents' && 'bg-accent/55 text-foreground',
-        subagentsFailed > 0 && 'text-destructive hover:text-destructive'
-      ),
-      detail:
-        subagentsFailed > 0
-          ? copy.failed(subagentsFailed)
-          : subagentsRunning > 0
-            ? copy.subagents(subagentsRunning)
-            : // The rich list always shows the running count (even 0); the bar
-              // shows nothing when idle.
-              rich
-              ? copy.subagents(subagentsRunning)
-              : undefined,
-      icon:
-        subagentsFailed > 0 ? (
-          <AlertCircle className="size-3" />
-        ) : subagentsRunning > 0 ? (
-          <Loader2 className="size-3 animate-spin" />
-        ) : (
-          <Codicon name="hubot" size="0.75rem" />
-        ),
-      actionId: 'nav.agents',
-      id: 'agents',
-      label: copy.agents,
-      // Windowable surface, like Command Center and Cron: `openAgentsScreen`
-      // gets the native screen activity on Android and a plain route change
-      // everywhere else. A bare `to` would navigate in place and skip it.
-      onSelect: () => void openAgentsScreen(),
-      title: copy.openAgents,
-      toggleLabel: copy.agents,
-      variant: 'action'
-    }),
-    [copy, rich, subagentsFailed, subagentsRunning, view]
-  )
-
-  const cronItem: StatusbarItem = useMemo(
-    () => ({
-      detail: rich ? cronDetail : undefined,
-      hidden: hideOnMobile,
-      icon: <Clock className="size-3" />,
-      id: 'cron',
-      label: copy.cron,
-      // Windowable surface, like Command Center: `openCronScreen` gets the native
-      // screen activity on Android and a plain route change everywhere else.
-      // A bare `to` would navigate in-place and skip that.
-      onSelect: () => void openCronScreen(),
-      title: copy.openCron,
-      toggleLabel: copy.cron,
-      variant: 'action'
-    }),
-    [copy, cronDetail, hideOnMobile, rich]
-  )
-
-  const leftStatusbarItems: StatusbarItem[] = useMemo(
-    () => [commandCenterItem, gatewayItem, workspaceItem, agentsItem, cronItem],
-    [commandCenterItem, gatewayItem, workspaceItem, agentsItem, cronItem]
-  )
-
-  const runningTimerItem: StatusbarItem = useMemo(
-    () => ({
-      detail: <LiveDuration since={turnStartedAt} />,
-      hidden: !busy || !turnStartedAt,
-      icon: <Loader2 className="size-3 animate-spin" />,
-      id: 'running-timer',
-      label: copy.turnRunning,
-      title: copy.currentTurnElapsed,
-      toggleLabel: copy.toggleRunningTimer,
-      variant: 'text'
-    }),
-    [busy, copy, turnStartedAt]
-  )
-
-  const contextUsageItem: StatusbarItem = useMemo(
-    () => ({
-      detail: contextBar || undefined,
-      hidden: !contextUsage,
-      id: 'context-usage',
-      label: contextUsage,
-      menuAlign: 'end',
-      menuClassName: 'w-auto border-(--ui-stroke-secondary) p-0',
-      menuContent: (
-        <ContextUsagePanel currentUsage={currentUsage} requestGateway={requestGateway} sessionId={sessionId} />
-      ),
-      title: copy.openContextUsage,
-      toggleLabel: copy.toggleContextUsage,
-      variant: 'menu'
-    }),
-    [contextBar, contextUsage, copy, currentUsage, sessionId]
-  )
-
-  const sessionTimerItem: StatusbarItem = useMemo(
-    () => ({
-      detail: <LiveDuration since={sessionStartedAt} />,
-      hidden: !sessionStartedAt,
-      id: 'session-timer',
-      label: copy.session,
-      title: copy.runtimeSessionElapsed,
-      toggleLabel: copy.toggleSessionTimer,
-      variant: 'text'
-    }),
-    [copy, sessionStartedAt]
-  )
-
-  const approvalItem: StatusbarItem = useMemo(
-    () => ({
-      ...approvalModeItem,
-      // Rich: a fixed "Approval" label with the mode name as a muted value; drop
-      // the bar-only background className.
-      ...(rich ? { className: undefined, detail: accent(approvalModeItem.label), label: 'Approval' } : {}),
-      hidden: gatewayState !== 'open',
-      toggleLabel: copy.toggleApprovalMode
-    }),
-    [approvalModeItem, copy, gatewayState, rich]
-  )
-
-  const terminalItem: StatusbarItem = useMemo(
-    () => ({
-      actionId: 'view.showTerminal',
-      className: cn('w-7 justify-center px-0', terminalOpen && 'bg-accent/55 text-foreground'),
-      icon: <Terminal className="size-3.5" />,
-      id: 'terminal',
-      onSelect: () => toggleTerminalOpen(),
-      title: terminalOpen ? copy.hideTerminal : copy.showTerminal,
-      toggleLabel: copy.toggleTerminal,
-      variant: 'action'
-    }),
-    [copy, terminalOpen]
-  )
-
-  const keepAwakeItem: StatusbarItem = useMemo(
-    () => ({
-      // Quick reach for the Advanced-page toggle: a long unattended run is
-      // exactly when you notice the machine is about to sleep. Lit while the
-      // inhibitor is held. Desktop-only — `hidden` also keeps it out of the
-      // mobile Status list, which renders with `includeAll`.
-      className: cn('w-7 justify-center px-0', keepAwake && 'bg-accent/55 text-foreground'),
-      hidden: !IS_DESKTOP,
-      icon: <Sun className="size-3.5" />,
-      id: 'keep-awake',
-      onSelect: () => toggleKeepAwake(),
-      title: keepAwake ? copy.keepAwakeOn : copy.keepAwakeOff,
-      toggleLabel: copy.toggleKeepAwake,
-      variant: 'action'
-    }),
-    [copy, keepAwake]
-  )
-
-  const clientVersionItem: StatusbarItem = useMemo(
-    () => ({
-      // Rich: "Client" + the version as a muted value on the right; the bar shows
-      // the combined "client vX" label.
-      detail: rich && appVersion ? accent(`v${appVersion}`) : undefined,
-      hidden: hideOnMobile || !appVersion,
-      icon: <Hash className="size-3" />,
+    return {
+      className: status.hasUpdate ? 'text-primary hover:text-primary' : undefined,
+      detail: status.detail,
+      hidden: status.unknown,
+      icon: applying ? <Loader2 className="size-3 animate-spin" /> : <Hash className="size-3" />,
       id: 'version-client',
-      label: rich ? 'Client' : appVersion ? copy.clientLabel(appVersion) : copy.unknown,
-      // Locked: the version pill is also the update door.
+      label: status.label,
+      // Update state is not a preference: hiding it is how a user misses that
+      // their client is behind. Listed in the menu, but locked on.
       lockedVisible: true,
-      onSelect: () => void openSystemScreen(),
-      title: appVersion ? copy.clientLabel(appVersion) : undefined,
+      onSelect: () => openUpdateOverlayFor('client'),
+      title: status.tooltip,
       toggleLabel: copy.toggleVersion,
       variant: 'action'
-    }),
-    [appVersion, copy, hideOnMobile, rich]
-  )
+    }
+  }, [
+    desktopVersion?.appVersion,
+    connection?.mode,
+    copy,
+    updateApply.applying,
+    updateApply.message,
+    updateApply.stage,
+    updateStatus?.behind,
+    updateStatus?.branch,
+    updateStatus?.currentSha,
+    updateStatus?.updateAvailable
+  ])
 
-  const backendVersionItem: StatusbarItem = useMemo(
-    () => ({
-      detail: rich && backendVersion ? accent(`v${backendVersion}`) : undefined,
-      hidden: hideOnMobile || !isRemoteBackend || !backendVersion,
-      icon: <Hash className="size-3" />,
+  const backendVersionItem = useMemo<StatusbarItem | null>(() => {
+    if (connection?.mode !== 'remote') {
+      return null
+    }
+
+    const applying = backendUpdateApply.applying || backendUpdateApply.stage === 'restart'
+
+    const status = resolveVersionStatus({
+      applying,
+      applyMessage: backendUpdateApply.message,
+      behind: backendUpdateStatus?.behind ?? 0,
+      copy,
+      remote: true,
+      restarting: backendUpdateApply.stage === 'restart',
+      target: 'backend',
+      updateAvailable: backendUpdateStatus?.updateAvailable,
+      version: statusSnapshot?.version
+    })
+
+    return {
+      className: status.hasUpdate ? 'text-primary hover:text-primary' : undefined,
+      hidden: status.unknown,
+      icon: applying ? <Loader2 className="size-3 animate-spin" /> : <Hash className="size-3" />,
       id: 'version-backend',
-      label: rich ? 'Backend' : backendVersion ? copy.backendLabel(backendVersion) : copy.unknown,
+      label: status.label,
       lockedVisible: true,
-      onSelect: () => void openSystemScreen(),
-      title: backendVersion ? copy.backendVersion(backendVersion) : undefined,
+      onSelect: () => openUpdateOverlayFor('backend'),
+      title: status.tooltip,
       toggleLabel: copy.toggleBackendVersion,
       variant: 'action'
-    }),
-    [backendVersion, copy, hideOnMobile, isRemoteBackend, rich]
-  )
+    }
+  }, [
+    connection?.mode,
+    statusSnapshot?.version,
+    backendUpdateStatus?.behind,
+    backendUpdateStatus?.updateAvailable,
+    backendUpdateApply.applying,
+    backendUpdateApply.message,
+    backendUpdateApply.stage,
+    copy
+  ])
 
-  const pluginsItem: StatusbarItem = useMemo(
-    () => ({
-      // Plugin inventory at a glance, routing to the page that manages it. The
-      // phone never mounts the Statusbar, so this only ever appears in the mobile
-      // Status list — `includeAll` is exactly that caller. Desktop has no such
-      // row: its titlebar reaches Settings directly.
-      detail: rich
-        ? pluginFailedCount > 0
-          ? accent(`${pluginLoadedCount} · ${pluginFailedCount} failed`)
-          : accent(String(pluginLoadedCount))
-        : undefined,
-      hidden: !opts?.includeAll,
-      icon: <Plug className="size-3.5" />,
-      id: 'plugins',
-      label: t.settings.plugins.title,
-      onSelect: () => void openSettingsScreen(PLUGINS_SETTINGS_ROUTE),
-      title: t.settings.plugins.title,
-      variant: 'action'
-    }),
-    [opts?.includeAll, pluginFailedCount, pluginLoadedCount, rich, t.settings.plugins.title]
-  )
-
-  const statusbarItems: StatusbarItem[] = useMemo(
+  const coreLeftStatusbarItems = useMemo<readonly StatusbarItem[]>(
     () => [
-      runningTimerItem,
-      contextUsageItem,
-      sessionTimerItem,
-      ...(focusViewItem ? [focusViewItem] : []),
-      approvalItem,
-      terminalItem,
-      keepAwakeItem,
-      clientVersionItem,
-      backendVersionItem,
-      pluginsItem
+      {
+        className: `w-7 justify-center px-0${commandCenterOpen ? ' bg-accent/55 text-foreground' : ''}`,
+        icon: <Command className="size-3.5" />,
+        id: 'command-center',
+        // The system icon: the way into every other surface, including the
+        // settings that would bring a hidden item back. Never hideable.
+        lockedVisible: true,
+        onSelect: toggleCommandCenter,
+        title: commandCenterOpen ? copy.closeCommandCenter : copy.openCommandCenter,
+        toggleLabel: copy.toggleCommandCenter,
+        variant: 'action'
+      },
+      {
+        hidden: !sessionsShowing,
+        id: 'gateway-switcher',
+        lockedVisible: true,
+        render: () => <StatusbarGatewaySwitcher />
+      },
+      {
+        // The rail's stand-in: the profile picker moves down here while the
+        // colored strip is hidden, so switching profiles always has a door.
+        hidden: !sessionsShowing || profileRailVisible,
+        id: 'profile-switcher',
+        lockedVisible: true,
+        render: () => <ProfileSwitcher compact />
+      },
+      {
+        className: gatewayRestarting ? undefined : gatewayClassName,
+        detail: gatewayRestarting ? copy.gatewayRestarting : gatewayDetail,
+        hidden: botsShowing,
+        icon: gatewayRestarting ? (
+          <GlyphSpinner ariaLabel={copy.gatewayRestarting} className="size-3" />
+        ) : inferenceReady ? (
+          <Activity className="size-3" />
+        ) : (
+          <AlertCircle className="size-3" />
+        ),
+        id: 'gateway-health',
+        label: copy.gateway,
+        menuClassName: 'w-72',
+        menuContent: gatewayMenuContent,
+        // Tip only when there's a real status reason — not "gateway status" restating the label.
+        title: inferenceStatus?.reason || undefined,
+        toggleLabel: copy.gateway,
+        variant: 'menu'
+      },
+      {
+        // The model id is the quiet part; the sign-in is the action, so it is
+        // solid and set off by a gap instead of touching the label.
+        detail: (
+          <span className="inline-flex items-center gap-2">
+            <span className="font-mono text-[0.625rem] text-muted-foreground/70">
+              {freeTier?.model ?? FREE_TIER_MODEL}
+            </span>
+            {/* The class merger drops Badge's own leading-none behind the size's
+                font-size class, so the badge grows to the inherited 1.5 leading and
+                overhangs an 11px label. Restating it here keeps it 11.6px tall. */}
+            <Badge className="leading-none" size="xs" variant="solid">
+              {freeTierCopy.signIn}
+            </Badge>
+          </span>
+        ),
+        // Shown while a free-tier identity exists and the tier is on: it names the
+        // identity that carries the connectors (and inference when nothing else
+        // does), and it is the persistent way in to the sign-in.
+        hidden: !freeTier?.available || guideOwnsSignIn,
+        icon: <Codicon name="account" size="0.75rem" />,
+        id: 'free-tier',
+        label: freeTierCopy.providerName,
+        onSelect: () => openFreeTierSignIn(),
+        title: freeTierCopy.statusLabel(freeTier?.model ?? FREE_TIER_MODEL),
+        toggleLabel: copy.toggleFreeTier,
+        variant: 'action'
+      },
+      {
+        hidden: !currentCwd,
+        icon: <FolderOpen className="size-3" />,
+        id: 'workspace-cwd',
+        // Prefer the named project; fall back to the cwd leaf. Hover tip uses
+        // the shared display formatter (home → ~) so statusbar and branch bar
+        // agree on how a path looks.
+        label: projectName || (currentCwd ? pathLeaf(currentCwd) : undefined),
+        menuItems: currentCwd
+          ? [
+              {
+                id: 'copy-workspace-path',
+                label: fileMenu.copyPath,
+                onSelect: () => void copyFilePath(currentCwd),
+                title: displayPath(currentCwd)
+              },
+              // The OS file manager needs the local filesystem; a remote
+              // backend's workspace is not on this computer (the sidebar
+              // trees already hide reveal the same way), and a row tagged
+              // with another gateway is never local either.
+              ...(focusedWorkspaceRemote || !offerLocalReveal
+                ? []
+                : [
+                    {
+                      id: 'reveal-workspace-finder',
+                      label: fileMenu.revealFileManager,
+                      onSelect: () => void revealFile(currentCwd),
+                      title: displayPath(currentCwd)
+                    }
+                  ]),
+              {
+                id: 'reveal-workspace-sidebar',
+                label: fileMenu.revealInSidebar,
+                onSelect: () => revealFileInTree(currentCwd),
+                title: displayPath(currentCwd)
+              }
+            ]
+          : undefined,
+        title: currentCwd ? displayPath(currentCwd) : undefined,
+        toggleLabel: copy.toggleWorkspace,
+        variant: 'menu'
+      },
+      {
+        className: cn(
+          agentsOpen && 'bg-accent/55 text-foreground',
+          subagentsFailed > 0 && 'text-destructive hover:text-destructive'
+        ),
+        detail:
+          subagentsRunning > 0
+            ? copy.subagents(subagentsRunning)
+            : subagentsFailed > 0
+              ? copy.failed(subagentsFailed)
+              : undefined,
+        icon:
+          subagentsFailed > 0 ? (
+            <AlertCircle className="size-3" />
+          ) : subagentsRunning > 0 ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <Codicon name="hubot" size="0.75rem" />
+          ),
+        id: 'agents',
+        label: copy.agents,
+        onSelect: openAgents,
+        title: agentsOpen ? copy.closeAgents : copy.openAgents,
+        toggleLabel: copy.agents,
+        variant: 'action'
+      },
+      {
+        icon: <Clock className="size-3" />,
+        id: 'cron',
+        label: copy.cron,
+        to: CRON_ROUTE,
+        toggleLabel: copy.cron,
+        variant: 'action'
+      },
+      {
+        icon: <Globe className="size-3" />,
+        id: 'webhooks',
+        label: copy.webhooks,
+        to: WEBHOOKS_ROUTE,
+        toggleLabel: copy.webhooks,
+        variant: 'action'
+      }
     ],
     [
-      runningTimerItem,
-      contextUsageItem,
-      sessionTimerItem,
-      focusViewItem,
-      approvalItem,
-      terminalItem,
-      keepAwakeItem,
-      clientVersionItem,
-      backendVersionItem,
-      pluginsItem
+      agentsOpen,
+      botsShowing,
+      commandCenterOpen,
+      copy,
+      currentCwd,
+      focusedWorkspaceRemote,
+      freeTierCopy,
+      fileMenu.copyPath,
+      fileMenu.revealFileManager,
+      fileMenu.revealInSidebar,
+      offerLocalReveal,
+      freeTier?.available,
+      freeTier?.model,
+      guideOwnsSignIn,
+      gatewayMenuContent,
+      gatewayClassName,
+      gatewayDetail,
+      gatewayRestarting,
+      inferenceReady,
+      inferenceStatus?.reason,
+      openAgents,
+      profileRailVisible,
+      projectName,
+      sessionsShowing,
+      subagentsFailed,
+      subagentsRunning,
+      toggleCommandCenter
     ]
   )
 
-  // Contribution ordering matches desktop (use-statusbar-items.tsx:542-548):
-  // left = core then contributed; right = contributed then core, so plugin chips
-  // sit inboard of the app's own right-hand cluster (terminal, versions).
-  // Memoized too: `StatusbarItemView` bails on reference equality of `item`, so
-  // the concatenation must not mint a fresh array (and therefore fresh element
-  // positions) on every render either.
-  return useMemo(
-    () => ({
-      leftStatusbarItems: [...leftStatusbarItems, ...(opts?.extraLeftItems ?? [])],
-      statusbarItems: [...(opts?.extraRightItems ?? []), ...statusbarItems]
-    }),
-    [leftStatusbarItems, opts?.extraLeftItems, opts?.extraRightItems, statusbarItems]
+  const coreRightStatusbarItems = useMemo<readonly StatusbarItem[]>(
+    () => [
+      {
+        detail: <LiveDuration since={turnStartedAt} />,
+        hidden: !busy || !turnStartedAt,
+        icon: <Loader2 className="size-3 animate-spin" />,
+        id: 'running-timer',
+        label: copy.turnRunning,
+        toggleLabel: copy.toggleRunningTimer,
+        variant: 'text'
+      },
+      {
+        detail: contextBar || undefined,
+        // Never self-hide: the user opted this item in (it's hidden-by-
+        // default), so an empty label must render as a waiting placeholder,
+        // not a vanished item — an enabled-but-invisible toggle reads as
+        // "another item took its spot".
+        id: 'context-usage',
+        label: contextUsage || '—',
+        menuAlign: 'end',
+        menuClassName: 'w-auto border-(--ui-stroke-secondary) p-0',
+        menuContent: (
+          <ContextUsagePanel breakdown={contextBreakdown} loading={contextBreakdownLoading} usage={gaugeUsage} />
+        ),
+        toggleLabel: copy.toggleContextUsage,
+        variant: 'menu'
+      },
+      {
+        icon: <Layers3 className="size-3" />,
+        id: 'cache-hit-rate',
+        // Same never-self-hide rule as the context meter: opted in means a
+        // placeholder until the first cached turn reports, not a vanished item.
+        label: cacheHit || '—',
+        title: copy.cacheHitRateTitle,
+        toggleLabel: copy.toggleCacheHitRate,
+        variant: 'text'
+      },
+      {
+        icon: <Zap className="size-3" />,
+        id: 'tokens-per-second',
+        label: tokensPerSecond || '—',
+        title: copy.tokensPerSecondTitle,
+        toggleLabel: copy.toggleTokensPerSecond,
+        variant: 'text'
+      },
+      {
+        detail: <LiveDuration since={sessionStartedAt} />,
+        hidden: !sessionStartedAt,
+        id: 'session-timer',
+        label: copy.session,
+        toggleLabel: copy.toggleSessionTimer,
+        variant: 'text'
+      },
+      systemResourcesItem,
+      {
+        ...approvalModeItem,
+        hidden: gatewayState !== 'open',
+        toggleLabel: copy.toggleApprovalMode
+      },
+      {
+        actionId: 'view.showTerminal',
+        className: `w-7 justify-center px-0${terminalShowing ? ' bg-accent/55 text-foreground' : ''}`,
+        hidden: !chatOpen,
+        icon: <Terminal className="size-3.5" />,
+        id: 'terminal',
+        onSelect: () => togglePaneVisible('terminal'),
+        title: terminalShowing ? copy.hideTerminal : copy.showTerminal,
+        toggleLabel: copy.toggleTerminal,
+        variant: 'action'
+      },
+      clientVersionItem,
+      ...(backendVersionItem ? [backendVersionItem] : [])
+    ],
+    [
+      approvalModeItem,
+      backendVersionItem,
+      busy,
+      cacheHit,
+      chatOpen,
+      clientVersionItem,
+      contextBar,
+      contextBreakdown,
+      contextBreakdownLoading,
+      contextUsage,
+      copy,
+      gaugeUsage,
+      sessionStartedAt,
+      gatewayState,
+      systemResourcesItem,
+      terminalShowing,
+      tokensPerSecond,
+      turnStartedAt
+    ]
   )
+
+  const leftStatusbarItems = useMemo(
+    () => [...coreLeftStatusbarItems, ...extraLeftItems],
+    [coreLeftStatusbarItems, extraLeftItems]
+  )
+
+  const statusbarItems = useMemo(
+    () => [...extraRightItems, ...coreRightStatusbarItems],
+    [coreRightStatusbarItems, extraRightItems]
+  )
+
+  return { leftStatusbarItems, statusbarItems }
+}
+
+function StatusbarGatewaySwitcher() {
+  const navigate = useNavigate()
+
+  return <ConnectionSwitcher compact onConnect={() => navigate(`${SETTINGS_ROUTE}?tab=connections`)} />
 }

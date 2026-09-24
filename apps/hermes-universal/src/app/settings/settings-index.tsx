@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 import { SidebarTrigger } from '@/app/shell/sidebar'
 import { Button } from '@/components/ui/button'
 import { getHermesConfigDefaults, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { ChevronRight, Refresh } from '@/lib/icons'
+import { ChevronRight, RefreshCw } from '@/lib/icons'
 import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 
@@ -49,7 +49,7 @@ function ResetToDefaults() {
 
   return (
     <Button className="mt-6 w-full" disabled={busy} onClick={() => void reset()} variant="outline">
-      <Refresh className="size-4" />
+      <RefreshCw className="size-4" />
       {t.settings.resetToDefaults}
     </Button>
   )

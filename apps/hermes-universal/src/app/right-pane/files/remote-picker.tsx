@@ -5,8 +5,8 @@ import { Codicon } from '@/components/ui/codicon'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useI18n } from '@/i18n'
 import { readDesktopDir, setDesktopFsRemotePicker } from '@/lib/desktop-fs'
+import { displayPath, pathLeaf } from '@/lib/display-path'
 import { cn } from '@/lib/utils'
-import { useDisplayPath } from '@/store/display-home'
 
 function clean(path: string) {
   return path.replace(/\/+$/, '') || '/'
@@ -25,13 +25,11 @@ function parentDir(path: string) {
 }
 
 function pathName(path: string) {
-  return path.split('/').filter(Boolean).pop() || path
+  return pathLeaf(path) || path
 }
 
 interface PendingSelection {
   defaultPath: string
-  /** File mode: files are listed and clicking one resolves it; folders only navigate. */
-  files: boolean
   resolve: (paths: string[]) => void
   title: string
 }
@@ -41,31 +39,22 @@ export function RemoteFolderPicker() {
   const r = t.rightSidebar
   const [pending, setPending] = useState<PendingSelection | null>(null)
   const [currentPath, setCurrentPath] = useState('/')
-  const [entries, setEntries] = useState<Array<{ isDirectory: boolean; name: string; path: string }>>([])
+  const [entries, setEntries] = useState<Array<{ name: string; path: string }>>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  // This picker browses the REMOTE (gateway) filesystem — the one place where
-  // `~` unambiguously means the gateway user's home (MJXHRM-394).
-  const displayPath = useDisplayPath()
 
   useEffect(() => {
     setDesktopFsRemotePicker({
       selectPaths: options =>
         new Promise(resolve => {
-          const files = !options?.directories
           const defaultPath = clean(options?.defaultPath || '/')
           setCurrentPath(defaultPath)
-          setPending({
-            defaultPath,
-            files,
-            resolve,
-            title: options?.title || (files ? r.remoteFilePickerTitle : r.remotePickerTitle)
-          })
+          setPending({ defaultPath, resolve, title: options?.title || r.remotePickerTitle })
         })
     })
 
     return () => setDesktopFsRemotePicker(null)
-  }, [r.remoteFilePickerTitle, r.remotePickerTitle])
+  }, [r.remotePickerTitle])
 
   useEffect(() => {
     if (!pending) {
@@ -90,9 +79,7 @@ export function RemoteFolderPicker() {
         }
 
         setEntries(
-          result.entries
-            .filter(entry => pending.files || entry.isDirectory)
-            .map(entry => ({ isDirectory: entry.isDirectory, name: entry.name, path: entry.path }))
+          result.entries.filter(entry => entry.isDirectory).map(entry => ({ name: entry.name, path: entry.path }))
         )
       })
       .catch(err => {
@@ -134,12 +121,13 @@ export function RemoteFolderPicker() {
 
   return (
     <Dialog onOpenChange={open => !open && close()} open={Boolean(pending)}>
-      <DialogContent className="flex h-[min(36rem,calc(100vh-4rem))] max-w-lg flex-col gap-0 overflow-hidden p-0">
+      <DialogContent
+        bodyClassName="flex min-h-0 flex-col gap-0 overflow-hidden p-0"
+        className="h-[min(36rem,calc(100vh-4rem))] max-w-lg"
+      >
         <div className="shrink-0 border-b border-border/70 px-4 py-3">
           <DialogTitle className="text-sm">{pending?.title || r.remotePickerTitle}</DialogTitle>
-          <DialogDescription className="mt-1 text-xs">
-            {pending?.files ? r.remoteFilePickerDescription : r.remotePickerDescription}
-          </DialogDescription>
+          <DialogDescription className="mt-1 text-xs">{r.remotePickerDescription}</DialogDescription>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -176,12 +164,7 @@ export function RemoteFolderPicker() {
               <div className="px-2 py-3 text-xs text-muted-foreground">{r.emptyBody}</div>
             ) : (
               entries.map(entry => (
-                <FolderRow
-                  icon={entry.isDirectory ? 'folder' : 'file'}
-                  key={entry.path}
-                  name={pathName(entry.path)}
-                  onClick={() => (entry.isDirectory ? setCurrentPath(entry.path) : close([entry.path]))}
-                />
+                <FolderRow key={entry.path} name={pathName(entry.path)} onClick={() => setCurrentPath(entry.path)} />
               ))
             )}
           </div>
@@ -193,11 +176,9 @@ export function RemoteFolderPicker() {
             <Button onClick={() => close()} size="sm" variant="ghost">
               {t.common.cancel}
             </Button>
-            {!pending?.files && (
-              <Button onClick={() => close([currentPath])} size="sm">
-                {r.remotePickerSelect}
-              </Button>
-            )}
+            <Button onClick={() => close([currentPath])} size="sm">
+              {r.remotePickerSelect}
+            </Button>
           </div>
         </div>
       </DialogContent>
@@ -205,17 +186,7 @@ export function RemoteFolderPicker() {
   )
 }
 
-function FolderRow({
-  disabled = false,
-  icon = 'folder',
-  name,
-  onClick
-}: {
-  disabled?: boolean
-  icon?: string
-  name: string
-  onClick: () => void
-}) {
+function FolderRow({ disabled = false, name, onClick }: { disabled?: boolean; name: string; onClick: () => void }) {
   return (
     <button
       className="row-hover flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs text-(--ui-text-secondary) hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -223,7 +194,7 @@ function FolderRow({
       onClick={onClick}
       type="button"
     >
-      <Codicon name={icon} size="0.875rem" />
+      <Codicon name="folder" size="0.875rem" />
       <span className="min-w-0 truncate">{name}</span>
     </button>
   )

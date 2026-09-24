@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -24,7 +25,6 @@ import { notify } from '@/store/notifications'
 
 import { CONTROL_TEXT } from './constants'
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
-import { settingRowElementId } from './settings-search'
 
 const CAPTION = 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)'
 

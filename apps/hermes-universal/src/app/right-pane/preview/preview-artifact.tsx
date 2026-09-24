@@ -19,7 +19,7 @@ import {
   stageArtifactDocument
 } from '@/store/artifacts'
 import { useStore } from '@/store/atom'
-import { artifactIdFromTab, type PreviewTarget } from '@/store/preview'
+import type { PreviewTarget } from '@/store/preview'
 
 const MIME_BY_KIND = { code: 'text/plain', html: 'text/html', svg: 'image/svg+xml' } as const
 
@@ -96,7 +96,7 @@ function ArtifactHtmlFrame({ content, title }: { content: string; title: string 
   if (!IS_TAURI) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
-        {t.artifactPreview.renderUnavailable}
+        {t.preview.unavailable}
       </div>
     )
   }
@@ -235,7 +235,7 @@ function downloadTextFile(name: string, text: string, mime: string): void {
 export function ArtifactPreview({ target }: { target: PreviewTarget }) {
   const { t } = useI18n()
   const copy = t.artifactPreview
-  const artifactId = artifactIdFromTab(target.path)
+  const artifactId = target.url
   const registry = useStore($artifactRegistry)
   const versionSelection = useStore($artifactVersionSelection)
   const [userMode, setUserMode] = useState<ArtifactViewMode | null>(null)
@@ -275,10 +275,10 @@ export function ArtifactPreview({ target }: { target: PreviewTarget }) {
           {modes.length > 1 && (
             <>
               <ModeButton active={mode === 'rendered'} onClick={() => setUserMode('rendered')}>
-                {copy.rendered}
+                {t.preview.renderedPreview}
               </ModeButton>
               <ModeButton active={mode === 'source'} onClick={() => setUserMode('source')}>
-                {copy.source}
+                {t.preview.source}
               </ModeButton>
             </>
           )}

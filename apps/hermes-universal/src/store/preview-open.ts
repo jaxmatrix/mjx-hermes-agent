@@ -1,6 +1,6 @@
 import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { $currentCwd } from '@/store/chat'
-import { setCurrentSessionPreviewTarget } from '@/store/preview'
+import { openPreview } from '@/store/preview'
 
 /**
  * Open a path in the right pane's file viewer — the app's ONE route from "a
@@ -19,7 +19,7 @@ export function previewFile(path: string): void {
   void normalizeOrLocalPreviewTarget(path, $currentCwd.get() || undefined)
     .then(target => {
       if (target) {
-        setCurrentSessionPreviewTarget(target, 'file-browser', path)
+        openPreview(target)
       }
     })
     .catch(() => undefined)

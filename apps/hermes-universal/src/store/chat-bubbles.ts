@@ -6,7 +6,7 @@
  * no pane graph on a phone, just an ordered list of sessions.
  *
  * Runtime model: every bubble — foreground or background, saved or draft — is
- * just a session in `$sessionStates`. Switching moves `$activeSessionKey`; it
+ * just a session in `$sessionKeyStates`. Switching moves `$activeSessionKey`; it
  * does not move state anywhere.
  *
  * This used to be a hybrid: the active bubble lived in the global chat atoms and
@@ -25,15 +25,26 @@
 import { readJson, writeJson } from '@/lib/storage'
 import { atom, computed } from '@/store/atom'
 import { requestClose } from '@/store/close-confirm'
-import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
-import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session'
-import { $activeSessionKey, isDraftKey } from '@/store/session-state-types'
+import {
+  type ClientHold,
+  holdConnectionClient,
+  isAmbientConnection,
+  releaseConnectionClient
+} from '@/store/connection-clients'
 import {
   dropSessionState,
   runtimeKeyForStoredSession,
   sessionKeyNeedsCloseConfirm,
   sessionTileDelegate
-} from '@/store/session-states'
+} from '@/store/session-key-states'
+import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session-lifecycle'
+import {
+  $activeSessionKey,
+  DEFAULT_SESSION_PROFILE,
+  isDraftKey,
+  LOCAL_SESSION_SCOPE
+} from '@/store/session-state-types'
+import { tabKeyFor, type TabRef, tabRefFor, takeProfileKeyedTabs } from '@/store/tab-ref'
 import { isSecondaryWindow, ownsPersistedAppState } from '@/store/windows'
 
 /** Prompt id for the draft bubble before it owns a slice — it has no stored id
@@ -45,75 +56,201 @@ const DRAFT_BUBBLE_ID = 'bubble:draft'
  *  the bubble has one; it is process-scoped and never persisted. Prefer
  *  `bubbleRuntimeKey`, which also resolves a session whose stored id rotated
  *  under a background compaction (MJX-133). */
+/**
+ * The REF is readonly and is the bubble's whole address (MJXHRM-591, invariant
+ * 44): a bubble is addressed by it, never by a bare stored id, because two
+ * backends mint the same `uuid4().hex[:8]` and tapping a row must not open
+ * another machine's conversation. `tabKey` is that ref encoded — the same
+ * identity a desktop tile uses, from the same rules in `store/tab-ref`.
+ *
+ * The DRAFT bubble (`storedSessionId === null`) holds no ref: it is the phone's
+ * one unbound tab, and it follows the active connection until its first
+ * `session.create` binds it (invariant 42).
+ */
 export interface ChatBubble {
+  readonly tabKey: string
+  readonly connectionId: string
+  readonly profile: string
   storedSessionId: null | string
   runtimeId?: string
 }
+
+/** The draft bubble's identity: it names no session, so it names no ref. */
+const DRAFT_BUBBLE_KEY = 'draft'
+
+const bubbleFromRef = (ref: TabRef): ChatBubble => ({
+  connectionId: ref.connectionId,
+  profile: ref.profile,
+  storedSessionId: ref.storedSessionId,
+  tabKey: tabKeyFor(ref)
+})
+
+const draftBubble = (): ChatBubble => ({
+  connectionId: LOCAL_SESSION_SCOPE,
+  profile: DEFAULT_SESSION_PROFILE,
+  storedSessionId: null,
+  tabKey: DRAFT_BUBBLE_KEY
+})
+
+/** The bubble for a stored id the caller has, with its connection resolved once. */
+const bubbleForStoredId = (storedSessionId: string): ChatBubble => bubbleFromRef(tabRefFor(storedSessionId))
 
 // ---------------------------------------------------------------------------
 // Per-profile persistence (mirrors store/session-states.ts tile persistence).
 // Only real stored ids are persisted — drafts + runtime ids are ephemeral.
 // ---------------------------------------------------------------------------
 
-const BUBBLES_KEY = 'hermes.chatBubbles.v1'
+// ONE FLAT LIST, ref-shaped — the same move the tiles made, for the same reason:
+// a bubble carries its own connection and stays put, so there is no "the visible
+// set" for a profile switch to swap. v1 was a per-profile map of bare ids; it is
+// migrated once, under the registry's primary, and deleted.
+const BUBBLES_KEY = 'hermes.chatBubbles.v2'
+const LEGACY_BUBBLES_KEY = 'hermes.chatBubbles.v1'
 
-function parseIdList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
+interface StoredBubble {
+  connectionId: string
+  profile: string
+  storedSessionId: string
 }
 
-function loadBubblesByProfile(): Record<string, string[]> {
-  const byProfile: Record<string, string[]> = {}
+function parseStoredBubble(value: unknown, fallbackConnection: string, fallbackProfile: string): null | StoredBubble {
+  // v1 entries are bare id strings; v2 entries are ref-shaped records.
+  if (typeof value === 'string') {
+    return value ? { connectionId: fallbackConnection, profile: fallbackProfile, storedSessionId: value } : null
+  }
+
+  const raw = value as null | Partial<ChatBubble>
+
+  if (!raw || typeof raw.storedSessionId !== 'string') {
+    return null
+  }
+
+  return {
+    connectionId: typeof raw.connectionId === 'string' ? raw.connectionId : fallbackConnection,
+    profile: typeof raw.profile === 'string' ? raw.profile : fallbackProfile,
+    storedSessionId: raw.storedSessionId
+  }
+}
+
+function loadBubbles(): StoredBubble[] {
   const parsed = readJson<unknown>(BUBBLES_KEY)
+  const out: StoredBubble[] = []
 
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    for (const [profile, list] of Object.entries(parsed as Record<string, unknown>)) {
-      const ids = parseIdList(list)
+  if (Array.isArray(parsed)) {
+    for (const entry of parsed) {
+      const bubble = parseStoredBubble(entry, LOCAL_SESSION_SCOPE, DEFAULT_SESSION_PROFILE)
 
-      if (ids.length > 0) {
-        byProfile[normalizeProfileKey(profile)] = ids
+      if (bubble) {
+        out.push(bubble)
       }
     }
   }
 
-  return byProfile
+  return out
 }
 
-const bubblesByProfile = loadBubblesByProfile()
-const profileKey = () => normalizeProfileKey($activeGatewayProfile.get())
-
-const hydrate = (ids: string[]): ChatBubble[] => ids.map(storedSessionId => ({ storedSessionId }))
+let storedBubbles = loadBubbles()
 
 /** Ordered parallel chats. A secondary window shows none (single live gateway). */
-export const $chatBubbles = atom<ChatBubble[]>(isSecondaryWindow() ? [] : hydrate(bubblesByProfile[profileKey()] ?? []))
+export const $chatBubbles = atom<ChatBubble[]>(isSecondaryWindow() ? [] : storedBubbles.map(bubbleFromRef))
 
 function persistBubbles() {
   if (!ownsPersistedAppState()) {
     return
   }
 
-  writeJson(BUBBLES_KEY, Object.keys(bubblesByProfile).length === 0 ? null : bubblesByProfile)
+  writeJson(BUBBLES_KEY, storedBubbles.length === 0 ? null : storedBubbles)
+}
+
+/** The bubble half of the hold ledger (invariant 47) — same rule, same commit. */
+const holdsByTab = new Map<string, ClientHold>()
+
+function commitTabHolds(next: readonly ChatBubble[]): void {
+  const wanted = new Map(
+    next
+      .filter(bubble => bubble.storedSessionId && bubble.tabKey !== DRAFT_BUBBLE_KEY)
+      .map(bubble => [bubble.tabKey, bubble])
+  )
+
+  for (const [tabKey, bubble] of wanted) {
+    if (!holdsByTab.has(tabKey)) {
+      const hold = holdConnectionClient(bubble.connectionId, { ambient: isAmbientConnection(bubble.connectionId) })
+
+      if (hold) {
+        holdsByTab.set(tabKey, hold)
+      }
+    }
+  }
+
+  for (const [tabKey, hold] of [...holdsByTab]) {
+    if (!wanted.has(tabKey)) {
+      holdsByTab.delete(tabKey)
+      releaseConnectionClient(hold)
+    }
+  }
 }
 
 function setBubbles(bubbles: ChatBubble[]) {
   $chatBubbles.set(bubbles)
-
-  const stored = bubbles.map(b => b.storedSessionId).filter((id): id is string => Boolean(id))
-
-  if (stored.length > 0) {
-    bubblesByProfile[profileKey()] = stored
-  } else {
-    delete bubblesByProfile[profileKey()]
-  }
+  commitTabHolds(bubbles)
+  storedBubbles = bubbles
+    .filter((b): b is ChatBubble & { storedSessionId: string } => Boolean(b.storedSessionId))
+    .map(b => ({ connectionId: b.connectionId, profile: b.profile, storedSessionId: b.storedSessionId }))
 
   persistBubbles()
 }
 
-// Profile switch: surface the new profile's bubbles with runtime ids cleared.
-if (ownsPersistedAppState()) {
-  $activeGatewayProfile.subscribe(() => {
-    $chatBubbles.set(hydrate(bubblesByProfile[profileKey()] ?? []))
-  })
+/** Module state back to a fresh load — the persisted list AND the atom, which
+ *  a test setting the atom alone would leave disagreeing. */
+export const __testing = {
+  reset: (): void => {
+    storedBubbles = []
+    setBubbles([])
+  }
 }
+
+/**
+ * v1 → v2, run once, as soon as the registry names a primary — the bubble half
+ * of the tiles' migration, and the same reasoning: a bubble filed under profile
+ * P could only have belonged to the connection the app was pointed at.
+ */
+export function migrateLegacyBubbles(primaryConnectionId: string): void {
+  const legacy = takeProfileKeyedTabs(LEGACY_BUBBLES_KEY)
+
+  if (!legacy) {
+    return
+  }
+
+  const migrated: StoredBubble[] = []
+
+  for (const { entry, profile } of legacy) {
+    const bubble = parseStoredBubble(entry, primaryConnectionId, profile)
+
+    if (bubble && !migrated.some(b => tabKeyFor(b) === tabKeyFor(bubble))) {
+      migrated.push({ ...bubble, connectionId: primaryConnectionId, profile })
+    }
+  }
+
+  if (migrated.length === 0) {
+    return
+  }
+
+  const carried = new Set(migrated.map(tabKeyFor))
+
+  storedBubbles = [...migrated, ...storedBubbles.filter(b => !carried.has(tabKeyFor(b)))]
+  persistBubbles()
+
+  if (!isSecondaryWindow()) {
+    const live = $chatBubbles.get()
+    const known = new Set(live.map(b => b.tabKey))
+
+    $chatBubbles.set([...migrated.filter(b => !known.has(tabKeyFor(b))).map(bubbleFromRef), ...live])
+  }
+}
+
+// A profile switch changes NOTHING here (invariant 37): a bubble carries its own
+// connection, keeps its slice and keeps its place. The subscriber that swapped
+// the visible set per profile is gone with the tiles' one.
 
 // ---------------------------------------------------------------------------
 // Derivations.
@@ -140,7 +277,7 @@ function patchBubbleRuntime(storedId: null | string, runtimeId: string | undefin
  *  already — so opening a second chat shows BOTH (the current + the new one). */
 function ensureBubble(storedId: null | string) {
   if (!$chatBubbles.get().some(b => b.storedSessionId === storedId)) {
-    setBubbles([{ storedSessionId: storedId }, ...$chatBubbles.get()])
+    setBubbles([storedId ? bubbleForStoredId(storedId) : draftBubble(), ...$chatBubbles.get()])
   }
 }
 
@@ -166,7 +303,11 @@ export function bubbleRuntimeKey(storedId: null | string): null | string {
     return isDraftKey(active) ? active : null
   }
 
-  return runtimeKeyForStoredSession(storedId) ?? bubbleFor(storedId)?.runtimeId ?? null
+  // SCOPED: the bubble's own ref, so the same stored id on another connection
+  // resolves to that connection's slice and never to this one's (invariant 44).
+  const bubble = bubbleFor(storedId)
+
+  return runtimeKeyForStoredSession(storedId, bubble) ?? bubble?.runtimeId ?? null
 }
 
 /** Make a COLD stored session live in its own slice, so its bubble shows real
@@ -216,7 +357,7 @@ function promote(storedId: null | string) {
  *  was opened with while auto-compression rotates the session's live one, so the
  *  sidebar row for a compacted chat names it differently from the bubble already
  *  showing it. On identity, "Open in bubble" added a second bubble onto the same
- *  `$sessionStates` slice (MJXHRM-423 — the mobile half of `openSessionTile`). */
+ *  `$sessionKeyStates` slice (MJXHRM-423 — the mobile half of `openSessionTile`). */
 export function addBubble(storedSessionId: string) {
   if (sameStoredSession(storedSessionId, $activeStoredSessionId.get())) {
     return
@@ -227,7 +368,7 @@ export function addBubble(storedSessionId: string) {
   }
 
   ensureBubble($activeStoredSessionId.get())
-  setBubbles([...$chatBubbles.get(), { storedSessionId }])
+  setBubbles([...$chatBubbles.get(), bubbleForStoredId(storedSessionId)])
   ensureLiveSession(storedSessionId)
 }
 
@@ -344,7 +485,7 @@ export function newChatBubble(side?: 'end' | 'start'): boolean {
   const draftIdx = list.findIndex(b => b.storedSessionId === null)
 
   if (draftIdx === -1) {
-    const draft: ChatBubble = { storedSessionId: null }
+    const draft: ChatBubble = draftBubble()
 
     setBubbles(side === 'start' ? [draft, ...list] : [...list, draft])
   } else if (side) {
@@ -405,6 +546,6 @@ $activeStoredSessionId.subscribe(id => {
   }
 
   const next = list.slice()
-  next[draftIdx] = { storedSessionId: id }
+  next[draftIdx] = bubbleForStoredId(id)
   setBubbles(next)
 })

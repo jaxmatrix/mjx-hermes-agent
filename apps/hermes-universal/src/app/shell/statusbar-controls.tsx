@@ -1,7 +1,8 @@
+import { useStore } from '@nanostores/react'
 import { type ComponentProps, memo, type ReactNode, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
-import { NAV_ROW_BASE, NAV_ROW_ICON, NAV_ROW_LAYOUT } from '@/app/shell/nav-row'
+import { NAV_ROW_BASE } from '@/app/shell/nav-row'
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -12,32 +13,23 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Tip, TipKeybindLabel, Tooltip, TooltipContent, TooltipScope, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tip, TipKeybindLabel, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ContribRender } from '@/contrib/react/boundary'
 import { useI18n } from '@/i18n'
 import { useKeybindHint } from '@/lib/keybinds/use-keybind-hint'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/store/atom'
-import { $statusbarHiddenIds, setStatusbarItemVisible, toggleStatusbarVisible } from '@/store/statusbar-prefs'
-
-// Ported from apps/desktop/src/app/shell/statusbar-controls.tsx. The dumb,
-// data-driven renderer: paints an array of StatusbarItem descriptors (assembled
-// by use-statusbar-items) as a two-group footer. Adaptations for universal:
-//   • dropped the Electron `[-webkit-app-region:no-drag]` class (Tauri drag is
-//     opt-in via data-tauri-drag-region; the footer is never in a drag region);
-//   • responsive sizing — a compact 20px chrome bar with hover on desktop (md+),
-//     a taller touch bar with press feedback + a safe-area gutter on phones.
+import {
+  $statusbarHiddenIds,
+  isStatusbarLayoutDefault,
+  resetStatusbarLayout,
+  setStatusbarItemVisible,
+  toggleStatusbarVisible
+} from '@/store/statusbar-prefs'
 
 // Shared chrome styling for interactive statusbar items (button / link / menu
 // trigger). The 'text' variant intentionally omits hover/transition/disabled.
 const STATUSBAR_ACTION_CLASS =
-  'inline-flex h-full items-center gap-1 rounded-none px-2 text-xs text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground active:bg-(--chrome-action-hover) disabled:cursor-default disabled:opacity-45 md:px-1.5 md:text-[0.6875rem]'
-
-const STATUSBAR_TEXT_CLASS =
-  'inline-flex h-full items-center gap-1 px-2 text-xs text-(--ui-text-tertiary) md:px-1.5 md:text-[0.6875rem]'
-
-// Row layout (the mobile Status list): each item is a full-width row that matches
-// the left sidebar's nav-rail buttons (NAV_ROW_*) — icon + label on the left, the
-// value/detail pushed to the right — instead of the bar's compact inline segment.
+  'inline-flex h-full items-center gap-1 rounded-none px-1.5 text-[0.6875rem] text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground disabled:cursor-default disabled:opacity-45'
 
 export interface StatusbarMenuItem {
   id: string
@@ -58,16 +50,6 @@ export interface StatusbarItem {
    *  events). When set, it OWNS the slot — label/variant/onSelect are ignored.
    *  This is how a plugin drops a full stateful React component into the bar. */
   render?: () => ReactNode
-  /** Keybind action id — when set, the tooltip shows the label + keybind hint. */
-  actionId?: string
-  /** Plain-text name for the bar's right-click show/hide menu. An item without
-   *  one is never listed there and always shows — the safe default for plugin
-   *  contributions that don't opt in. */
-  toggleLabel?: string
-  /** Listed in the menu but not switchable: the bar's own affordances (command
-   *  center, version pills) would strand the user if they could be hidden from
-   *  the surface that hides them. */
-  lockedVisible?: boolean
   label?: ReactNode
   detail?: ReactNode
   icon?: ReactNode
@@ -81,9 +63,19 @@ export interface StatusbarItem {
   menuContent?: ((close: () => void) => ReactNode) | ReactNode
   menuItems?: readonly StatusbarMenuItem[]
   onSelect?: (modifiers: StatusbarSelectModifiers) => void
+  /** Keybind action id — when set, the tooltip shows the label + keybind hint. */
+  actionId?: string
   title?: string
   to?: string
   variant?: 'action' | 'link' | 'menu' | 'text'
+  /** Plain-text name for the bar's right-click show/hide menu. An item without
+   *  one is never listed there and always shows — the safe default for plugin
+   *  contributions that don't opt in. */
+  toggleLabel?: string
+  /** Listed in the menu but not switchable: the bar's own affordances (command
+   *  center, update/version pills) would strand the user if they could be
+   *  hidden from the surface that hides them. */
+  lockedVisible?: boolean
 }
 
 export interface StatusbarSelectModifiers {
@@ -102,8 +94,6 @@ export function StatusbarControls({ className, leftItems = [], items = [], ...pr
   const navigate = useNavigate()
   const hiddenIds = useStore($statusbarHiddenIds)
 
-  // An item is in the show/hide menu only if it named itself (`toggleLabel`);
-  // anything else — including a plugin's contribution — always shows.
   const visible = (item: StatusbarItem) =>
     !item.hidden && (item.lockedVisible || !item.toggleLabel || !hiddenIds.includes(item.id))
 
@@ -112,13 +102,10 @@ export function StatusbarControls({ className, leftItems = [], items = [], ...pr
       <ContextMenuTrigger asChild>
         <footer
           className={cn(
-            'flex h-8 shrink-0 items-stretch justify-between gap-2 border-t border-(--ui-stroke-tertiary) bg-(--ui-sidebar-surface-background) px-1 pb-[var(--safe-area-inset-bottom)] text-(--ui-text-tertiary) md:h-5 md:pb-0',
+            'flex h-8 shrink-0 items-stretch justify-between gap-2 border-t border-(--ui-stroke-tertiary) bg-(--ui-sidebar-surface-background) px-1 pb-[var(--safe-area-inset-bottom)] text-(--ui-text-tertiary) [-webkit-app-region:no-drag] md:h-5 md:pb-0',
             className
           )}
           data-slot="statusbar"
-          // Durable tour handle (see lib/tour) — `data-slot` is a styling hook
-          // and free to change; this one is a contract with the agent.
-          data-tour="statusbar"
           {...props}
         >
           {/* `overflow-x-clip` (not `overflow-x-auto`) so a wide status item — for
@@ -142,7 +129,10 @@ export function StatusbarControls({ className, leftItems = [], items = [], ...pr
   )
 }
 
-/** Right-click the bar: pick what it shows, or hide the bar outright. */
+/** Right-click the bar to choose what it shows. Lists every item that named
+ *  itself with `toggleLabel`, in bar order (left cluster then right), so the
+ *  menu reads like the surface it edits. Hiding the whole bar lives at the
+ *  bottom — VS Code puts it on the same context menu. */
 function StatusbarVisibilityMenu({
   hiddenIds,
   items,
@@ -155,6 +145,9 @@ function StatusbarVisibilityMenu({
   const { t } = useI18n()
   const copy = t.shell.statusbar
 
+  // Deduped by id: an item can legitimately appear in both clusters across
+  // renders (contributions move sides), and a repeated checkbox would let one
+  // row's toggle silently contradict the other's.
   const toggles = useMemo(() => {
     const seen = new Set<string>()
 
@@ -171,87 +164,81 @@ function StatusbarVisibilityMenu({
 
   return (
     <ContextMenuContent className="w-52">
-      <ContextMenuLabel>{copy.customizeTitle}</ContextMenuLabel>
-      <ContextMenuSeparator />
-      {toggles.map(item => (
-        <ContextMenuCheckboxItem
-          checked={item.lockedVisible || !hiddenIds.includes(item.id)}
-          disabled={item.lockedVisible}
-          key={item.id}
-          onCheckedChange={checked => setStatusbarItemVisible(item.id, checked)}
-          // Keep the menu open so several items can be toggled in one pass.
-          onSelect={event => event.preventDefault()}
-        >
-          {item.toggleLabel}
-        </ContextMenuCheckboxItem>
-      ))}
-      <ContextMenuSeparator />
+      {toggles.length > 0 && (
+        <>
+          <ContextMenuLabel>{copy.customizeTitle}</ContextMenuLabel>
+          <ContextMenuSeparator />
+          {toggles.map(item => (
+            <ContextMenuCheckboxItem
+              checked={item.lockedVisible || !hiddenIds.includes(item.id)}
+              disabled={item.lockedVisible}
+              key={item.id}
+              onCheckedChange={checked => setStatusbarItemVisible(item.id, checked)}
+              // Radix closes the menu on select; keep it open so several items can
+              // be toggled in one pass (this is a preferences surface, not a
+              // command list).
+              onSelect={event => event.preventDefault()}
+            >
+              <span className="truncate">{item.toggleLabel}</span>
+            </ContextMenuCheckboxItem>
+          ))}
+          <ContextMenuSeparator />
+          {/* Disabled rather than hidden when nothing is customized: the row is
+              also how you find out there IS a shipped layout to get back to.
+              Groups with the hide row below — both act on the bar, not an item. */}
+          <ContextMenuItem
+            disabled={isStatusbarLayoutDefault(hiddenIds)}
+            onSelect={event => {
+              event.preventDefault()
+              resetStatusbarLayout()
+            }}
+          >
+            <span className="truncate">{copy.resetStatusbar}</span>
+          </ContextMenuItem>
+        </>
+      )}
       <ContextMenuItem onSelect={toggleStatusbarVisible}>
-        {copy.hideStatusbar}
+        <span className="truncate">{copy.hideStatusbar}</span>
         <StatusbarHideHint />
       </ContextMenuItem>
     </ContextMenuContent>
   )
 }
 
-/** The way BACK, shown where the bar is hidden — the bar can't offer itself. */
+/** The live ⌘⇧S hint on the hide row — the way back once the bar is gone. */
 function StatusbarHideHint() {
   const hint = useKeybindHint('view.toggleStatusbar')
 
-  return <span className="ms-auto ps-2 text-(--ui-text-quaternary)">{hint}</span>
+  return hint ? <span className="ms-auto ps-2 text-(--ui-text-quaternary)">{hint}</span> : null
 }
 
-/**
- * One statusbar segment.
- *
- * Memoized (MJXHRM-303) — and this only works because `useStatusbarItems` was
- * restructured first to give each item a stable identity. Desktop measured
- * 1,446 wasted renders of 2,174 here during a five-tab streaming run; before
- * that restructure a memo on this component could not have hit once, because
- * every item, icon element and `onSelect` closure was rebuilt per render.
- *
- * Reference equality on the three props is the whole comparator. No custom
- * `propsEqual` is needed: `item` is now stable per item, `navigate` is stable
- * from `useNavigate`, and `row` is a literal. If a future prop breaks that,
- * `rowPropsEqual` in `app/chat/sidebar/session-row.tsx` is the local precedent
- * for writing one — but prefer fixing the identity over widening the compare.
- */
-function StatusbarItemViewImpl({
+/** Memoized: `useStatusbarItems` rebuilds the item array whenever ANY of its
+ *  inputs change, but each individual item object is usually identical across
+ *  those rebuilds. Without this, one changed item (the running timer, say)
+ *  re-rendered every other item in the bar — measured at 1,446 wasted renders
+ *  of 2,174 during a five-tab streaming run. `navigate` is stable for the
+ *  router's lifetime, so item identity is the only real input. */
+export const StatusbarItemView = memo(function StatusbarItemView({
   item,
   navigate,
   row = false
 }: {
   item: StatusbarItem
   navigate: ReturnType<typeof useNavigate>
-  // Full-width row form (the mobile Status list) vs the compact bar segment.
+  /** Full-width nav row layout (mobile Status tab). */
   row?: boolean
 }) {
+  const actionClass = row ? NAV_ROW_BASE : STATUSBAR_ACTION_CLASS
   const [menuOpen, setMenuOpen] = useState(false)
 
   // Render escape hatch: the contribution owns its own chrome/state/tooltip.
-  // Must come before the `row` reshaping below — a contributed node is never
-  // wrapped in bar chrome or rewritten into a nav row.
   if (item.render) {
-    return <>{item.render()}</>
+    return <ContribRender render={item.render} />
   }
 
-  const actionClass = row ? NAV_ROW_BASE : STATUSBAR_ACTION_CLASS
-  const textClass = row ? NAV_ROW_LAYOUT : STATUSBAR_TEXT_CLASS
-
-  // An item bound to a keybind advertises it in the tooltip, live from the
-  // store — `title` stays the wording (it's context-dependent: Show/Hide).
   const tooltipLabel = item.actionId ? <TipKeybindLabel actionId={item.actionId} text={item.title} /> : item.title
 
-  // Rows match the sidebar nav buttons: a fixed icon slot, the label takes the
-  // slack, and the value/detail is pushed to the right. The bar keeps everything
-  // grouped left and inline.
-  const content = row ? (
-    <>
-      <span className={NAV_ROW_ICON}>{item.icon}</span>
-      {item.label && <span className="min-w-0 flex-1 truncate text-start">{item.label}</span>}
-      {item.detail && <span className="truncate text-(--ui-text-tertiary)">{item.detail}</span>}
-    </>
-  ) : (
+  const content = (
     <>
       {item.icon}
       {item.label && <span className="truncate">{item.label}</span>}
@@ -259,11 +246,12 @@ function StatusbarItemViewImpl({
     </>
   )
 
-  if (item.variant === 'menu' && (item.menuContent || (item.menuItems && item.menuItems.length > 0))) {
+  if (item.variant === 'menu' && (item.menuContent || !!item.menuItems?.length)) {
     // The `Tip` helper can't wrap a menu: its TooltipTrigger needs a DOM child,
     // but DropdownMenu's Root renders no element, so the hover listeners never
     // land on the button and the tooltip silently never shows. Compose the two
-    // trigger Slots directly onto the same <button> instead (both asChild).
+    // trigger Slots directly onto the same <button> instead (both asChild), the
+    // way profile-switcher.tsx stacks Popover/ContextMenu/Tooltip triggers.
     const trigger = (
       <DropdownMenuTrigger asChild>
         <button className={cn(actionClass, item.className)} disabled={item.disabled} type="button">
@@ -275,19 +263,19 @@ function StatusbarItemViewImpl({
     return (
       <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
         {item.title ? (
-          <TooltipScope>
+          <TooltipProvider delayDuration={0}>
             <Tooltip>
               <TooltipTrigger asChild>{trigger}</TooltipTrigger>
               <TooltipContent>{tooltipLabel}</TooltipContent>
             </Tooltip>
-          </TooltipScope>
+          </TooltipProvider>
         ) : (
           trigger
         )}
         <DropdownMenuContent
           align={item.menuAlign ?? 'start'}
           className={cn('w-56', item.menuContent && 'p-0', item.menuClassName)}
-          side={row ? 'bottom' : 'top'}
+          side="top"
           sideOffset={8}
         >
           {item.menuContent
@@ -335,7 +323,14 @@ function StatusbarItemViewImpl({
   if (item.variant === 'text' && !item.onSelect && !item.to && !item.href) {
     return (
       <Tip label={tooltipLabel}>
-        <div className={cn(textClass, item.className)}>{content}</div>
+        <div
+          className={cn(
+            'inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
+            item.className
+          )}
+        >
+          {content}
+        </div>
       </Tip>
     )
   }
@@ -368,6 +363,4 @@ function StatusbarItemViewImpl({
       </button>
     </Tip>
   )
-}
-
-export const StatusbarItemView = memo(StatusbarItemViewImpl)
+})

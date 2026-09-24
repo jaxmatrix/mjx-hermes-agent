@@ -63,7 +63,7 @@ describe('sshErrorMessage', () => {
     const message = sshErrorMessage({ kind: 'host-key-changed', message: '' }, g)
 
     expect(message).toContain('CHANGED')
-    expect(message.toLowerCase()).toContain('machine-in-the-middle')
+    expect(message.toLowerCase()).toContain('ssh-keygen')
   })
 
   it('does not send the user after their address when the link merely blipped', () => {

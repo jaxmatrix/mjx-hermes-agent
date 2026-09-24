@@ -20,23 +20,28 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
     addGatewayEventListener: () => () => {},
     requestGateway: vi.fn().mockResolvedValue({ session_id: 's_1' }),
-    $gatewayState: atom('idle')
+    $gatewayState: atom('open')
   }
 })
 
 import { $currentCwd, ensureSession, resetChat } from '@/store/chat'
 import { $chatBubbles, newChatBubble } from '@/store/chat-bubbles'
 import { $defaultProjectDir } from '@/store/default-project-dir'
-import { requestGateway } from '@/store/gateway'
-import { NO_PROJECT_ID } from '@/store/project-scope'
-import { $projectScope, $projectTree, ALL_PROJECTS, resolveNewSessionCwd } from '@/store/projects'
-import { $activeStoredSessionId, newSession } from '@/store/session'
+import { requestGateway } from '@/store/gateway-client'
+import {
+  $projectScope,
+  $projectTree,
+  ALL_PROJECTS,
+  NO_PROJECT_ID,
+  resolveNewSessionCwd
+} from '@/store/project-scope'
+import { $activeStoredSessionId, newSession } from '@/store/session-lifecycle'
 import { resetSessionStates } from '@/test-sessions'
 
 const project = (id: string, path: null | string, repoPath?: string) => ({

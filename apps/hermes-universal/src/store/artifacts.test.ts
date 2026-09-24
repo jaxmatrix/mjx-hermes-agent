@@ -12,7 +12,8 @@ import {
   selectArtifactVersion,
   upsertArtifact
 } from './artifacts'
-import { $activePreviewPath, $previewTabs, closePreviewTab } from './preview'
+import { $rightRailActiveTabId } from './layout'
+import { $previewTabs, closeRightRail, closeRightRailTab, openPreview, type PreviewTarget } from './preview'
 
 // `store/artifacts` reaches the staging commands through `invoke`; nothing in
 // this file exercises them, but the import must not blow up outside Tauri.
@@ -22,8 +23,7 @@ const HTML: ArtifactDetection = { kind: 'html', language: 'html', title: 'Pomodo
 
 function reset() {
   clearArtifactRegistry()
-  $previewTabs.set([])
-  $activePreviewPath.set(null)
+  closeRightRail()
 }
 
 beforeEach(reset)
@@ -52,6 +52,7 @@ describe('artifact registry', () => {
     const second = upsertArtifact('session-1', HTML, '<html>v2</html>')
 
     expect(second?.artifactId).toBe(first?.artifactId)
+    expect(second?.versionAdded).toBe(true)
 
     const record = getArtifact(first!.artifactId)
 
@@ -88,8 +89,15 @@ describe('artifact preview tabs', () => {
 
     openArtifact(result.artifactId)
 
-    expect($previewTabs.get()).toEqual([{ name: 'Pomodoro Timer', path: `artifact:${result.artifactId}` }])
-    expect($activePreviewPath.get()).toBe(`artifact:${result.artifactId}`)
+    // Desktop's tab model: the target names the registry entry (`url` is its
+    // id), and the tab id is derived from it — never a copy of the content.
+    expect($previewTabs.get()).toEqual([
+      {
+        id: `artifact:${result.artifactId}`,
+        target: { kind: 'artifact', label: 'Pomodoro Timer', source: result.artifactId, url: result.artifactId }
+      }
+    ])
+    expect($rightRailActiveTabId.get()).toBe(`artifact:${result.artifactId}`)
   })
 
   it('does not duplicate a tab when the same artifact opens twice', () => {
@@ -99,6 +107,17 @@ describe('artifact preview tabs', () => {
     openArtifact(result.artifactId)
 
     expect($previewTabs.get()).toHaveLength(1)
+  })
+
+  it('keeps artifact tabs out of the persisted tab list', () => {
+    window.localStorage.clear()
+    const result = upsertArtifact('session-1', HTML, '<html>v1</html>')!
+
+    openArtifact(result.artifactId)
+
+    // Artifact tabs are never persistable, so the profile's bucket stays empty
+    // and the key is removed rather than stored as an empty list.
+    expect(window.localStorage.getItem('hermes.desktop.previewTabs.v2')).toBeNull()
   })
 
   it('opening an unknown artifact opens nothing', () => {
@@ -114,26 +133,28 @@ describe('artifact preview tabs', () => {
     clearArtifactRegistry()
 
     expect($previewTabs.get()).toEqual([])
-    expect($activePreviewPath.get()).toBeNull()
+    expect($rightRailActiveTabId.get()).toBeNull()
     expect(artifactsForSession('session-1')).toEqual([])
   })
 
   it('leaves a file tab alone when the registry is cleared', () => {
     const result = upsertArtifact('session-1', HTML, '<html>v1</html>')!
 
-    $previewTabs.set([{ name: 'app.ts', path: '/repo/app.ts' }])
+    const file: PreviewTarget = { kind: 'file', label: 'app.ts', source: '/repo/app.ts', url: 'file:///repo/app.ts' }
+
+    openPreview(file)
     openArtifact(result.artifactId)
     clearArtifactRegistry()
 
-    expect($previewTabs.get()).toEqual([{ name: 'app.ts', path: '/repo/app.ts' }])
-    expect($activePreviewPath.get()).toBe('/repo/app.ts')
+    expect($previewTabs.get().map(tab => tab.target)).toEqual([file])
+    expect($rightRailActiveTabId.get()).toBe('file:file:///repo/app.ts')
   })
 
   it('closing the tab leaves the artifact in the registry', () => {
     const result = upsertArtifact('session-1', HTML, '<html>v1</html>')!
 
     openArtifact(result.artifactId)
-    closePreviewTab(`artifact:${result.artifactId}`)
+    closeRightRailTab(`artifact:${result.artifactId}`)
 
     expect($previewTabs.get()).toEqual([])
     expect(getArtifact(result.artifactId)).not.toBeNull()

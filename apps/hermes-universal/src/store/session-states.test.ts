@@ -1,740 +1,1451 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { registerTiles } from '@/components/pane-shell/tile/registry'
-import type { Tile } from '@/components/pane-shell/tile/types'
-import { findGroup, group, split } from '@/components/pane-shell/tree/model'
+import type { ClientSessionState } from '@/app/types'
+import { findGroupOfPane, group, split } from '@/components/pane-shell/tree/model'
+import { $layoutTree, noteActiveTreeGroup } from '@/components/pane-shell/tree/store'
 import {
-  $activeTreeGroup,
-  $layoutTree,
-  moveTreePane,
-  noteActiveTreeGroup,
-  reorderTreePanes
-} from '@/components/pane-shell/tree/store'
-import { isChatPaneId, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
-import { $compactingSessions, sessionCompacting, setSessionCompacting } from '@/store/compaction'
-import { $activeStoredSessionId, $sessions } from '@/store/session'
+  $workspaceMode,
+  forgetActivePane,
+  rememberActivePane,
+  setWorkspaceScope,
+  workspaceScopeKey
+} from '@/components/pane-shell/workspace-scope'
+import { $activeGatewayProfile } from '@/store/profile'
 import {
-  $activeSessionKey,
+  $activeSessionId,
+  $connection,
+  $selectedStoredSessionId,
+  setSessionOwnerHint,
+  setSessions
+} from '@/store/session'
+import type { SessionProfileRoute } from '@/store/session-request-router'
+import type { SessionTile } from '@/store/session-states'
+import type * as SessionStatesModule from '@/store/session-states'
+import {
+  $focusedStoredSessionId,
   $sessionStates,
-  aliasStoredSessionId,
-  dropSessionState,
-  emptySessionState,
-  ensureSessionSlice,
-  publishSessionState,
-  rekeySession,
-  runtimeKeyForStoredSession,
-  updateSession
-} from '@/store/session-state-types'
-import {
-  $focusedChatPane,
-  $focusedCwd,
   $sessionTiles,
+  blankDraftTile,
   clearAllSessionStates,
-  closeSessionTile,
+  closeAllOpenSessionTiles,
+  focusedSessionNeedsRoute,
+  focusedSessionWorkspaceScope,
   focusOpenSession,
-  focusWorkspaceSession,
-  invalidateRuntimeBindings,
-  MAX_CACHED_SESSIONS,
-  openBranchTile,
-  openSessionTab,
+  focusWorkspaceOwnerSessionTile,
+  foregroundSessionScopes,
+  isSessionRemote,
+  knownOwnerForSession,
+  markSelectionRestore,
+  nextSessionTileForWorkspace,
   openSessionTile,
-  pruneSessionStates,
-  reopenLastClosedTile
+  orderTilesByTree,
+  patchSessionTile,
+  recordSessionEventScope,
+  releaseSessionTranscript,
+  requestForOwnedSession,
+  resetRouteOwnedTileRuntimeBindings,
+  resetTileRuntimeBindings,
+  selectionHomesToWorkspace,
+  type SessionTileDelegate,
+  sessionTileOwnerRoute,
+  setSessionTileDelegate,
+  setSessionTileWorkspaceScope
 } from '@/store/session-states'
-import { $subagentsBySession, allSubagents, upsertSubagent } from '@/store/subagents'
-import { $inflightTurns, beginTurn, isTurnLive } from '@/store/turn-lifecycle'
-import { $effectiveCwd, $workspaceCwd } from '@/store/workspace-events'
-import type { SessionInfo } from '@/types/hermes'
 
-const seed = (key: string, patch: Partial<ReturnType<typeof emptySessionState>> = {}) =>
-  publishSessionState(key, { ...emptySessionState(patch.storedSessionId ?? key), runtimeSessionId: key, ...patch })
+const tile = (storedSessionId: string): SessionTile => ({ storedSessionId })
+const tilePane = (id: string) => `session-tile:${id}`
 
-beforeEach(() => {
-  clearAllSessionStates()
-  $activeSessionKey.set('active')
-  seed('active')
-})
-
-describe('rekeySession', () => {
-  // A subscriber that saw a frame with neither key would render a chat that
-  // briefly does not exist — hence the single `.set`.
-  it('moves a slice atomically', () => {
-    seed('draft:1', { runtimeSessionId: null, storedSessionId: null, messages: [] })
-
-    const frames: boolean[] = []
-
-    const unsubscribe = $sessionStates.subscribe(states => {
-      frames.push('draft:1' in states || 'runtime-1' in states)
-    })
-
-    rekeySession('draft:1', 'runtime-1', { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
-    unsubscribe()
-
-    expect(frames.every(Boolean)).toBe(true)
-    expect($sessionStates.get()['draft:1']).toBeUndefined()
-    expect($sessionStates.get()['runtime-1']).toMatchObject({ runtimeSessionId: 'runtime-1' })
-  })
-
-  it('carries the active pointer with the slice', () => {
-    seed('draft:2', { runtimeSessionId: null })
-    $activeSessionKey.set('draft:2')
-
-    rekeySession('draft:2', 'runtime-2')
-
-    expect($activeSessionKey.get()).toBe('runtime-2')
-  })
-
-  it('leaves the active pointer alone when a background session rekeys', () => {
-    seed('hydrating:x', { storedSessionId: 'x' })
-
-    rekeySession('hydrating:x', 'runtime-x')
-
-    expect($activeSessionKey.get()).toBe('active')
-  })
-})
-
-describe('stored id → key resolution', () => {
-  it('resolves a live session and forgets a dropped one', () => {
-    seed('runtime-1', { storedSessionId: 'stored-1' })
-    expect(runtimeKeyForStoredSession('stored-1')).toBe('runtime-1')
-
-    dropSessionState('runtime-1')
-    expect(runtimeKeyForStoredSession('stored-1')).toBeNull()
-  })
-
-  // MJX-133: an auto-compaction rotates the stored id, but bubbles, tiles,
-  // layout pane ids and the persisted blobs all still name the OLD one.
-  it('keeps a pre-rotation stored id resolving after a compaction', () => {
-    seed('runtime-1', { storedSessionId: 'stored-old' })
-
-    updateSession('runtime-1', state => ({ ...state, storedSessionId: 'stored-new' }))
-
-    expect(runtimeKeyForStoredSession('stored-new')).toBe('runtime-1')
-    expect(runtimeKeyForStoredSession('stored-old')).toBe('runtime-1')
-  })
-
-  it('carries aliases across a rekey', () => {
-    seed('hydrating:a', { storedSessionId: 'stored-old' })
-    updateSession('hydrating:a', state => ({ ...state, storedSessionId: 'stored-new' }))
-
-    rekeySession('hydrating:a', 'runtime-a')
-
-    expect(runtimeKeyForStoredSession('stored-old')).toBe('runtime-a')
-    expect(runtimeKeyForStoredSession('stored-new')).toBe('runtime-a')
-  })
-
-  it('aliases a lineage root onto an open session', () => {
-    seed('runtime-1', { storedSessionId: 'stored-1' })
-    aliasStoredSessionId('lineage-root', 'stored-1')
-
-    expect(runtimeKeyForStoredSession('lineage-root')).toBe('runtime-1')
-  })
-})
-
-describe('updateSession', () => {
-  // The old version returned `undefined` cast to a state on a miss — harmless
-  // while only tiles used the map, a crash once the visible chat reads from it.
-  it('creates a missing slice rather than returning undefined', () => {
-    const next = updateSession('never-seen', state => ({ ...state, statusLine: 'hi' }))
-
-    expect(next.statusLine).toBe('hi')
-    expect($sessionStates.get()['never-seen']).toBeDefined()
-  })
-
-  it('does not republish when the updater returns the same state', () => {
-    let frames = 0
-
-    const unsubscribe = $sessionStates.subscribe(() => {
-      frames++
-    })
-
-    updateSession('active', state => state)
-    unsubscribe()
-
-    expect(frames).toBe(1) // the subscribe call itself, no write
-  })
-})
-
-describe('pruneSessionStates', () => {
-  const fill = (count: number, patch: Partial<ReturnType<typeof emptySessionState>> = {}) => {
-    for (let i = 0; i < count; i++) {
-      seed(`idle-${i}`, { lastTouchedAt: i, ...patch })
-    }
-  }
-
-  it('evicts the least recently touched once over the cap', () => {
-    fill(MAX_CACHED_SESSIONS + 3)
-    pruneSessionStates()
-
-    expect(Object.keys($sessionStates.get())).toHaveLength(MAX_CACHED_SESSIONS)
-    expect($sessionStates.get()['idle-0']).toBeUndefined()
-    expect($sessionStates.get()['idle-1']).toBeUndefined()
-  })
-
-  it('never evicts the session on screen', () => {
-    fill(MAX_CACHED_SESSIONS + 5)
-    // `active` was seeded first, so it is the oldest by lastTouchedAt.
-    pruneSessionStates()
-
-    expect($sessionStates.get().active).toBeDefined()
-  })
-
-  // Dropping a live turn to respect a cache bound would be the wrong trade — an
-  // over-cap map full of working sessions simply stays over cap.
-  it('never evicts a session that is working or waiting on input', () => {
-    fill(MAX_CACHED_SESSIONS + 4, { busy: true })
-    pruneSessionStates()
-
-    expect(Object.keys($sessionStates.get()).length).toBeGreaterThan(MAX_CACHED_SESSIONS)
-
-    clearAllSessionStates()
-    $activeSessionKey.set('active')
-    seed('active')
-    fill(MAX_CACHED_SESSIONS + 4, { needsInput: true })
-    pruneSessionStates()
-
-    expect(Object.keys($sessionStates.get()).length).toBeGreaterThan(MAX_CACHED_SESSIONS)
-  })
-
-  it('never evicts a draft — its unsent text cannot be re-fetched', () => {
-    ensureSessionSlice('draft:9', { runtimeSessionId: null })
-    fill(MAX_CACHED_SESSIONS + 4)
-    pruneSessionStates()
-
-    expect($sessionStates.get()['draft:9']).toBeDefined()
-  })
-})
-
-/**
- * FOCUSING A CHAT that is already on screen (MJXHRM-6).
- *
- * `focusWorkspaceSession` is the workspace half of `focusOpenSession`, extracted
- * so a NEW session and an EXISTING one land in the same end state. Both name the
- * zone rather than `null`: the tab verbs read `$activeTreeGroup` raw, so a null
- * zone leaves ⌥1-9 and ⌃Tab inert on tabs the user is looking at.
- */
-describe('focusWorkspaceSession', () => {
-  const CHAT_GROUP = 'chat-zone'
-  const TOOL_GROUP = 'tool-zone'
-
-  let disposeTiles: (() => void) | null = null
-
-  const seedTree = (panes: string[], active = panes[0]) => {
-    disposeTiles?.()
-    disposeTiles = registerTiles(
-      [...panes, 'terminal'].map<Tile>(id => ({
-        id,
-        kind: isChatPaneId(id) ? 'chat' : 'tool',
-        title: id,
-        render: () => null,
-        placement: isChatPaneId(id) ? 'main' : 'bottom',
-        chrome: id === WORKSPACE_PANE_ID ? { uncloseable: true } : undefined
-      }))
-    )
-
-    $layoutTree.set(
-      split('row', [
-        group(panes, { active, id: CHAT_GROUP }),
-        group(['terminal'], { active: 'terminal', id: TOOL_GROUP })
-      ])
-    )
-  }
-
+describe('foregroundSessionScopes', () => {
   beforeEach(() => {
+    clearAllSessionStates()
+    $activeSessionId.set(null)
     $sessionTiles.set([])
-    $activeStoredSessionId.set(null)
-    noteActiveTreeGroup(TOOL_GROUP)
   })
 
   afterEach(() => {
-    disposeTiles?.()
-    disposeTiles = null
+    clearAllSessionStates()
+    $activeSessionId.set(null)
+    $sessionTiles.set([])
+  })
+
+  it('keeps the exact registry owner of an idle foreground runtime', () => {
+    recordSessionEventScope({ connectionId: 'cloud', profile: 'default', session_id: 'runtime-1' })
+    $activeSessionId.set('runtime-1')
+
+    expect(foregroundSessionScopes()).toEqual(new Set(['conn:cloud::default']))
+  })
+
+  it('fails closed when the foreground runtime has no registered source', () => {
+    $activeSessionId.set('legacy-runtime')
+
+    expect(foregroundSessionScopes()).toEqual(new Set())
+  })
+
+  it('keeps every open pane owner, not only the focused runtime', () => {
+    recordSessionEventScope({ connectionId: 'cloud-a', profile: 'default', session_id: 'runtime-a' })
+    recordSessionEventScope({ connectionId: 'cloud-b', profile: 'default', session_id: 'runtime-b' })
+    $sessionTiles.set([
+      { runtimeId: 'runtime-a', storedSessionId: 'stored-a' },
+      {
+        ownerRoute: { connectionId: 'cloud-b', profile: 'default' },
+        storedSessionId: 'stored-b'
+      }
+    ])
+
+    expect(foregroundSessionScopes()).toEqual(new Set(['conn:cloud-a::default', 'conn:cloud-b::default']))
+  })
+
+  it('releases an idle pane owner when the pane closes', () => {
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: 'cloud', profile: 'default' },
+        storedSessionId: 'stored-cloud'
+      }
+    ])
+
+    expect(foregroundSessionScopes()).toEqual(new Set(['conn:cloud::default']))
+
+    $sessionTiles.set([])
+
+    expect(foregroundSessionScopes()).toEqual(new Set())
+  })
+})
+
+describe('resetTileRuntimeBindings', () => {
+  afterEach(() => {
+    $sessionTiles.set([])
+  })
+
+  it('invalidates the delegate wiring cache AND drops tile runtime ids (sleep/wake reconnect)', () => {
+    // The reconnect path must bust BOTH layers: the tile atoms' runtimeId and
+    // the delegate's stored→runtime warm cache. Clearing only the atoms let
+    // resumeTile's warm path re-bind the same dead runtime id after wake.
+    const invalidateRuntimeBindings = vi.fn()
+    setSessionTileDelegate({ invalidateRuntimeBindings } as unknown as SessionTileDelegate)
+
+    $sessionTiles.set([{ runtimeId: 'runtime-dead', storedSessionId: 'stored-a' }])
+    resetTileRuntimeBindings()
+
+    expect(invalidateRuntimeBindings).toHaveBeenCalledTimes(1)
+    expect($sessionTiles.get()).toEqual([
+      { anchor: undefined, before: undefined, dir: undefined, storedSessionId: 'stored-a' }
+    ])
+  })
+
+  it('keeps Bot runtimes owned by a different connection', () => {
+    const invalidateRuntimeBindings = vi.fn()
+    setSessionTileDelegate({ invalidateRuntimeBindings } as unknown as SessionTileDelegate)
+    $sessionTiles.set([
+      {
+        ownerRoute: {
+          connectionId: 'barry',
+          mode: 'remote',
+          profile: 'oxcoder',
+          targetProfile: 'oxcoder'
+        },
+        runtimeId: 'runtime-bot',
+        storedSessionId: 'stored-bot',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:barry::oxcoder'
+      }
+    ])
+
+    resetTileRuntimeBindings('work-vps')
+
+    expect($sessionTiles.get()[0]?.runtimeId).toBe('runtime-bot')
+    expect(invalidateRuntimeBindings).toHaveBeenCalledWith(new Set(['stored-bot']))
+  })
+
+  it('rebinds only the restarted connection while preserving other Bot gateways', () => {
+    const invalidateRuntimeBindings = vi.fn()
+    setSessionTileDelegate({ invalidateRuntimeBindings } as unknown as SessionTileDelegate)
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: 'barry', mode: 'remote', profile: 'oxcoder', targetProfile: 'oxcoder' },
+        runtimeId: 'runtime-barry-dead',
+        storedSessionId: 'stored-barry-bot',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:barry::oxcoder'
+      },
+      {
+        ownerRoute: { connectionId: 'barry', mode: 'remote', profile: 't2oracle', targetProfile: 't2oracle' },
+        runtimeId: 'runtime-barry-sibling-live',
+        storedSessionId: 'stored-barry-sibling-bot',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:barry::t2oracle'
+      },
+      {
+        ownerRoute: { connectionId: 'work-vps', mode: 'remote', profile: 'ceo', targetProfile: 'ceo' },
+        runtimeId: 'runtime-work-live',
+        storedSessionId: 'stored-work-bot',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:work-vps::ceo'
+      },
+      { runtimeId: 'runtime-session-dead', storedSessionId: 'stored-session' }
+    ])
+
+    resetTileRuntimeBindings({ connectionId: 'barry', profile: 'oxcoder' })
+
+    const [barryBot, barrySibling, workBot, ordinarySession] = $sessionTiles.get()
+
+    expect(barryBot).toMatchObject({ storedSessionId: 'stored-barry-bot' })
+    expect(barryBot).not.toHaveProperty('runtimeId')
+    expect(barrySibling).toMatchObject({
+      runtimeId: 'runtime-barry-sibling-live',
+      storedSessionId: 'stored-barry-sibling-bot'
+    })
+    expect(workBot).toMatchObject({ runtimeId: 'runtime-work-live', storedSessionId: 'stored-work-bot' })
+    expect(ordinarySession).toMatchObject({ storedSessionId: 'stored-session' })
+    expect(ordinarySession).not.toHaveProperty('runtimeId')
+    expect(invalidateRuntimeBindings).toHaveBeenCalledWith(new Set(['stored-barry-sibling-bot', 'stored-work-bot']))
+  })
+
+  it('keeps an owner-routed SESSIONS tile (branch child) bound across an unrelated reconnect', () => {
+    const invalidateRuntimeBindings = vi.fn()
+    setSessionTileDelegate({ invalidateRuntimeBindings } as unknown as SessionTileDelegate)
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: '100-125-133-71-9119', mode: 'remote', profile: 'default' },
+        runtimeId: 'runtime-branch-live',
+        storedSessionId: 'stored-branch-child',
+        workspaceMode: 'sessions'
+      }
+    ])
+
+    // A flapping sibling connection reconnects; the branch child's runtime
+    // lives on its parent's backend and must keep its binding — dropping it
+    // re-arms the tile's resume, and repeated sibling flaps latch the
+    // resume-storm error card over a healthy session.
+    resetTileRuntimeBindings({ connectionId: 'other-ssh-source', profile: 'default' })
+
+    expect($sessionTiles.get()[0]?.runtimeId).toBe('runtime-branch-live')
+    expect(invalidateRuntimeBindings).toHaveBeenCalledWith(new Set(['stored-branch-child']))
+
+    // Its OWN connection reconnecting still drops the binding for re-resume.
+    resetTileRuntimeBindings({ connectionId: '100-125-133-71-9119', profile: 'default' })
+    expect($sessionTiles.get()[0]?.runtimeId).toBeUndefined()
+  })
+
+  it('unknown restarted identity preserves only Bot runtimes owned by provably-live connections', () => {
+    // Legacy remote primary: no registry connectionId to scope by. The dead
+    // owner can't be named, so keep only owners we know are alive elsewhere —
+    // the restarted backend's own Bot tile must still drop its binding.
+    const invalidateRuntimeBindings = vi.fn()
+    setSessionTileDelegate({ invalidateRuntimeBindings } as unknown as SessionTileDelegate)
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: 'legacy-remote', mode: 'remote', profile: 'writer', targetProfile: 'writer' },
+        runtimeId: 'runtime-legacy-dead',
+        storedSessionId: 'stored-legacy-bot',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:legacy-remote::writer'
+      },
+      {
+        ownerRoute: { connectionId: 'work-vps', mode: 'remote', profile: 'ceo', targetProfile: 'ceo' },
+        runtimeId: 'runtime-work-live',
+        storedSessionId: 'stored-work-bot',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:work-vps::ceo'
+      },
+      { runtimeId: 'runtime-session-dead', storedSessionId: 'stored-session' }
+    ])
+
+    resetTileRuntimeBindings({ liveConnectionIds: new Set(['work-vps']) })
+
+    const [legacyBot, workBot, ordinarySession] = $sessionTiles.get()
+
+    expect(legacyBot).toMatchObject({ storedSessionId: 'stored-legacy-bot' })
+    expect(legacyBot).not.toHaveProperty('runtimeId')
+    expect(workBot).toMatchObject({ runtimeId: 'runtime-work-live', storedSessionId: 'stored-work-bot' })
+    expect(ordinarySession).not.toHaveProperty('runtimeId')
+    expect(invalidateRuntimeBindings).toHaveBeenCalledWith(new Set(['stored-work-bot']))
+  })
+})
+
+describe('resetRouteOwnedTileRuntimeBindings', () => {
+  afterEach(() => {
+    $sessionTiles.set([])
+  })
+
+  it('drops only tiles owned by the reopened route and leaves ambient tiles bound', () => {
+    const invalidateRuntimeBindings = vi.fn()
+    const dropRuntimeBindings = vi.fn()
+    setSessionTileDelegate({ dropRuntimeBindings, invalidateRuntimeBindings } as unknown as SessionTileDelegate)
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: 'local', mode: 'local', profile: 'writer', targetProfile: 'writer' },
+        runtimeId: 'runtime-writer-bot',
+        storedSessionId: 'stored-writer-bot',
+        workspaceMode: 'bots'
+      },
+      {
+        ownerRoute: { connectionId: 'local', mode: 'local', profile: 'coder', targetProfile: 'coder' },
+        runtimeId: 'runtime-coder-bot',
+        storedSessionId: 'stored-coder-bot',
+        workspaceMode: 'bots'
+      },
+      { runtimeId: 'runtime-ambient', storedSessionId: 'stored-ambient' }
+    ])
+
+    resetRouteOwnedTileRuntimeBindings({ connectionId: 'local', profile: 'writer' })
+
+    const [writerBot, coderBot, ambient] = $sessionTiles.get()
+
+    expect(writerBot).toMatchObject({ storedSessionId: 'stored-writer-bot' })
+    expect(writerBot).not.toHaveProperty('runtimeId')
+    expect(coderBot).toMatchObject({ runtimeId: 'runtime-coder-bot' })
+    expect(ambient).toMatchObject({ runtimeId: 'runtime-ambient' })
+    expect(dropRuntimeBindings).toHaveBeenCalledWith(new Set(['stored-writer-bot']))
+    expect(invalidateRuntimeBindings).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op when no open tile belongs to the reopened route', () => {
+    const invalidateRuntimeBindings = vi.fn()
+    const dropRuntimeBindings = vi.fn()
+    setSessionTileDelegate({ dropRuntimeBindings, invalidateRuntimeBindings } as unknown as SessionTileDelegate)
+    const tiles = [{ runtimeId: 'runtime-ambient', storedSessionId: 'stored-ambient' }]
+    $sessionTiles.set(tiles)
+
+    resetRouteOwnedTileRuntimeBindings({ connectionId: 'local', profile: 'writer' })
+
+    expect($sessionTiles.get()).toBe(tiles)
+    expect(dropRuntimeBindings).not.toHaveBeenCalled()
+    expect(invalidateRuntimeBindings).not.toHaveBeenCalled()
+  })
+})
+
+describe('SessionTile workspace scope', () => {
+  afterEach(() => {
+    $activeGatewayProfile.set('default')
     $layoutTree.set(null)
+    $selectedStoredSessionId.set(null)
+    $sessionTiles.set([])
   })
 
-  it('claims the workspace zone when the chat is alone in it', () => {
-    seedTree([WORKSPACE_PANE_ID])
+  it('persists a sessions-mode owner route so a branch child tile pins its owning socket', () => {
+    const ownerRoute = { connectionId: '100-125-133-71-9119', mode: 'remote' as const, profile: 'default' }
 
-    focusWorkspaceSession()
+    openSessionTile('branch-child', 'center', undefined, null, { ownerRoute, workspaceMode: 'sessions' })
 
-    expect($activeTreeGroup.get()).toBe(CHAT_GROUP)
+    expect($sessionTiles.get()).toEqual([
+      expect.objectContaining({ ownerRoute, storedSessionId: 'branch-child', workspaceMode: 'sessions' })
+    ])
   })
 
-  it('fronts the workspace tab when tiles share its zone', () => {
-    const tile = sessionTilePaneId('other')
-    seedTree([WORKSPACE_PANE_ID, tile], tile)
+  it('keeps an existing sessions-mode owner route on a route-less re-scope', () => {
+    const ownerRoute = { connectionId: '100-125-133-71-9119', mode: 'remote' as const, profile: 'default' }
 
-    focusWorkspaceSession()
+    openSessionTile('branch-child', 'center', undefined, null, { ownerRoute, workspaceMode: 'sessions' })
+    // A plain sidebar re-open routes through setSessionTileWorkspaceScope with
+    // no route — absence of information, not a revocation.
+    setSessionTileWorkspaceScope('branch-child', { workspaceMode: 'sessions' })
 
-    expect($activeTreeGroup.get()).toBe(CHAT_GROUP)
+    expect($sessionTiles.get()).toEqual([expect.objectContaining({ ownerRoute, storedSessionId: 'branch-child' })])
   })
 
-  it('survives a tree that does not exist yet (mobile has no panes)', () => {
+  it('stores an exact Bot owner and keeps it through placement patches', () => {
+    const ownerRoute = {
+      connectionId: 'connection-a',
+      mode: 'remote' as const,
+      profile: 'default',
+      targetProfile: 'backend-default'
+    }
+
+    const scope = { ownerRoute, workspaceMode: 'bots' as const, workspaceOwnerKey: 'connection-a::default' }
+
+    openSessionTile('bot-chat', 'right', undefined, undefined, scope)
+    patchSessionTile('bot-chat', { dir: 'left' })
+
+    expect($sessionTiles.get()).toEqual([
+      expect.objectContaining({
+        dir: 'left',
+        ownerRoute,
+        storedSessionId: 'bot-chat',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'connection-a::default'
+      })
+    ])
+  })
+
+  it('allows a Bot-scoped tab when the same stored session is hidden in Sessions main', () => {
+    const scope = { workspaceMode: 'bots' as const, workspaceOwnerKey: 'connection-a::default' }
+
+    $selectedStoredSessionId.set('bot-chat')
+    openSessionTile('bot-chat', 'center', undefined, undefined, scope)
+    $layoutTree.set(group(['workspace', tilePane('bot-chat')], { active: 'workspace', id: 'main' }))
+
+    expect($sessionTiles.get()).toEqual([
+      expect.objectContaining({
+        storedSessionId: 'bot-chat',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'connection-a::default'
+      })
+    ])
+    expect(focusOpenSession('bot-chat', scope)).toBe('tile')
+  })
+
+  it('splits a Bot chat loaded in MAIN instead of silently no-oping the drop', () => {
+    const scope = { workspaceMode: 'bots' as const, workspaceOwnerKey: 'bot:connection-a::alpha' }
+
+    $selectedStoredSessionId.set('bot-chat')
+    // A real open records the bot scope on the MAIN chat (which has no tile
+    // to carry it). The drag handler then commits the drop with NO explicit
+    // scope — the tab it drags is the workspace pane itself.
+    setSessionTileWorkspaceScope('bot-chat', scope)
+    openSessionTile('bot-chat', 'right', 'workspace', undefined)
+
+    // The minted tile registers its pane (watchSessionTiles) and the drop
+    // hint's reveal adopts it — here, the tree that adoption produces.
+    $layoutTree.set(group(['workspace', tilePane('bot-chat')], { id: 'workspace-group' }))
+
+    expect(focusOpenSession('bot-chat', scope)).toBe('tile')
+    expect($sessionTiles.get()).toEqual([
+      expect.objectContaining({
+        storedSessionId: 'bot-chat',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:connection-a::alpha'
+      })
+    ])
+  })
+
+  it('fronts the existing tab when compaction rotated the tip id — never a duplicate', () => {
+    // The tile was opened when seg-2 was the tip; the conversation has since
+    // rotated to seg-3 (projected row carries the full chain). Opening the
+    // new tip must front that tile, not open the same chat twice.
+    setSessions([{ _lineage_ids: ['seg-1', 'seg-2', 'seg-3'], _lineage_root_id: 'seg-1', id: 'seg-3' } as never])
+    openSessionTile('seg-2')
+    $layoutTree.set(group(['workspace', tilePane('seg-2')], { active: 'workspace', id: 'main' }))
+
+    expect(focusOpenSession('seg-3')).toBe('tile')
+    expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['seg-2'])
+
+    // The open path dedupes through the same lineage test.
+    openSessionTile('seg-3')
+    expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['seg-2'])
+    setSessions([])
+  })
+
+  it('reports the workspace scope of the focused Bot session tab', () => {
+    const scope = {
+      ownerRoute: { connectionId: 'connection-a', profile: 'default' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'connection-a::default',
+      workspaceTabTitle: 'Bot Chat'
+    }
+
+    openSessionTile('bot-chat', 'center', undefined, undefined, scope)
+    $layoutTree.set(group(['workspace', tilePane('bot-chat')], { active: tilePane('bot-chat'), id: 'main' }))
+
+    expect(focusedSessionWorkspaceScope()).toEqual(scope)
+  })
+
+  it('keeps Bot tabs while a profile publication swaps the Sessions bucket', () => {
+    const scope = { workspaceMode: 'bots' as const, workspaceOwnerKey: 'connection-a::writer' }
+
+    openSessionTile('sessions-chat')
+    openSessionTile('bot-chat', 'center', undefined, undefined, scope)
+    $activeGatewayProfile.set('other-profile')
+
+    expect($sessionTiles.get()).toEqual([
+      expect.objectContaining({
+        storedSessionId: 'bot-chat',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'connection-a::writer'
+      })
+    ])
+  })
+
+  it('re-scopes an existing tile without changing its placement', () => {
+    openSessionTile('chat', 'bottom', 'workspace')
+
+    expect(
+      setSessionTileWorkspaceScope('chat', {
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'connection-b::default'
+      })
+    ).toBe(true)
+    expect($sessionTiles.get()[0]).toMatchObject({
+      anchor: 'workspace',
+      dir: 'bottom',
+      workspaceMode: 'bots',
+      workspaceOwnerKey: 'connection-b::default'
+    })
+  })
+
+  it('preserves an existing Bot tile scope when moving it without an explicit scope', () => {
+    const scope = {
+      ownerRoute: {
+        connectionId: 'connection-a',
+        mode: 'remote' as const,
+        profile: 'default',
+        targetProfile: 'default'
+      },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'bot:connection-a::default',
+      workspaceTabTitle: 'Bot chat'
+    }
+
+    openSessionTile('bot-chat', 'right', undefined, undefined, scope)
+    $layoutTree.set(group(['workspace', 'session-tile:bot-chat'], { id: 'workspace-group' }))
+    // A split drag re-docks the tab with no scope (session-drag onCommit).
+    openSessionTile('bot-chat', 'left', 'workspace')
+
+    expect($sessionTiles.get()).toEqual([
+      expect.objectContaining({
+        anchor: 'workspace',
+        dir: 'left',
+        ownerRoute: scope.ownerRoute,
+        storedSessionId: 'bot-chat',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: scope.workspaceOwnerKey,
+        workspaceTabTitle: 'Bot chat'
+      })
+    ])
+
+    // An explicit scope from the caller still wins over the tile's current one.
+    openSessionTile('bot-chat', 'right', 'workspace', undefined, { workspaceMode: 'sessions' })
+
+    expect($sessionTiles.get()).toEqual([
+      expect.objectContaining({ dir: 'right', storedSessionId: 'bot-chat', workspaceMode: 'sessions' })
+    ])
+    expect($sessionTiles.get()[0]).not.toHaveProperty('workspaceOwnerKey', scope.workspaceOwnerKey)
+  })
+
+  it('preserves workspace scope while dropping a stale runtime binding', () => {
+    $sessionTiles.set([
+      {
+        runtimeId: 'runtime-dead',
+        storedSessionId: 'bot-chat',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'connection-a::default'
+      }
+    ])
+
+    resetTileRuntimeBindings()
+
+    expect($sessionTiles.get()[0]).toEqual({
+      anchor: undefined,
+      before: undefined,
+      dir: undefined,
+      storedSessionId: 'bot-chat',
+      workspaceMode: 'bots',
+      workspaceOwnerKey: 'connection-a::default'
+    })
+  })
+})
+
+describe('focusWorkspaceOwnerSessionTile', () => {
+  const botA = { workspaceMode: 'bots' as const, workspaceOwnerKey: 'bot:a' }
+  const botB = { workspaceMode: 'bots' as const, workspaceOwnerKey: 'bot:b' }
+
+  afterEach(() => {
+    forgetActivePane(workspaceScopeKey('bots', 'bot:a'))
     $layoutTree.set(null)
-
-    expect(() => focusWorkspaceSession()).not.toThrow()
-    expect($activeTreeGroup.get()).toBeNull()
+    $sessionTiles.set([])
   })
 
-  // The main-pane branch used to leave the zone null, so clicking the sidebar
-  // row of the chat already in main left ⌃Tab unable to see its own strip.
-  it('is what focusOpenSession uses for the chat already in main', () => {
-    seedTree([WORKSPACE_PANE_ID])
-    $activeStoredSessionId.set('loaded')
+  it('reports null for an owner with no open tile — the caller opens something', () => {
+    openSessionTile('other-bot-chat', 'center', 'workspace', undefined, botB)
+    openSessionTile('sessions-chat')
 
-    expect(focusOpenSession('loaded')).toBe(true)
-    expect($activeTreeGroup.get()).toBe(CHAT_GROUP)
+    expect(focusWorkspaceOwnerSessionTile('bot:a')).toBeNull()
   })
 
-  /**
-   * WHERE A BRANCH LANDS (MJXHRM-388).
-   *
-   * Two failures, one helper. Contributing a tile only gets its pane ADOPTED,
-   * and adoption is silent by design (`insertAtGroup(..., activate: false)`), so
-   * the branch was stacked behind the chat it came from and the screen did not
-   * change — the "never foregrounds the new tab" this ticket is named for. And
-   * with no anchor a tile docks against the workspace, so branching a chat that
-   * is itself a tile in another zone put the branch where the user was not
-   * looking.
-   */
-  describe('openBranchTile', () => {
-    it('fronts the branch and claims its zone', () => {
-      const branch = sessionTilePaneId('branch-1')
-      seedTree([WORKSPACE_PANE_ID, branch], WORKSPACE_PANE_ID)
+  it('fronts the tab the owner last had active and reports its stored id', () => {
+    openSessionTile('older-thread', 'center', 'workspace', undefined, botA)
+    openSessionTile('newer-thread', 'center', 'workspace', undefined, botA)
+    $layoutTree.set(
+      group(['workspace', tilePane('older-thread'), tilePane('newer-thread')], { active: 'workspace', id: 'main' })
+    )
+    rememberActivePane(workspaceScopeKey('bots', 'bot:a'), tilePane('older-thread'))
 
-      openBranchTile('branch-1', null)
-
-      expect(findGroup($layoutTree.get()!, CHAT_GROUP)?.active).toBe(branch)
-      expect($activeTreeGroup.get()).toBe(CHAT_GROUP)
-    })
-
-    it('anchors the branch to the PARENT strip when the parent is a tile', () => {
-      seedTree([WORKSPACE_PANE_ID])
-      $sessionTiles.set([{ dir: 'center', storedSessionId: 'parent-1' }])
-
-      openBranchTile('branch-1', 'parent-1')
-
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'branch-1')).toMatchObject({
-        anchor: sessionTilePaneId('parent-1'),
-        dir: 'center'
-      })
-    })
-
-    it('falls back to the workspace strip when the parent is the main chat', () => {
-      seedTree([WORKSPACE_PANE_ID])
-
-      openBranchTile('branch-1', 'parent-1')
-
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'branch-1')).toMatchObject({
-        anchor: WORKSPACE_PANE_ID,
-        dir: 'center'
-      })
-    })
+    expect(focusWorkspaceOwnerSessionTile('bot:a')).toBe('older-thread')
+    expect(findGroupOfPane($layoutTree.get()!, tilePane('older-thread'))?.active).toBe(tilePane('older-thread'))
   })
 
-  /**
-   * A plugin-opened chat as its OWN tab (MJXHRM-518) — a bot’s chat lands beside
-   * the conversation the user was in, never on top of it.
-   */
-  describe('openSessionTab', () => {
-    it('opens its own tab in the main strip, fronted, and leaves the main chat alone', () => {
-      const tab = sessionTilePaneId('bot-chat')
-      seedTree([WORKSPACE_PANE_ID, tab], WORKSPACE_PANE_ID)
-      $activeStoredSessionId.set('loaded')
+  it('falls back to the most recently opened tab when nothing is remembered', () => {
+    openSessionTile('older-thread', 'center', 'workspace', undefined, botA)
+    openSessionTile('newer-thread', 'center', 'workspace', undefined, botA)
+    $layoutTree.set(
+      group(['workspace', tilePane('older-thread'), tilePane('newer-thread')], { active: 'workspace', id: 'main' })
+    )
 
-      openSessionTab('bot-chat')
-
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'bot-chat')).toMatchObject({
-        anchor: WORKSPACE_PANE_ID,
-        dir: 'center'
-      })
-      expect(findGroup($layoutTree.get()!, CHAT_GROUP)?.active).toBe(tab)
-      expect($activeStoredSessionId.get()).toBe('loaded')
-    })
-
-    it('opens no second tab for a chat already on screen — in main, or as a tile in another zone', () => {
-      seedTree([WORKSPACE_PANE_ID])
-      $activeStoredSessionId.set('loaded')
-      $sessionTiles.set([{ anchor: 'elsewhere', dir: 'left', storedSessionId: 'tiled' }])
-
-      openSessionTab('loaded')
-      openSessionTab('tiled')
-
-      // Not moved either: `openSessionTile` would drag the tile out of its zone.
-      expect($sessionTiles.get()).toEqual([{ anchor: 'elsewhere', dir: 'left', storedSessionId: 'tiled' }])
-    })
+    expect(focusWorkspaceOwnerSessionTile('bot:a')).toBe('newer-thread')
+    expect(findGroupOfPane($layoutTree.get()!, tilePane('newer-thread'))?.active).toBe(tilePane('newer-thread'))
   })
 
-  /**
-   * MJXHRM-423 — "Open in tile" asks about a CONVERSATION, not an id.
-   *
-   * A tile keeps the id its chat was opened with; auto-compression rotates the
-   * live one. So the sidebar row of a compacted chat names it `tip` while the
-   * tile already showing it is keyed on `root` — and matching on identity
-   * contributed a SECOND pane onto the same `$sessionStates` slice, two tabs
-   * fighting over one live conversation.
-   */
-  describe('openSessionTile — one tile per conversation', () => {
-    afterEach(() => {
-      $sessions.set([])
-    })
+  it('ignores a remembered tab that has since been closed', () => {
+    openSessionTile('closed-bot-chat', 'center', 'workspace', undefined, botA)
+    openSessionTile('thread', 'center', 'workspace', undefined, botA)
+    rememberActivePane(workspaceScopeKey('bots', 'bot:a'), tilePane('closed-bot-chat'))
+    $sessionTiles.set($sessionTiles.get().filter(t => t.storedSessionId !== 'closed-bot-chat'))
+    $layoutTree.set(group(['workspace', tilePane('thread')], { active: 'workspace', id: 'main' }))
 
-    it('reveals the tile already open under the lineage root rather than adding a second', () => {
-      seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('root')], WORKSPACE_PANE_ID)
-      $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([{ dir: 'right', storedSessionId: 'root' }])
+    expect(focusWorkspaceOwnerSessionTile('bot:a')).toBe('thread')
+  })
 
-      openSessionTile('tip', 'center')
+  it("never crosses owners: another bot's open tabs do not count", () => {
+    openSessionTile('other-bot-chat', 'center', 'workspace', undefined, botB)
 
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['root'])
-      // ...and the re-dock landed on the tile's OWN key: its pane id and its
-      // record are both on `root`, so patching under `tip` would have written a
-      // dock nothing reads.
-      expect($sessionTiles.get()[0].dir).toBe('center')
-    })
+    expect(focusWorkspaceOwnerSessionTile('bot:a')).toBeNull()
+    expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['other-bot-chat'])
+  })
 
-    it('never opens a tile for the conversation already loaded in main', () => {
-      seedTree([WORKSPACE_PANE_ID])
-      $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $activeStoredSessionId.set('tip')
+  describe('staleness probe (#90102): the tile bucket reconciles with backend truth before it wins', () => {
+    it('discards a stale tile and reports null so the caller runs its authoritative open', () => {
+      openSessionTile('stale-bot-chat', 'center', 'workspace', undefined, botA)
 
-      openSessionTile('root')
-
+      expect(focusWorkspaceOwnerSessionTile('bot:a', tile => tile.storedSessionId === 'stale-bot-chat')).toBeNull()
+      // Discard, not close: resurrecting the tile would just front the stale
+      // session again on the next click.
       expect($sessionTiles.get()).toEqual([])
     })
 
-    it('still opens a tile for a genuinely different session', () => {
-      seedTree([WORKSPACE_PANE_ID])
-      $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([{ dir: 'right', storedSessionId: 'root' }])
+    it('fronts the surviving fresh tile after discarding the stale one', () => {
+      openSessionTile('stale-bot-chat', 'center', 'workspace', undefined, botA)
+      openSessionTile('live-thread', 'center', 'workspace', undefined, botA)
+      $layoutTree.set(
+        group(['workspace', tilePane('stale-bot-chat'), tilePane('live-thread')], { active: 'workspace', id: 'main' })
+      )
+      // The stale tile is even the remembered one — the exact stuck shape.
+      rememberActivePane(workspaceScopeKey('bots', 'bot:a'), tilePane('stale-bot-chat'))
 
-      openSessionTile('unrelated')
-
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['root', 'unrelated'])
-    })
-  })
-
-  /**
-   * ⌘⇧T asks the same question (MJXHRM-423). The closed-tab stack holds the key
-   * a tile had when it CLOSED, and a compaction since then moves the
-   * conversation onto a new id — so both of its "is this live again?" guards
-   * missed, and ⌘⇧T SPENT itself on a chat that was already on screen: the pop
-   * returned, and the tab the user actually wanted back stayed closed.
-   *
-   * That is what these assert. A duplicate tile is `openSessionTile`'s guard and
-   * is covered above; what only this function can get wrong is which entry of
-   * the stack the keystroke consumes, so each case stacks a second, genuinely
-   * closed tab UNDER the decoy and expects it back.
-   *
-   * The stack is module-level and LIFO, so each case pushes its own two entries
-   * immediately before reopening and names the key it expects rather than
-   * asserting on the whole list, which still carries whatever earlier tests left
-   * below.
-   */
-  describe('reopenLastClosedTile — one tab per conversation', () => {
-    afterEach(() => {
-      $sessions.set([])
+      expect(focusWorkspaceOwnerSessionTile('bot:a', tile => tile.storedSessionId === 'stale-bot-chat')).toBe(
+        'live-thread'
+      )
+      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['live-thread'])
     })
 
-    /** A genuinely closed tab, then a compacted one closed on top of it. */
-    const stackDecoyOver = (wanted: string) => {
-      seedTree([WORKSPACE_PANE_ID])
-      $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([
-        { dir: 'right', storedSessionId: wanted },
-        { dir: 'right', storedSessionId: 'root' }
-      ])
-      closeSessionTile(wanted)
-      closeSessionTile('root')
-      $sessionTiles.set([])
-    }
+    it("only judges the probed owner's tiles — other owners keep theirs", () => {
+      openSessionTile('other-bot-chat', 'center', 'workspace', undefined, botB)
+      openSessionTile('stale-bot-chat', 'center', 'workspace', undefined, botA)
 
-    it('moves past a tab whose conversation is open again under its live tip', () => {
-      stackDecoyOver('wanted-1')
-      $sessionTiles.set([{ dir: 'right', storedSessionId: 'tip' }])
-
-      reopenLastClosedTile()
-
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toContain('wanted-1')
+      expect(focusWorkspaceOwnerSessionTile('bot:a', () => true)).toBeNull()
+      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['other-bot-chat'])
     })
 
-    it('moves past a tab whose conversation is now the primary', () => {
-      stackDecoyOver('wanted-2')
-      $activeStoredSessionId.set('tip')
+    it('a throwing probe keeps the tile — reconciliation must not break the click', () => {
+      openSessionTile('bot-chat', 'center', 'workspace', undefined, botA)
+      $layoutTree.set(group(['workspace', tilePane('bot-chat')], { active: 'workspace', id: 'main' }))
 
-      reopenLastClosedTile()
-
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toContain('wanted-2')
+      expect(
+        focusWorkspaceOwnerSessionTile('bot:a', () => {
+          throw new Error('probe blew up')
+        })
+      ).toBe('bot-chat')
+      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['bot-chat'])
     })
 
-    it('still restores the top of the stack when its conversation is genuinely gone', () => {
-      stackDecoyOver('wanted-3')
+    it('fronts a visible tile without a probe', () => {
+      openSessionTile('bot-chat', 'center', 'workspace', undefined, botA)
+      $layoutTree.set(group(['workspace', tilePane('bot-chat')], { active: 'workspace', id: 'main' }))
 
-      reopenLastClosedTile()
-
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toContain('root')
-      expect($sessionTiles.get().map(t => t.storedSessionId)).not.toContain('wanted-3')
-    })
-  })
-
-  /**
-   * MJXHRM-404 — the persisted tile list must follow the order on SCREEN.
-   *
-   * `$sessionTiles` is a second list beside the layout tree, and two things read
-   * its ORDER rather than the tree's: `stackSessionTilesIntoMain` (the layout
-   * RESET handler) restacks tiles by walking it front to back, and `paneMirror`
-   * docks panes in array order when the tree holds none for them.
-   *
-   * `syncTileStripOrder` existed for exactly that and ran from ONE caller —
-   * `openSessionTile`'s move branch — so every other way the on-screen order
-   * changes (drag a tab within a strip, drag one between zones, the zone menu's
-   * Move, a zone merge) left the list stale: arrange three tabs by hand, hit
-   * Reset, and they come back in the order they were OPENED in. It is now hung
-   * off `$layoutTree` itself, which is what these pin — the invariant belongs to
-   * the tree changing, not to the callers that happened to be written first.
-   */
-  describe('tile strip order follows the layout tree', () => {
-    const tiles = (...ids: string[]) =>
-      $sessionTiles.set(ids.map(id => ({ dir: 'right' as const, storedSessionId: id })))
-
-    const order = () => $sessionTiles.get().map(t => t.storedSessionId)
-
-    it('re-orders the persisted list when a tab is dragged within its strip', () => {
-      seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('a'), sessionTilePaneId('b'), sessionTilePaneId('c')])
-      tiles('a', 'b', 'c')
-
-      // The drag a tab strip commits: move `c` in front of `a`.
-      reorderTreePanes(CHAT_GROUP, [sessionTilePaneId('c')], sessionTilePaneId('a'))
-
-      expect(order()).toEqual(['c', 'a', 'b'])
-    })
-
-    it('re-orders when a tab is moved into ANOTHER zone, reading both zones in tree order', () => {
-      seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('a'), sessionTilePaneId('b')])
-      tiles('a', 'b')
-
-      // `a` leaves the chat zone for the tool zone, which the tree walks SECOND.
-      moveTreePane(sessionTilePaneId('a'), { groupId: TOOL_GROUP, pos: 'center' })
-
-      expect(order()).toEqual(['b', 'a'])
-    })
-
-    it('leaves the list untouched when a tree write moves no tile', () => {
-      seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('a'), sessionTilePaneId('b')])
-      tiles('a', 'b')
-
-      const before = $sessionTiles.get()
-
-      reorderTreePanes(TOOL_GROUP, ['terminal'], null)
-
-      // Same ARRAY identity: `orderTilesByTree` answers null and nothing is
-      // written. A sync that rewrote the list on every commit would churn
-      // localStorage on every tab activate and every sash release.
-      expect($sessionTiles.get()).toBe(before)
-    })
-
-    it('keeps a tile the tree has no pane for, rather than dropping it', () => {
-      seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('b')])
-      tiles('a', 'b')
-
-      reorderTreePanes(CHAT_GROUP, [sessionTilePaneId('b')], WORKSPACE_PANE_ID)
-
-      // `a` is mid-registration, or belongs to a pane the tree lost. It ranks
-      // LAST rather than vanishing: this function orders a list, and must never
-      // be the thing that closes a tab.
-      expect(order()).toEqual(['b', 'a'])
-    })
-
-    it('still re-orders when an open tile is re-docked — the branch that used to do it by hand', () => {
-      seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('a'), sessionTilePaneId('b')], WORKSPACE_PANE_ID)
-      // Seeded DISAGREEING with the tree on purpose. Seeding it already-correct
-      // made this case pass with the sync torn out entirely — it asserted an
-      // order that was there before the act under test.
-      tiles('b', 'a')
-
-      // Re-dock `a` ahead of the workspace tab. The tree moves, so the list has
-      // to follow even though `openSessionTile` no longer re-orders itself.
-      openSessionTile('a', 'left', WORKSPACE_PANE_ID, WORKSPACE_PANE_ID)
-
-      expect(order()).toEqual(['a', 'b'])
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'a')?.dir).toBe('left')
+      expect(focusWorkspaceOwnerSessionTile('bot:a')).toBe('bot-chat')
+      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['bot-chat'])
     })
   })
 })
 
-// The directory the workspace surfaces (file tree, review, terminal, statusbar)
-// describe. It used to be the SIDEBAR's selection, so tiling two chats side by
-// side left the file tree pinned to whichever one the sidebar last picked.
-describe('$focusedCwd', () => {
-  const CHAT_GROUP = 'chat-zone'
-  const FILES_GROUP = 'files-zone'
-  const paneA = sessionTilePaneId('a')
-  const paneB = sessionTilePaneId('b')
-
-  let disposeTiles: (() => void) | null = null
-
-  const seedTree = (active: string) => {
-    disposeTiles?.()
-    disposeTiles = registerTiles(
-      [paneA, paneB, 'files'].map<Tile>(id => ({
-        id,
-        kind: isChatPaneId(id) ? 'chat' : 'tool',
-        title: id,
-        render: () => null,
-        placement: isChatPaneId(id) ? 'main' : 'right'
-      }))
-    )
-
+describe('closeAllOpenSessionTiles persists Bot Mode Close All (#94137)', () => {
+  afterEach(() => {
+    $activeGatewayProfile.set('default')
+    $layoutTree.set(null)
+    $sessionTiles.set([])
+  })
+  it('drops persisted bot tiles so a roster/profile rehydrate cannot restore them', () => {
+    openSessionTile('chat-a', 'center', 'workspace', undefined, {
+      workspaceMode: 'bots',
+      workspaceOwnerKey: 'bot:a'
+    })
+    openSessionTile('chat-b', 'center', 'workspace', undefined, {
+      workspaceMode: 'bots',
+      workspaceOwnerKey: 'bot:b'
+    })
+    $layoutTree.set(group(['workspace', tilePane('chat-a'), tilePane('chat-b')], { active: 'workspace', id: 'main' }))
+    closeAllOpenSessionTiles('workspace')
+    expect($sessionTiles.get()).toEqual([])
+    // Profile swap re-reads the shared Bot bucket. Close All must have
+    // emptied it, not only dismissed the tree panes.
+    $activeGatewayProfile.set('other-profile')
+    expect($sessionTiles.get()).toEqual([])
+    $activeGatewayProfile.set('default')
+    expect($sessionTiles.get()).toEqual([])
+  })
+  it('leaves session tiles stacked in a different zone open', () => {
+    openSessionTile('keep', 'right', 'workspace')
+    openSessionTile('close-me', 'center', 'workspace')
     $layoutTree.set(
       split('row', [
-        group([paneA, paneB], { active, id: CHAT_GROUP }),
-        group(['files'], { active: 'files', id: FILES_GROUP })
+        group(['workspace', tilePane('close-me')], { active: 'workspace', id: 'main' }),
+        group([tilePane('keep')], { active: tilePane('keep'), id: 'right' })
       ])
     )
+    closeAllOpenSessionTiles('workspace')
+    expect($sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['keep'])
+  })
+})
+
+describe('dropTilesForProfile', () => {
+  const TILES_KEY = 'hermes.desktop.sessionTiles.v2'
+  const BOTS_BUCKET = '__bots_workspace__'
+
+  const storedTiles = (): Record<string, unknown> => {
+    const raw = window.localStorage.getItem(TILES_KEY)
+
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
   }
 
-  beforeEach(() => {
+  // The tile buckets are module-private and other suites leave persisted
+  // entries behind, so each test re-imports a FRESH session-states module
+  // (empty tilesByProfile + empty storage) instead of fighting the residue —
+  // the same isolation the browser gets between app launches.
+  type SessionStates = typeof SessionStatesModule
+  let mod: SessionStates
+  let activeGatewayProfile: { set: (name: string) => void }
+  beforeEach(async () => {
+    window.localStorage.clear()
+    vi.resetModules()
+    // Re-import the module graph so the private tile buckets start empty; the
+    // profile atom session-states subscribes to is the freshly loaded one too.
+    mod = await import('@/store/session-states')
+    const profile = await import('@/store/profile')
+    activeGatewayProfile = profile.$activeGatewayProfile
+    activeGatewayProfile.set('default')
+    mod.$sessionTiles.set([])
+  })
+  afterEach(() => {
+    window.localStorage.clear()
+    $activeGatewayProfile.set('default')
+    $layoutTree.set(null)
+    $selectedStoredSessionId.set(null)
     $sessionTiles.set([])
-    $activeStoredSessionId.set(null)
-    $workspaceCwd.set('')
-    seed('rt-a', { cwd: '/proj/a', storedSessionId: 'a' })
-    seed('rt-b', { cwd: '/proj/b', storedSessionId: 'b' })
+  })
+  it("drops the deleted profile's persisted session tiles from memory and storage", () => {
+    activeGatewayProfile.set('worker')
+    mod.openSessionTile('worker-session-1')
+    mod.openSessionTile('worker-session-2', 'left')
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['worker-session-1', 'worker-session-2'])
+    expect(storedTiles()).toHaveProperty('worker')
+    mod.dropTilesForProfile('worker')
+    expect(mod.$sessionTiles.get()).toEqual([])
+    expect(storedTiles()).not.toHaveProperty('worker')
+    // Session tiles of another profile survive the drop.
+    activeGatewayProfile.set('writer')
+    mod.openSessionTile('writer-session-1')
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['writer-session-1'])
+    expect(storedTiles()).toHaveProperty('writer')
+  })
+  it("drops Bot Mode tiles owned by a locally-deleted profile and keeps the other bots' tiles", () => {
+    mod.openSessionTile('bot-chat-1', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'local', mode: 'local' as const, profile: 'researcher-1' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'researcher-1'
+    })
+    mod.openSessionTile('bot-chat-2', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'local', mode: 'local' as const, profile: 'writer-1' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'writer-1'
+    })
+    mod.dropTilesForProfile('researcher-1')
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['bot-chat-2'])
+    expect(
+      (storedTiles()[BOTS_BUCKET] as Array<{ storedSessionId: string }>).map(tile => tile.storedSessionId)
+    ).toEqual(['bot-chat-2'])
+  })
+  it('drops a source-scoped bot tile only for the exact route and keeps same-name agents elsewhere', () => {
+    const route = {
+      connectionId: 'source-a',
+      mode: 'remote' as const,
+      profile: 'worker',
+      targetProfile: 'backend-worker'
+    }
+
+    mod.openSessionTile('bot-a', 'right', undefined, undefined, {
+      ownerRoute: route,
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'source-a::worker'
+    })
+    mod.openSessionTile('bot-b', 'right', undefined, undefined, {
+      ownerRoute: {
+        connectionId: 'source-b',
+        mode: 'remote' as const,
+        profile: 'worker',
+        targetProfile: 'backend-worker'
+      },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'source-b::worker'
+    })
+    mod.openSessionTile('bot-local', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'local', mode: 'local' as const, profile: 'worker' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'local::worker'
+    })
+    mod.dropTilesForProfile('worker', route)
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['bot-b', 'bot-local'])
+    expect(
+      (storedTiles()[BOTS_BUCKET] as Array<{ storedSessionId: string }>).map(tile => tile.storedSessionId)
+    ).toEqual(['bot-b', 'bot-local'])
+  })
+
+  it('keeps a same-named bot tile owned by another connection when a local profile is deleted', () => {
+    mod.openSessionTile('bot-local', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'local', mode: 'local' as const, profile: 'copilot' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'copilot'
+    })
+    mod.openSessionTile('bot-remote', 'right', undefined, undefined, {
+      ownerRoute: {
+        connectionId: 'work-vps',
+        mode: 'remote' as const,
+        profile: 'copilot',
+        targetProfile: 'copilot'
+      },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'work-vps::copilot'
+    })
+
+    mod.dropTilesForProfile('copilot')
+
+    // Only the LOCAL connection's tile points at the deleted local profile; the
+    // same-named agent on another connection keeps its tile and conversation.
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['bot-remote'])
+    expect(
+      (storedTiles()[BOTS_BUCKET] as Array<{ storedSessionId: string }>).map(tile => tile.storedSessionId)
+    ).toEqual(['bot-remote'])
+  })
+
+  it('normalizes whitespace in the deleted identity on both delete paths', () => {
+    mod.openSessionTile('bot-local', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'local', mode: 'local' as const, profile: 'press-bot' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'press-bot'
+    })
+    mod.openSessionTile('bot-routed', 'right', undefined, undefined, {
+      ownerRoute: {
+        connectionId: 'source-a',
+        mode: 'remote' as const,
+        profile: 'worker',
+        targetProfile: 'backend-worker'
+      },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'source-a::worker'
+    })
+
+    // Non-route delete with a whitespace-padded name matches the trimmed tile.
+    mod.dropTilesForProfile('   press-bot   ')
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['bot-routed'])
+
+    // Route delete with padded route fields matches the exact route's tile.
+    mod.dropTilesForProfile('worker', {
+      connectionId: ' source-a ',
+      profile: '  worker  ',
+      targetProfile: '  backend-worker  '
+    })
+    expect(mod.$sessionTiles.get()).toEqual([])
+  })
+
+  it('keeps profile identity case-exact on both delete paths', () => {
+    mod.openSessionTile('bot-local', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'local', mode: 'local' as const, profile: 'press-bot' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'press-bot'
+    })
+    mod.openSessionTile('bot-routed', 'right', undefined, undefined, {
+      ownerRoute: {
+        connectionId: 'source-a',
+        mode: 'remote' as const,
+        profile: 'worker',
+        targetProfile: 'backend-worker'
+      },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'source-a::worker'
+    })
+
+    // normalizeProfileKey trims but never lowercases: a differing case is a
+    // different profile identity, consistently in the local and route branches.
+    mod.dropTilesForProfile('PRESS-BOT')
+    mod.dropTilesForProfile('worker', {
+      connectionId: 'source-a',
+      profile: 'WORKER',
+      targetProfile: 'backend-worker'
+    })
+
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['bot-local', 'bot-routed'])
+  })
+
+  it('drops a legacy Bot tile whose ownerRoute predates the connectionId field', () => {
+    // Tiles persisted before ownerRoute.connectionId existed (pre-#94235) carry
+    // no connection id at all. `String(undefined ?? '').trim()` yields '', so a
+    // local-delete branch comparing against `=== 'local'` never matches and the
+    // tile survives every delete, resurrecting the deleted profile on relaunch
+    // (hermes-agent#94235). The branch must treat a missing id as local.
+    mod.openSessionTile('bot-legacy', 'right', undefined, undefined, {
+      ownerRoute: { mode: 'local' as const, profile: 'press-bot' } as unknown as SessionProfileRoute,
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'press-bot'
+    })
+
+    mod.dropTilesForProfile('press-bot')
+
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual([])
+    expect(storedTiles()).not.toHaveProperty(BOTS_BUCKET)
+  })
+
+  it("treats a missing connectionId as the canonical 'local' spelling", () => {
+    // The local-delete branch compares ownerConnection to 'local', and
+    // local-mode owner routes record that same spelling. No renderer-importable
+    // constant exists (LOCAL_CONNECTION_ID lives in the electron main process),
+    // so this pins the two spellings together: legacy (no id), canonical
+    // ('local'), and divergent ('Local') tiles differ only in this field, and
+    // only the first two may be dropped by a local delete. Renaming either side
+    // fails the suite before it can silently orphan local Bot tiles
+    // (Enough1122 review of #94426).
+    mod.openSessionTile('bot-legacy', 'right', undefined, undefined, {
+      ownerRoute: { mode: 'local' as const, profile: 'press-bot' } as unknown as SessionProfileRoute,
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'press-bot'
+    })
+    mod.openSessionTile('bot-canonical', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'local', mode: 'local' as const, profile: 'press-bot' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'press-bot'
+    })
+    mod.openSessionTile('bot-divergent', 'right', undefined, undefined, {
+      ownerRoute: { connectionId: 'Local', mode: 'local' as const, profile: 'press-bot' },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'press-bot'
+    })
+
+    mod.dropTilesForProfile('press-bot')
+
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['bot-divergent'])
+  })
+
+  it('throws on a route without profile instead of silently falling into the local-delete branch', () => {
+    // A caller passing a route with only connectionId/targetProfile would
+    // silently take the local branch and start requiring
+    // `ownerConnection === 'local'` — dropping nothing remotely owned while
+    // appearing to succeed. Both current call sites always populate profile, so
+    // refuse the malformed shape loudly (Enough1122 review of #94426).
+    mod.openSessionTile('bot-remote', 'right', undefined, undefined, {
+      ownerRoute: {
+        connectionId: 'work-vps',
+        mode: 'remote' as const,
+        profile: 'copilot',
+        targetProfile: 'copilot'
+      },
+      workspaceMode: 'bots' as const,
+      workspaceOwnerKey: 'work-vps::copilot'
+    })
+
+    expect(() => mod.dropTilesForProfile('copilot', { connectionId: 'work-vps', targetProfile: 'copilot' })).toThrow(
+      /route without profile/
+    )
+    expect(mod.$sessionTiles.get().map(tile => tile.storedSessionId)).toEqual(['bot-remote'])
+  })
+})
+
+describe('releaseSessionTranscript', () => {
+  afterEach(() => {
+    $sessionStates.set({})
+  })
+
+  it('normalizes legacy state whose messages field is undefined', () => {
+    const legacy = { busy: false, storedSessionId: 'stored' } as ClientSessionState
+    $sessionStates.set({ runtime: legacy })
+
+    expect(() => releaseSessionTranscript('runtime')).not.toThrow()
+    expect($sessionStates.get().runtime).toEqual({ ...legacy, messages: [] })
+  })
+})
+
+describe('orderTilesByTree', () => {
+  it('no-ops (null) without a tree or below two tiles', () => {
+    expect(orderTilesByTree(null, [tile('a'), tile('b')])).toBeNull()
+    expect(orderTilesByTree(group([tilePane('a')]), [tile('a')])).toBeNull()
+  })
+
+  it('reorders tiles to layout-tree encounter order across a split', () => {
+    const tree = split('row', [group(['workspace', tilePane('b')]), group([tilePane('a')])])
+
+    expect(orderTilesByTree(tree, [tile('a'), tile('b')])).toEqual([tile('b'), tile('a')])
+  })
+
+  it('returns null when the array already matches strip order (skip persist)', () => {
+    const tree = split('row', [group([tilePane('b')]), group([tilePane('a')])])
+
+    expect(orderTilesByTree(tree, [tile('b'), tile('a')])).toBeNull()
+  })
+
+  it('sorts not-yet-adopted tiles after placed ones, stably', () => {
+    const tree = group(['workspace', tilePane('b')])
+
+    expect(orderTilesByTree(tree, [tile('a'), tile('b'), tile('c')])).toEqual([tile('b'), tile('a'), tile('c')])
+  })
+})
+
+describe('selectionHomesToWorkspace', () => {
+  const tiles = [tile('a'), tile('b')]
+
+  it('homes for a null selection or a non-tile session', () => {
+    expect(selectionHomesToWorkspace(null, tiles)).toBe(true)
+    expect(selectionHomesToWorkspace('c', tiles)).toBe(true)
+  })
+
+  it('skips homing when the selected id is already an open tile', () => {
+    expect(selectionHomesToWorkspace('a', tiles)).toBe(false)
+  })
+})
+
+describe('nextSessionTileForWorkspace (⌘W promotion source)', () => {
+  afterEach(() => {
+    $layoutTree.set(null)
+    $sessionTiles.set([])
+  })
+
+  it('prefers a tile stacked WITH the workspace tab (nearest-out)', () => {
+    $layoutTree.set(group(['workspace', tilePane('a'), tilePane('b')], { active: 'workspace', id: 'main' }))
+    $sessionTiles.set([tile('a'), tile('b')])
+
+    expect(nextSessionTileForWorkspace()).toBe('a')
+  })
+
+  it('side-by-side layout: a tile in ANOTHER zone still promotes instead of dropping main to a fresh draft (#88924)', () => {
+    // main zone holds only the workspace; the session tile lives in its own
+    // zone beside it — db's three-pane report shape.
+    $layoutTree.set(
+      split('row', [
+        group(['workspace'], { active: 'workspace', id: 'main' }),
+        group([tilePane('side')], { active: tilePane('side'), id: 'right' })
+      ])
+    )
+    $sessionTiles.set([tile('side')])
+
+    expect(nextSessionTileForWorkspace()).toBe('side')
+  })
+
+  it('returns null when no live tile exists anywhere in the tree', () => {
+    $layoutTree.set(
+      split('row', [
+        group(['workspace'], { active: 'workspace', id: 'main' }),
+        group([tilePane('stale')], { active: tilePane('stale'), id: 'right' })
+      ])
+    )
+    // Pane persisted in the tree but its tile is gone — must not promote a ghost.
+    $sessionTiles.set([])
+
+    expect(nextSessionTileForWorkspace()).toBe(null)
+  })
+})
+
+describe('boot-restore selection homing (⌘R tab persistence)', () => {
+  const mainGroup = () => group(['workspace', tilePane('t')], { active: tilePane('t'), id: 'main' })
+
+  const activePane = () => {
+    const tree = $layoutTree.get()
+
+    return tree?.type === 'group' ? tree.active : null
+  }
+
+  it('a normal selection change fronts the workspace tab over an active tile', () => {
+    $layoutTree.set(mainGroup())
+    $selectedStoredSessionId.set('nav-1')
+
+    expect(activePane()).toBe('workspace')
+  })
+
+  it('markSelectionRestore skips homing exactly once, so the persisted active tab survives a reload', () => {
+    $layoutTree.set(mainGroup())
+    markSelectionRestore()
+    $selectedStoredSessionId.set('boot-1')
+
+    // Boot restore: the tile tab the user reloaded on stays fronted.
+    expect(activePane()).toBe(tilePane('t'))
+
+    // One-shot consumed: the next selection change is a real navigation.
+    $selectedStoredSessionId.set('nav-2')
+    expect(activePane()).toBe('workspace')
+  })
+})
+
+describe('$focusedStoredSessionId in Bot Mode (#96062)', () => {
+  afterEach(() => {
+    $layoutTree.set(null)
+    $selectedStoredSessionId.set(null)
+    setWorkspaceScope('sessions')
+  })
+
+  it('a Bots-pane click keeps the main-zone bot tile focused instead of collapsing to a null selection edge', () => {
+    // Bot chats open as TILES and never set $selectedStoredSessionId. Clicking
+    // a roster row moves the interaction tracker to the sidebar group, whose
+    // active pane is chrome ('hermes-bots:pane'), not a session tile. The old
+    // derivation then fell back to the null primary selection and published a
+    // NULL "focused session" edge — which the Bots plugin read as "the chat
+    // lost the center", releasing its open claim and re-asserting the Bots
+    // home over the still-visible chat (the reported "jumps to the list").
+    setWorkspaceScope('bots', 'bot:b')
+    $selectedStoredSessionId.set(null)
+    $layoutTree.set(
+      split('row', [
+        group(['sessions', 'hermes-bots:pane'], { active: 'hermes-bots:pane', id: 'grp-sessions' }),
+        group(['workspace', tilePane('chat-b')], { active: tilePane('chat-b'), id: 'grp-main' })
+      ])
+    )
+    noteActiveTreeGroup('grp-sessions')
+
+    expect($focusedStoredSessionId.get()).toBe('chat-b')
+  })
+
+  it('the main-zone tile also answers while the tracker sits on the workspace tab itself', () => {
+    setWorkspaceScope('bots', 'bot:b')
+    $selectedStoredSessionId.set(null)
+    $layoutTree.set(group(['workspace', tilePane('chat-b')], { active: tilePane('chat-b'), id: 'grp-main' }))
+    noteActiveTreeGroup('grp-main')
+
+    expect($focusedStoredSessionId.get()).toBe('chat-b')
+  })
+
+  it('a closed bot chat (no tile in main) still falls back to the selection', () => {
+    setWorkspaceScope('bots', 'bot:b')
+    $selectedStoredSessionId.set(null)
+    $layoutTree.set(
+      split('row', [
+        group(['sessions', 'hermes-bots:pane'], { active: 'hermes-bots:pane', id: 'grp-sessions' }),
+        group(['workspace'], { active: 'workspace', id: 'grp-main' })
+      ])
+    )
+    noteActiveTreeGroup('grp-sessions')
+
+    // No tile owns the main zone — the chat was closed — so the null edge is
+    // genuine and must still surface (that is what lets the Bots home return).
+    expect($focusedStoredSessionId.get()).toBeNull()
+  })
+
+  it('sessions-sidebar focus follows the visible main tab instead of a hidden primary selection', () => {
+    $selectedStoredSessionId.set('primary-1')
+    $layoutTree.set(
+      split('row', [
+        group(['sessions'], { active: 'sessions', id: 'grp-sessions' }),
+        group(['workspace', tilePane('stacked')], { active: tilePane('stacked'), id: 'grp-main' })
+      ])
+    )
+    noteActiveTreeGroup('grp-sessions')
+
+    expect($workspaceMode.get()).toBe('sessions')
+    expect($focusedStoredSessionId.get()).toBe('stacked')
+  })
+})
+
+describe('focusedSessionNeedsRoute', () => {
+  it('routes when the session is not on screen', () => {
+    expect(focusedSessionNeedsRoute(null, false)).toBe(true)
+    expect(focusedSessionNeedsRoute(null, true)).toBe(true)
+  })
+
+  it('routes for the ACTIVE main session while a full page covers the workspace', () => {
+    expect(focusedSessionNeedsRoute('main', true)).toBe(true)
+  })
+
+  it('skips the route when the main session is already the visible chat', () => {
+    expect(focusedSessionNeedsRoute('main', false)).toBe(false)
+  })
+
+  it('never routes for a tile — its pane shows the chat on any route', () => {
+    expect(focusedSessionNeedsRoute('tile', true)).toBe(false)
+    expect(focusedSessionNeedsRoute('tile', false)).toBe(false)
+  })
+})
+
+describe('blankDraftTile', () => {
+  const bound = (storedSessionId: string, runtimeId: string): SessionTile => ({ runtimeId, storedSessionId })
+
+  const state = (messages: number, busy = false) =>
+    ({ busy, messages: Array.from({ length: messages }, (_, i) => ({ id: `m${i}` })) }) as ClientSessionState
+
+  it('finds the open tab whose session has no messages', () => {
+    const tiles = [bound('a', 'run-a'), bound('b', 'run-b')]
+    const states = { 'run-a': state(3), 'run-b': state(0) }
+
+    expect(blankDraftTile(tiles, states)).toEqual(tiles[1])
+  })
+
+  it('picks the most recent blank tab when there are several', () => {
+    const tiles = [bound('a', 'run-a'), bound('b', 'run-b')]
+    const states = { 'run-a': state(0), 'run-b': state(0) }
+
+    expect(blankDraftTile(tiles, states)).toEqual(tiles[1])
+  })
+
+  it('leaves a blank-but-busy tab alone — its first turn is already in flight', () => {
+    expect(blankDraftTile([bound('a', 'run-a')], { 'run-a': state(0, true) })).toBeNull()
+  })
+
+  it('treats an unbound or unpublished tile as unknown, not empty', () => {
+    expect(blankDraftTile([tile('a')], {})).toBeNull()
+    expect(blankDraftTile([bound('a', 'run-a')], {})).toBeNull()
+  })
+
+  it('is null when every open tab holds a conversation', () => {
+    expect(blankDraftTile([bound('a', 'run-a')], { 'run-a': state(2) })).toBeNull()
+    expect(blankDraftTile([], {})).toBeNull()
+  })
+})
+
+// ⌘⇧T used to only restore `$sessionTiles`. Adoption inserts silently
+// (activate:false), so the tab came back behind the still-fronted workspace.
+// Real path: register, adopt, focus — same as paneMirror + reopen.
+describe('reopenLastClosedTile focuses the restored tab', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    vi.resetModules()
   })
 
   afterEach(() => {
-    disposeTiles?.()
-    disposeTiles = null
-    $layoutTree.set(null)
-    $workspaceCwd.set('')
+    vi.resetModules()
   })
 
-  it('follows the focused tile, not the sidebar selection', () => {
-    seedTree(paneA)
-    noteActiveTreeGroup(CHAT_GROUP)
-    expect($focusedCwd.get()).toBe('/proj/a')
+  async function setup() {
+    const tree = await import('@/components/pane-shell/tree/store')
+    const model = await import('@/components/pane-shell/tree/model')
+    const { registry } = await import('@/contrib/registry')
+    const session = await import('@/store/session')
+    const states = await import('@/store/session-states')
 
-    seedTree(paneB)
-    expect($focusedCwd.get()).toBe('/proj/b')
-  })
-
-  // Clicking a folder in the tree notes the FILES zone as the interacted one.
-  // Without the chat-zone latch that fell back to the sidebar's pick, so the
-  // root jumped out from under the click that selected it.
-  it('does not move when a non-chat zone is interacted with', () => {
-    seedTree(paneB)
-    noteActiveTreeGroup(CHAT_GROUP)
-    noteActiveTreeGroup(FILES_GROUP)
-
-    expect($focusedCwd.get()).toBe('/proj/b')
-  })
-
-  it('falls back to the workspace root for a detached chat', () => {
-    seed('rt-a', { cwd: '', storedSessionId: 'a' })
-    seedTree(paneA)
-    noteActiveTreeGroup(CHAT_GROUP)
-    $workspaceCwd.set('/srv/workspace')
-
-    expect($focusedCwd.get()).toBe('')
-    expect($effectiveCwd.get()).toBe('/srv/workspace')
-  })
-
-  // Which composer typing lands in resolves through this pane id. It used to be
-  // a mount-order latch, so the tile that finished resuming last took the keys.
-  describe('$focusedChatPane', () => {
-    it('names the focused tile, and falls back to the workspace', () => {
-      seedTree(paneB)
-      noteActiveTreeGroup(CHAT_GROUP)
-      expect($focusedChatPane.get()).toBe(paneB)
-
-      // A non-chat zone does not move it; nothing focused reads as the workspace.
-      noteActiveTreeGroup(FILES_GROUP)
-      expect($focusedChatPane.get()).toBe(paneB)
-
-      $layoutTree.set(null)
-      noteActiveTreeGroup(null)
-      expect($focusedChatPane.get()).toBe(WORKSPACE_PANE_ID)
+    registry.register({
+      area: 'panes',
+      data: { placement: 'main', uncloseable: true },
+      id: 'workspace',
+      render: () => null,
+      title: 'chat'
     })
+
+    const { paneMirror } = await import('@/app/chat/pane-mirror')
+    paneMirror({
+      source: states.$sessionTiles,
+      key: tile => tile.storedSessionId,
+      prefix: 'session-tile',
+      dir: tile => tile.dir,
+      anchor: tile => tile.anchor,
+      before: tile => tile.before,
+      minWidth: '10rem',
+      title: id => id,
+      render: () => null,
+      close: states.closeSessionTile
+    })()
+    tree.watchContributedPanes()
+    session.$selectedStoredSessionId.set('primary')
+    tree.declareDefaultTree(model.group(['workspace'], { active: 'workspace', id: 'grp-main' }))
+
+    states.openSessionTile('closed', 'center', 'workspace')
+    states.focusOpenSession('closed')
+    tree.noteActiveTreeGroup('grp-main')
+    expect(findGroupOfPane(tree.$layoutTree.get()!, tilePane('closed'))?.active).toBe(tilePane('closed'))
+
+    return { states, tree }
+  }
+
+  it('restores the live strip slot after reordering and retains the exact owner', async () => {
+    const { states, tree } = await setup()
+    states.openSessionTile('after', 'center', 'workspace')
+    tree.moveTreePane(tilePane('closed'), { groupId: 'grp-main', pos: 'center', before: 'workspace' })
+    const order = findGroupOfPane(tree.$layoutTree.get()!, 'workspace')!.panes
+    const ownerRoute = { connectionId: 'cloud', profile: 'agent' }
+    states.patchSessionTile('closed', { ownerRoute })
+    states.closeSessionTile('closed')
+    tree.noteActiveTreeGroup(null)
+    states.reopenLastClosedTile()
+    expect(findGroupOfPane(tree.$layoutTree.get()!, 'workspace')!.panes).toEqual(order)
+    expect(states.$focusedStoredSessionId.get()).toBe('closed')
+    expect(states.sessionTileOwnerRoute('closed')).toEqual(ownerRoute)
+  })
+
+  it('fronts a palette-opened tab from sidebar focus without replacing main', async () => {
+    const { states, tree } = await setup()
+    const { openSession } = await import('@/app/open-session')
+    const navigate = vi.fn()
+    tree.noteActiveTreeGroup('sidebar')
+    openSession('palette-result', navigate, 'stack')
+    expect(states.$focusedStoredSessionId.get()).toBe('palette-result')
+    expect(findGroupOfPane(tree.$layoutTree.get()!, 'workspace')!.active).toBe(tilePane('palette-result'))
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('fronts the restored tab after ⌘⇧T', async () => {
+    const { states, tree } = await setup()
+
+    states.closeSessionTile('closed')
+    expect(states.$sessionTiles.get().some(t => t.storedSessionId === 'closed')).toBe(false)
+    expect(findGroupOfPane(tree.$layoutTree.get()!, 'workspace')?.active).toBe('workspace')
+
+    states.reopenLastClosedTile()
+
+    expect(states.$sessionTiles.get().some(t => t.storedSessionId === 'closed')).toBe(true)
+    expect(findGroupOfPane(tree.$layoutTree.get()!, tilePane('closed'))?.active).toBe(tilePane('closed'))
+    expect(tree.$activeTreeGroup.get()).toBe('grp-main')
   })
 })
 
-// Both callers of the wipe — a profile switch and the soft gateway switch — are
-// moving to a backend that never issued these runtime ids, so any turn record
-// left behind is one nothing can settle, reconcile or find a slice for.
-describe('clearAllSessionStates', () => {
-  it('takes the in-flight turns with it', () => {
-    seed('runtime-1', { storedSessionId: 'stored-1' })
-    beginTurn('runtime-1', { prompt: 'still running' })
-
-    expect(isTurnLive('runtime-1')).toBe(true)
-
-    clearAllSessionStates()
-
-    expect($inflightTurns.get()).toEqual({})
-    expect(isTurnLive('runtime-1')).toBe(false)
+describe('sessionTileOwnerRoute', () => {
+  afterEach(() => {
+    $sessionTiles.set([])
   })
 
-  // MJXHRM-357: the THIRD keyed side-store, and the one this wipe forgot.
-  // Nothing else could ever release it — the settle observer only fires for
-  // turns, and the turn wipe above replaces its atom wholesale without emitting
-  // one — so a compaction live at the moment of a profile switch stayed set
-  // forever under a runtime id the new backend will never issue.
-  it('takes the compaction state with it', () => {
-    seed('runtime-1', { storedSessionId: 'stored-1' })
-    setSessionCompacting('runtime-1', true)
+  it('returns the exact owning route a bot chat tile was opened with', () => {
+    // This is what lets a bot chat RPC reach the bot's OWN local gateway even
+    // while chrome stays on the launch profile: the tile carries the route, so
+    // the request router never has to guess from the (hidden, unlisted) row.
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: 'local', mode: 'local', profile: 'developer' },
+        storedSessionId: 'bot-chat-developer'
+      }
+    ])
 
-    expect(sessionCompacting('runtime-1').get()).toBe(true)
-
-    clearAllSessionStates()
-
-    expect(sessionCompacting('runtime-1').get()).toBe(false)
-    expect($compactingSessions.get()).toEqual({})
-  })
-
-  // MJXHRM-401: the FOURTH, and the second one this wipe forgot. Worse than
-  // inert — `allSubagents` flattens the map across every session, so the Agents
-  // overlay went on rendering the previous profile's children (still spinning,
-  // since nothing can complete them any more) and the status bar went on
-  // counting them as work in flight.
-  it('takes the spawn tree with it', () => {
-    seed('runtime-1', { storedSessionId: 'stored-1' })
-    upsertSubagent('runtime-1', { subagent_id: 'a', goal: 'digging', status: 'running' }, true, 'subagent.start')
-
-    expect(allSubagents($subagentsBySession.get())).toHaveLength(1)
-
-    clearAllSessionStates()
-
-    expect($subagentsBySession.get()).toEqual({})
-  })
-})
-
-// MJXHRM-358. This runs on every WS re-open. It used to null every slice's
-// `runtimeSessionId` on the theory that each surface would re-resume its own
-// session — but the main pane has no such path, the tile path short-circuits on
-// a warm slice without touching the field, and nothing else ever wrote it back.
-// A persisted conversation was then indistinguishable from a DRAFT for the rest
-// of the process, and `ensureSession` answered the next message with
-// `session.create`.
-describe('invalidateRuntimeBindings', () => {
-  it('keeps the runtime binding and clears only the stale liveness', () => {
-    seed('runtime-1', { storedSessionId: 'stored-1', busy: true, turnStartedAt: 1_000 })
-
-    invalidateRuntimeBindings()
-
-    expect($sessionStates.get()['runtime-1']).toMatchObject({
-      runtimeSessionId: 'runtime-1',
-      storedSessionId: 'stored-1',
-      busy: false,
-      turnStartedAt: null
+    expect(sessionTileOwnerRoute('bot-chat-developer')).toEqual({
+      connectionId: 'local',
+      mode: 'local',
+      profile: 'developer'
     })
   })
 
-  // A draft carries a turn too (`beginTurn` fires before the submit leaves), and
-  // its spinner is just as stranded by a drop as a bound session's.
-  it('clears the liveness of a slice that has no runtime id yet', () => {
-    seed('draft:9', { runtimeSessionId: null, storedSessionId: null, busy: true, turnStartedAt: 2_000 })
+  it('returns undefined for a tile with no owner route (plain session)', () => {
+    $sessionTiles.set([{ storedSessionId: 'plain' }])
 
-    invalidateRuntimeBindings()
+    expect(sessionTileOwnerRoute('plain')).toBeUndefined()
+  })
+})
 
-    expect($sessionStates.get()['draft:9']).toMatchObject({ busy: false, turnStartedAt: null })
+describe('knownOwnerForSession / requestForOwnedSession (#91684 client half)', () => {
+  beforeEach(() => {
+    // Earlier suites leave profile-scoped tile buckets behind; pin the profile
+    // BEFORE seeding tiles so the bucket subscriber cannot clobber the seed.
+    $activeGatewayProfile.set('default')
+    $sessionTiles.set([])
+  })
+  afterEach(() => {
+    $sessionTiles.set([])
+    setSessions([])
+  })
+
+  it('resolves the tile owner route first, translating a runtime id to its stored id', () => {
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: 'conn-a', profile: 'work' },
+        runtimeId: 'rt-1',
+        storedSessionId: 'stored-1'
+      }
+    ])
+
+    expect(knownOwnerForSession('rt-1')).toEqual({ connectionId: 'conn-a', profile: 'work' })
+    expect(knownOwnerForSession('stored-1')).toEqual({ connectionId: 'conn-a', profile: 'work' })
+  })
+
+  it('falls back to the session row profile when no tile route exists', () => {
+    setSessions([{ id: 'stored-2', profile: 'loki' } as never])
+
+    expect(knownOwnerForSession('stored-2')).toBe('loki')
+  })
+
+  // A tile promoted into MAIN (⌘W on the workspace tab, its tab dragged out of
+  // main) loses its tile and its evicted mirror entry in the same tick, while
+  // the resume has already made its runtime the active one. The composer's
+  // control read for that runtime must still find the stored-id owner hint
+  // instead of failing closed with "Session controls unavailable" (#108369).
+  it('translates the active runtime through the selected stored id when no tile or mirror binds it', () => {
+    setSessionOwnerHint('stored-main', { connectionId: 'local', profile: 'alpha' })
+    $sessionTiles.set([])
+    $sessionStates.set({})
+    $selectedStoredSessionId.set('stored-main')
+    $activeSessionId.set('rt-main')
+
+    expect(knownOwnerForSession('rt-main')).toEqual({ connectionId: 'local', profile: 'alpha' })
+    // Only MAIN's own runtime gets this rung: an unrelated runtime id stays unknown.
+    expect(knownOwnerForSession('rt-other')).toBeUndefined()
+
+    $activeSessionId.set(null)
+    $selectedStoredSessionId.set(null)
+  })
+
+  it('keeps a session row connection owner when profiles share the same name', () => {
+    setSessions([{ connection_id: 'source-b', id: 'stored-shared', profile: 'default' } as never])
+
+    expect(knownOwnerForSession('stored-shared')).toEqual({ connectionId: 'source-b', profile: 'default' })
+  })
+
+  // Two connections both exposing `default`: the row only names the profile,
+  // and a bare profile is resolved by the profile door against the PRIMARY
+  // connection — another machine for a session that runs on a non-primary one.
+  // The inbound event proved the exact owner, so it must outrank the
+  // connection-blind row profile (this is what keeps the 2nd prompt of an
+  // ordinary session from answering `4001 session not found`).
+  it('prefers an event-proven connection over a bare row profile when two connections share the profile name', () => {
+    recordSessionEventScope({ connectionId: 'local', profile: 'default', session_id: 'rt-local' })
+    setSessions([{ id: 'rt-local', profile: 'default' } as never])
+
+    expect(knownOwnerForSession('rt-local')).toEqual({ connectionId: 'local', profile: 'default' })
+  })
+
+  it('returns undefined (ambient) when no owner is known, and for null ids', () => {
+    expect(knownOwnerForSession('unknown-session')).toBeUndefined()
+    expect(knownOwnerForSession(null)).toBeUndefined()
+    expect(knownOwnerForSession(undefined)).toBeUndefined()
+  })
+
+  it('requestForOwnedSession dispatches ambient with the exact 2-arg shape when no owner is known', async () => {
+    const ambient = vi.fn(async (method: string, params?: Record<string, unknown>) => ({ method, params }))
+
+    await requestForOwnedSession('unknown-session', ambient as never, 'approval.respond', {
+      choice: 'once',
+      session_id: 'unknown-session'
+    })
+
+    expect(ambient).toHaveBeenCalledTimes(1)
+    expect(ambient.mock.calls[0]).toEqual(['approval.respond', { choice: 'once', session_id: 'unknown-session' }])
+  })
+})
+
+describe('isSessionRemote (#94640)', () => {
+  beforeEach(() => {
+    $activeGatewayProfile.set('default')
+    $sessionTiles.set([])
+  })
+  afterEach(() => {
+    $sessionTiles.set([])
+    setSessions([])
+    $connection.set(null)
+  })
+
+  it('falls back to the ambient connection when the session has no known owner route', () => {
+    $connection.set({ mode: 'remote' } as never)
+    expect(isSessionRemote('unknown-session')).toBe(true)
+
+    $connection.set({ mode: 'local' } as never)
+    expect(isSessionRemote('unknown-session')).toBe(false)
+  })
+
+  it("prefers the session's OWN owner route over an ambient connection of a different mode", () => {
+    // The window's active/ambient connection is local, but this session
+    // belongs to a registered secondary REMOTE connection (Bot Mode / the
+    // unified Sessions list). Composer image uploads must still upload
+    // bytes for it — reading ambient mode here shipped a client-local
+    // composer-images path to the remote backend (#94640).
+    $connection.set({ mode: 'local' } as never)
+    $sessionTiles.set([
+      {
+        ownerRoute: { connectionId: 'homelab', mode: 'remote', profile: 'default' },
+        runtimeId: 'rt-1',
+        storedSessionId: 'stored-1'
+      }
+    ])
+
+    expect(isSessionRemote('rt-1')).toBe(true)
+    expect(isSessionRemote('stored-1')).toBe(true)
+  })
+
+  it('falls back to ambient when the owner is a bare pool profile (no connectionId/mode)', () => {
+    $connection.set({ mode: 'remote' } as never)
+    setSessions([{ id: 'stored-2', profile: 'loki' } as never])
+
+    expect(isSessionRemote('stored-2')).toBe(true)
   })
 })

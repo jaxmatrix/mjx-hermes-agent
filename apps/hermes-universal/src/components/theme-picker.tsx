@@ -6,7 +6,9 @@ import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { Check, Palette } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { resolveTheme, type ThemeMode, useTheme } from '@/themes'
+import { useTheme } from '@/themes'
+import { type ThemeMode } from '@/themes/context';
+import { resolveTheme } from '@/themes/user-themes'
 
 // Mobile appearance picker: a bottom Sheet with a light/dark/system segmented
 // control + a skin grid. Swatches preview each skin's seed background/primary.

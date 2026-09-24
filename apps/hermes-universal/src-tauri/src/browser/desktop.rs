@@ -386,4 +386,14 @@ impl GuestHost for ChildWebviewHost {
     fn close(&self) -> Result<(), BrowserError> {
         self.map(self.webview.close())
     }
+
+    fn capture_rgba(&self) -> Result<(Vec<u8>, u32, u32), BrowserError> {
+        // wry/tauri expose no guest `capturePage`. A screen-region capture
+        // (xcap) pulls pipewire on Linux and broke the NDK/desktop build; until
+        // a dep-light path lands, fail closed — annotate feature-detects this.
+        Err(BrowserError::new(
+            BrowserErrorKind::UnsupportedPlatform,
+            "preview capture is unavailable on this host",
+        ))
+    }
 }

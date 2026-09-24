@@ -2,27 +2,16 @@
 
 import { type FC, useEffect, useState } from 'react'
 
-import { ZoomableImage } from '@/components/chat/zoomable-image'
+import { DiffusionCanvas } from '@/components/chat/image-generation-placeholder'
+import { ImageActionButton, ImageLightbox } from '@/components/chat/zoomable-image'
+import { useImageDownload } from '@/hooks/use-image-download'
 import { useI18n } from '@/i18n'
 import { generatedImageFromResult } from '@/lib/generated-images'
-import { resolveMediaDisplaySrc } from '@/lib/media'
+import { filePathFromMediaPath, gatewayMediaDataUrl, isRemoteGateway, mediaExternalUrl, mediaName } from '@/lib/media'
 import { cn } from '@/lib/utils'
 
-// Ported (simplified) from apps/desktop/src/components/chat/generated-image-result.tsx.
-//
-// A generated image is written on the GATEWAY (~/.hermes/cache/images/…), so the
-// source is resolved through `resolveMediaDisplaySrc` — the authenticated Rust
-// transport — exactly like every other piece of gateway media. Pointing `<img>`
-// at the raw /api/files/download URL instead is what made a successful
-// generation render as NOTHING behind a gated gateway: the webview has no way to
-// authenticate that request (`?token=` only exists in token mode, and the
-// SameSite=Lax session cookie is never sent on a cross-site subresource), so it
-// 401s, `onError` fires, and this component returns null on failure.
-//
-// Also simplified: the desktop diffusion-canvas placeholder + download/lightbox
-// toolbar are replaced by a lightweight pulse placeholder and the shared
-// click-to-zoom `ZoomableImage`.
-
+// Aspect hint from the tool args sizes the frame *before* the image loads, so
+// the placeholder and the resolved image occupy the same box — no layout shift.
 const ASPECT_HINTS: Record<string, number> = {
   landscape: 16 / 9,
   square: 1,
@@ -39,60 +28,62 @@ function hintedRatio(aspectRatio?: string): number {
   )
 }
 
+function isInlineSrc(path: string): boolean {
+  return /^(?:https?|data):/i.test(path)
+}
+
+async function resolveImageSrc(path: string): Promise<string> {
+  if (isInlineSrc(path)) {
+    return path
+  }
+
+  if (window.hermesDesktop && isRemoteGateway()) {
+    return gatewayMediaDataUrl(path)
+  }
+
+  if (!window.hermesDesktop?.readFileDataUrl) {
+    return mediaExternalUrl(path)
+  }
+
+  return window.hermesDesktop.readFileDataUrl(filePathFromMediaPath(path))
+}
+
 export const GeneratedImage: FC<{ aspectRatio?: string; result?: unknown }> = ({ aspectRatio, result }) => {
   const { t } = useI18n()
+  const copy = t.desktop
   const image = result === undefined ? null : generatedImageFromResult(result)
   const pending = result === undefined
 
   const [ratio, setRatio] = useState(() => hintedRatio(aspectRatio))
+  const [src, setSrc] = useState(() => (image && isInlineSrc(image) ? image : ''))
   const [loaded, setLoaded] = useState(false)
+  const [canvasGone, setCanvasGone] = useState(false)
   const [failed, setFailed] = useState(false)
-  const [src, setSrc] = useState('')
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const { download, saving } = useImageDownload(src)
 
   useEffect(() => setRatio(hintedRatio(aspectRatio)), [aspectRatio])
 
+  // Resolve the deliverable path (local read / gateway proxy / remote URL). The
+  // <img> stays mounted under the placeholder and only fades in once it decodes,
+  // so the frame keeps its hinted size and never jumps.
   useEffect(() => {
-    setLoaded(false)
+    let cancelled = false
     setFailed(false)
-  }, [image])
+    setLoaded(false)
+    setCanvasGone(false)
+    setSrc(image && isInlineSrc(image) ? image : '')
 
-  // Resolving is a fetch over the transport, so the src arrives a tick late: keep
-  // the pulse frame up until it does rather than flashing an empty box. A read
-  // that throws is a real failure (the file is gone, or the gateway refused it),
-  // which is the same outcome as an image that will not decode.
-  useEffect(() => {
-    if (!image) {
-      setSrc('')
-
+    if (!image || isInlineSrc(image)) {
       return
     }
 
-    let active = true
-    setSrc('')
-
-    void resolveMediaDisplaySrc(image)
-      .then(resolved => {
-        if (!active) {
-          return
-        }
-
-        // A read that comes back empty is a failure that did not throw (the
-        // gateway answered, with nothing). Without this the pulse frame would
-        // spin forever — strictly worse than the honest "render nothing".
-        if (resolved) {
-          setSrc(resolved)
-        } else {
-          setFailed(true)
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setFailed(true)
-        }
-      })
+    void resolveImageSrc(image)
+      .then(resolved => !cancelled && setSrc(resolved))
+      .catch(() => !cancelled && setFailed(true))
 
     return () => {
-      active = false
+      cancelled = true
     }
   }, [image])
 
@@ -102,57 +93,88 @@ export const GeneratedImage: FC<{ aspectRatio?: string; result?: unknown }> = ({
     return null
   }
 
-  if (failed) {
-    return null
-  }
-
-  const frameStyle = {
-    aspectRatio: ratio,
-    width: `min(calc(var(--image-preview-height, 20rem) * ${ratio}), var(--image-preview-max-width, 32rem), 100%)`
-  }
-
-  // Pending (no source yet): a sized pulse frame so the resolved image lands in
-  // the same box with no layout shift.
-  if (!src) {
+  if (failed && image) {
     return (
-      <span
-        aria-label={t.assistant.tool.renderingImage}
-        aria-live="polite"
-        className="block max-w-full animate-pulse overflow-hidden rounded-2xl bg-muted/60"
-        data-slot="aui_generated-image"
-        role="status"
-        style={frameStyle}
-      />
+      <a
+        className="mt-2 ref inline-block wrap-anywhere"
+        href="#"
+        onClick={event => {
+          event.preventDefault()
+          void window.hermesDesktop?.openExternal(mediaExternalUrl(image))
+        }}
+      >
+        {copy.openImage}: {mediaName(image)}
+      </a>
     )
   }
 
   return (
-    <span
-      className={cn(
-        'block max-w-full overflow-hidden rounded-2xl transition-[background] duration-500',
-        !loaded && 'animate-pulse bg-muted/60'
-      )}
-      data-slot="aui_generated-image"
-      style={frameStyle}
-    >
-      <ZoomableImage
-        alt="Generated image"
-        className={cn(
-          'size-full object-contain opacity-0 transition-opacity duration-500 ease-out',
-          loaded && 'opacity-100'
-        )}
-        onError={() => setFailed(true)}
-        onLoad={event => {
-          const { naturalHeight, naturalWidth } = event.currentTarget
-
-          if (naturalWidth && naturalHeight) {
-            setRatio(naturalWidth / naturalHeight)
-          }
-
-          setLoaded(true)
+    <>
+      <span
+        aria-label={pending ? t.assistant.tool.renderingImage : undefined}
+        aria-live={pending ? 'polite' : undefined}
+        className="group/image relative block max-w-full overflow-hidden rounded-2xl transition-[width,height] duration-300 ease-out"
+        data-slot="aui_generated-image"
+        role={pending ? 'status' : undefined}
+        style={{
+          aspectRatio: ratio,
+          // Width is capped so the derived height (width / ratio) never exceeds
+          // --image-preview-height; the box then matches the image exactly with
+          // no letterboxing.
+          width: `min(calc(var(--image-preview-height) * ${ratio}), var(--image-preview-max-width), 100%)`
         }}
-        src={src}
-      />
-    </span>
+      >
+        {!canvasGone && (
+          <div
+            className={cn('absolute inset-0 transition-opacity duration-500 ease-out', loaded && 'opacity-0')}
+            onTransitionEnd={() => loaded && setCanvasGone(true)}
+          >
+            <DiffusionCanvas />
+          </div>
+        )}
+        {src && (
+          <button
+            aria-label={copy.openImage}
+            className="absolute inset-0 block size-full cursor-zoom-in"
+            onClick={() => setLightboxOpen(true)}
+            type="button"
+          >
+            <img
+              alt="Generated image"
+              className={cn(
+                'absolute inset-0 size-full object-contain opacity-0 transition-opacity duration-500 ease-out',
+                loaded && 'opacity-100'
+              )}
+              draggable={false}
+              onError={() => setFailed(true)}
+              onLoad={event => {
+                const { naturalHeight, naturalWidth } = event.currentTarget
+
+                if (naturalWidth && naturalHeight) {
+                  setRatio(naturalWidth / naturalHeight)
+                }
+
+                setLoaded(true)
+              }}
+              src={src}
+            />
+          </button>
+        )}
+        {loaded && src && (
+          <ImageActionButton className="group-hover/image:opacity-100" copy={copy} onClick={download} saving={saving} />
+        )}
+      </span>
+      {src && (
+        <ImageLightbox
+          alt="Generated image"
+          copy={copy}
+          onClick={download}
+          onOpenChange={setLightboxOpen}
+          open={lightboxOpen}
+          saving={saving}
+          src={src}
+        />
+      )}
+    </>
   )
 }

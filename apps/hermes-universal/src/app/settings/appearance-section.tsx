@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import { PetPanel } from '@/app/pet/pet-section'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { Button } from '@/components/ui/button'
 import { SegmentedControl } from '@/components/ui/segmented-control'
@@ -9,7 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { Check, Download, Loader2, Monitor, Moon, Palette, Sun, Trash } from '@/lib/icons'
+import { Check, Download, Loader2, Monitor, Moon, Palette, Sun, Trash2 } from '@/lib/icons'
 import { IS_TAURI } from '@/lib/platform'
 import {
   $calmDuringResize,
@@ -37,7 +38,6 @@ import type { DesktopTheme } from '@/themes/types'
 import { $marketplaceInstalls, isUserTheme, removeUserTheme } from '@/themes/user-themes'
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
-import { settingRowElementId } from './settings-search'
 import { TerminalFontSetting } from './terminal-font-setting'
 import { TranslucencySettings } from './translucency-rows'
 
@@ -376,7 +376,7 @@ export function AppearanceSection() {
                                   }}
                                   type="button"
                                 >
-                                  <Trash className="size-3.5" />
+                                  <Trash2 className="size-3.5" />
                                 </button>
                               </Tip>
                             )}

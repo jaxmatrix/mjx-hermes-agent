@@ -25,7 +25,9 @@ import { cn } from '@/lib/utils'
  * 2. A drag moves exactly one seam. The pair either side of the handle trade
  *    width and their sum is preserved, so the table box never changes size
  *    mid-drag: no reflow of the message around it, no scrollbar appearing under
- *    the pointer.
+ *    the pointer. jquery-resizable-columns settled on the same invariant, minus
+ *    the absolutely-positioned handle overlay it has to re-sync on every window
+ *    resize.
  *
  * Handles are plain markup inside each `<th>`; the table listens once and
  * resolves which seam was grabbed from the DOM at pointer-down. No context, no
@@ -217,7 +219,7 @@ export function ResizableMarkdownTh({ children, className, ...props }: Component
         className="group/mdcol absolute inset-y-0 -end-1 z-10 w-2 cursor-col-resize touch-none select-none"
         data-md-col-handle
       >
-        <span className="absolute inset-0 mx-auto w-px bg-(--ui-stroke-secondary) opacity-0 transition-opacity duration-100 group-hover/mdcol:opacity-100 [[data-md-col-active]_&]:opacity-100" />
+        <span className="absolute inset-y-0 start-1/2 w-px -translate-x-1/2 bg-(--ui-stroke-secondary) opacity-0 transition-opacity duration-100 group-hover/mdcol:opacity-100 [[data-md-col-active]_&]:opacity-100" />
       </span>
     </th>
   )

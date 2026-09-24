@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from agent.image_gen_provider import (
     DEFAULT_ASPECT_RATIO, ImageGenProvider, error_response, resolve_aspect_ratio, save_b64_image,
     save_url_image, success_response)
-from plugins.image_gen._common import error_factory, load_image_gen_config, post_json
+from plugins.image_gen._common import error_factory, load_image_gen_config, post_json, record_token_usage
 
 logger = logging.getLogger(__name__)
 
@@ -531,7 +531,7 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
 
     def __init__(
         self, *, provider_name: str, display_name: str, runtime_name: str, config_key: str,
-        model_env_var: str, setup_schema: Dict[str, Any], supports_image_api: bool = False,
+        model_env_var: str, setup_schema: Optional[Dict[str, Any]], supports_image_api: bool = False,
     ) -> None:
         self._name = provider_name
         self._display = display_name
@@ -625,8 +625,8 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
         # The catalog default, not the effective runtime model (_resolve_model_chain).
         return DEFAULT_MODEL
 
-    def get_setup_schema(self) -> Dict[str, Any]:
-        return dict(self._setup_schema)
+    def get_setup_schema(self) -> Optional[Dict[str, Any]]:
+        return dict(self._setup_schema) if self._setup_schema else None
 
     def _resolve_model(self, explicit: Optional[str] = None) -> str:
         return self._resolve_model_chain(explicit)[0]
@@ -708,6 +708,8 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
                     "model_access", retryable=True)
             return _fail(failure.error, "api_error", retryable=status in _IMAGE_API_FALLBACK_STATUSES)
 
+        # The provider billed these tokens on HTTP 200 whether or not an image came back / saved.
+        record_token_usage(_dict_at(body, "usage"), model=model_id, provider=self._name, base_url=base_url)
         entries = [e for e in _list_at(body, "data") if isinstance(e, dict)]
         if not entries:
             return _fail(
@@ -754,6 +756,8 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
                 return fail(hint, "model_access"), reason
             return fail(failure.error, "api_error"), reason
 
+        # The provider billed these tokens on HTTP 200 whether or not an image came back / saved.
+        record_token_usage(_dict_at(result, "usage"), model=model_id, provider=self._name, base_url=base_url)
         images = _extract_images(result)
         if not images:
             # Text but no image usually means the model didn't honor image output.
@@ -845,16 +849,12 @@ def _build_providers() -> List[OpenRouterCompatImageProvider]:
                     "key": "OPENROUTER_API_KEY", "prompt": "OpenRouter API key", "url": "https://openrouter.ai/keys",
                 }],
             }),
+        # No picker row: Portal models are offered inside the single managed "Nous Subscription" row
+        # (tools/image_generation_managed.py). A row of its own also wrote `provider: nous` and so
+        # read "active" alongside the managed FAL row while the runtime routed its pick to FAL.
         OpenRouterCompatImageProvider(
             provider_name="nous", display_name="Nous Portal", runtime_name="nous", config_key="nous",
-            model_env_var="NOUS_IMAGE_MODEL",
-            setup_schema={
-                "name": "Nous Portal (image)",
-                "badge": "subscription",
-                "tag": "Reference-grounded image generation via Nous Portal (OpenRouter-backed)",
-                "env_vars": [],
-                "requires_nous_auth": True,
-            }),
+            model_env_var="NOUS_IMAGE_MODEL", setup_schema=None),
     ]
 
 

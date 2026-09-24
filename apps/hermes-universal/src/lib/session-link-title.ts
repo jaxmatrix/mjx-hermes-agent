@@ -1,42 +1,37 @@
 /**
- * Titles for `@session:` chips.
+ * Resolves `@session:<profile>/<id>` reference values to the session's title.
  *
- * The agent writes session links as `@session:<profile>/<id>` — an id, not a
- * name. Rendering the raw id is useless ("20260809_143312_a1b2c3"), so a chip
- * has to resolve a human title, and a transcript can carry the SAME link a
- * dozen times.
- *
- * Hence the shape: a process-lifetime cache, an in-flight map so N chips for
- * one session cost one lookup, and a subscriber set so the one lookup repaints
- * all of them. The sidebar list is consulted first and is free — only an id
- * that is not in it costs a REST round-trip.
+ * Same shape as the external-link title resolver (`external-link.tsx`): a
+ * process-lifetime cache, in-flight dedupe, and subscribers so every chip for
+ * the same session repaints off one lookup. The sidebar list answers most
+ * lookups for free; only an unknown id costs a REST round-trip.
  */
-
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { getSession } from '@/hermes'
 import { parseSessionRefValue, sessionRefCacheKey, sessionRefFallbackLabel } from '@/lib/session-refs'
-import { $sessions } from '@/store/session'
+import { $sessions, sessionMatchesStoredId } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
 const titleCache = new Map<string, string>()
 const titleInflight = new Map<string, Promise<string>>()
 const titleSubs = new Map<string, Set<(value: string) => void>>()
 
-const cacheKey = sessionRefCacheKey
+/** Deliberately not `sessionTitle()` from chat-runtime: its "Untitled session"
+ *  fallback is a worse chip label than the short id, so an untitled row
+ *  resolves to empty and the caller's fallback wins. */
+function sessionRowTitle(row: SessionInfo): string {
+  return row.title?.trim() || row.preview?.trim() || ''
+}
 
-/**
- * Deliberately NOT `sessionTitle()` from lib/chat-runtime: its "Untitled
- * session" fallback would be a worse chip label than the short id the caller
- * falls back to.
- */
-const sessionRowTitle = (row: SessionInfo): string => row.title?.trim() || row.preview?.trim() || ''
+function profileMatches(sessionProfile: null | string | undefined, target?: string): boolean {
+  if (!target) {
+    return true
+  }
 
-const profileMatches = (rowProfile: null | string | undefined, wanted: null | string): boolean =>
-  !wanted || (rowProfile ?? '') === wanted
+  return ((sessionProfile ?? '').trim() || 'default') === (target.trim() || 'default')
+}
 
-/** The title from the sidebar list — synchronous and free. Empty when the
- *  session is not in the loaded page. */
 export function lookupLocalSessionTitle(value: string): string {
   const { profile, sessionId } = parseSessionRefValue(value)
 
@@ -44,34 +39,30 @@ export function lookupLocalSessionTitle(value: string): string {
     return ''
   }
 
-  const row = $sessions.get().find(session => session.id === sessionId && profileMatches(session.profile, profile))
+  const row = $sessions
+    .get()
+    .find(session => sessionMatchesStoredId(session, sessionId) && profileMatches(session.profile, profile))
 
   return row ? sessionRowTitle(row) : ''
 }
 
-/** Never throws: a link to a session on another backend 404s, and a chip must
- *  fall back to its short id rather than surface an error. */
-async function requestSessionRow(sessionId: string, profile: null | string): Promise<SessionInfo | null> {
+/** REST lookup that can't throw: the bridge is absent outside Electron, and a
+ *  session id that isn't on this backend 404s. Both mean "no title". */
+function requestSessionRow(sessionId: string, profile?: string): Promise<null | SessionInfo> {
   try {
-    return await getSession(sessionId, profile)
+    return Promise.resolve(getSession(sessionId, profile ?? null)).catch(() => null)
   } catch {
-    return null
+    return Promise.resolve(null)
   }
 }
 
-/**
- * Resolve a `@session:` ref's title. Resolves to `''` when it cannot be
- * resolved — the caller owns the fallback label.
- */
 export function fetchSessionLinkTitle(value: string): Promise<string> {
-  const key = cacheKey(value)
+  const key = sessionRefCacheKey(value)
 
   if (!key) {
     return Promise.resolve('')
   }
 
-  // An empty cached value is still an answer: it means "asked, unresolvable",
-  // and re-asking on every render would hammer the backend for nothing.
   const cached = titleCache.get(key)
 
   if (cached !== undefined) {
@@ -94,43 +85,41 @@ export function fetchSessionLinkTitle(value: string): Promise<string> {
 
   const { profile, sessionId } = parseSessionRefValue(value)
 
-  const promise = requestSessionRow(sessionId, profile).then(row => {
-    const title = row ? sessionRowTitle(row) : ''
-    titleCache.set(key, title)
-    titleInflight.delete(key)
+  const promise = requestSessionRow(sessionId, profile)
+    .then(row => (row ? sessionRowTitle(row) : ''))
+    .then(title => {
+      titleCache.set(key, title)
+      titleInflight.delete(key)
+      titleSubs.get(key)?.forEach(notify => notify(title))
 
-    for (const notify of titleSubs.get(key) ?? []) {
-      notify(title)
-    }
-
-    return title
-  })
+      return title
+    })
 
   titleInflight.set(key, promise)
 
   return promise
 }
 
-/** The resolved title for a `@session:` chip, falling back to a short id. */
 export function useSessionLinkTitle(value: string, fallbackLabel?: string): string {
-  const key = cacheKey(value)
-  // Seeded synchronously so a locally-known title never flashes the fallback.
-  const [title, setTitle] = useState(() => titleCache.get(key) ?? lookupLocalSessionTitle(value))
+  const key = useMemo(() => sessionRefCacheKey(value), [value])
+  const fallback = fallbackLabel?.trim() || sessionRefFallbackLabel(value)
+  const [title, setTitle] = useState(() => (key ? titleCache.get(key) || lookupLocalSessionTitle(value) : ''))
 
   useEffect(() => {
     if (!key) {
       return
     }
 
-    const known = titleCache.get(key) ?? lookupLocalSessionTitle(value)
+    const known = titleCache.get(key) || lookupLocalSessionTitle(value)
+
+    setTitle(known)
 
     if (known) {
-      setTitle(known)
-
       return
     }
 
-    const subs = titleSubs.get(key) ?? new Set<(value: string) => void>()
+    const subs = titleSubs.get(key) ?? new Set<(resolved: string) => void>()
+
     subs.add(setTitle)
     titleSubs.set(key, subs)
     void fetchSessionLinkTitle(value)
@@ -138,16 +127,15 @@ export function useSessionLinkTitle(value: string, fallbackLabel?: string): stri
     return () => {
       subs.delete(setTitle)
 
-      if (subs.size === 0) {
+      if (!subs.size) {
         titleSubs.delete(key)
       }
     }
   }, [key, value])
 
-  return title || fallbackLabel?.trim() || sessionRefFallbackLabel(value)
+  return title || fallback
 }
 
-/** Test hook — drop every cached/in-flight/subscribed entry. */
 export function __resetSessionLinkTitleCache(): void {
   titleCache.clear()
   titleInflight.clear()

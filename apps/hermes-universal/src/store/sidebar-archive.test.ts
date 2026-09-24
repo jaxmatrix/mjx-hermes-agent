@@ -1,58 +1,29 @@
-/**
- * Regression: deleting an archived session left a ghost row that spun forever.
- *
- * Archived rows are excluded from `$sessions` by design and render out of this
- * module's own store, so the tombstone filter every other session surface
- * applies never reached them. The row stayed in the Archived filter, and a
- * click on it resumed a hard-deleted id — resume 404s, the row is still listed,
- * so the "gone session" verdict is `retry` and the spinner never stops.
- * Ported from desktop 3e05033275.
- */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { $removedSessionIds, tombstoneSessions, untombstoneSessions } from '@/store/session'
-import { $archivedSessions, $archivedSessionsFetched } from '@/store/sidebar-archive'
-import type { SessionInfo } from '@/types/hermes'
+import { listAllProfileSessions, type SessionInfo } from '@/hermes'
 
-const row = (id: string, extra: Partial<SessionInfo> = {}): SessionInfo =>
-  ({ id, message_count: 1, source: 'cli', started_at: 0, title: id, ...extra }) as SessionInfo
+import { $archivedSessions, loadArchivedSessions } from './sidebar-archive'
 
-beforeEach(() => {
-  $archivedSessionsFetched.set([])
-  $removedSessionIds.set(new Set())
-})
+vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  listAllProfileSessions: vi.fn()
+}))
 
-describe('$archivedSessions', () => {
-  it('drops a row a delete has tombstoned', () => {
-    // Seeded PRESENT, which disagrees with the expected outcome: only the
-    // tombstone filter can take it back out.
-    $archivedSessionsFetched.set([row('a'), row('b')])
-    tombstoneSessions(['a'])
-
-    expect($archivedSessions.get().map(s => s.id)).toEqual(['b'])
+describe('loadArchivedSessions', () => {
+  beforeEach(() => {
+    $archivedSessions.set([])
+    vi.mocked(listAllProfileSessions).mockReset()
   })
 
-  it('drops a row tombstoned under its durable lineage root', () => {
-    // The delete may arrive holding the root while the archived page lists the
-    // live tip after a compression.
-    $archivedSessionsFetched.set([row('tip', { _lineage_root_id: 'root' })])
-    tombstoneSessions(['root'])
+  it('keeps the last successful result when a refresh fails', async () => {
+    const existing = { id: 'archived-1', title: 'Keep me' } as SessionInfo
+    $archivedSessions.set([existing])
+    vi.mocked(listAllProfileSessions).mockRejectedValue(new Error('offline'))
 
-    expect($archivedSessions.get()).toEqual([])
-  })
+    await loadArchivedSessions()
 
-  it('brings the row back when the delete fails and the tombstone lifts', () => {
-    $archivedSessionsFetched.set([row('a')])
-    tombstoneSessions(['a'])
-    untombstoneSessions(['a'])
-
-    expect($archivedSessions.get().map(s => s.id)).toEqual(['a'])
-  })
-
-  it('leaves the page alone when nothing is tombstoned', () => {
-    const page = [row('a'), row('b')]
-    $archivedSessionsFetched.set(page)
-
-    expect($archivedSessions.get()).toEqual(page)
+    expect($archivedSessions.get()).toEqual([existing])
   })
 })

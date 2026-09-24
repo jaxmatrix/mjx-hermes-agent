@@ -1,26 +1,26 @@
 /**
- * Live-behaviour test for FloatingTiles: mounts the REAL component into a real
+ * Live-behavior test for FloatingPanes: mounts the REAL component into a real
  * DOM and drives real pointer/resize events. This is the closest thing to
- * "running it" without a Tauri window — it exercises the rendered element's
- * computed geometry, not the pure geometry module (that's floating-rect.test.ts).
- *
- * The titlebar inset resolves to the 34px fallback here: jsdom reports an empty
- * `--titlebar-height`, which is exactly what a webview does before the app shell
- * has painted, so the fallback is load-bearing rather than test-only.
- *
- * Ported from desktop `floating-panes.test.tsx`.
+ * "running it" without an Electron main process — it exercises the rendered
+ * element's computed geometry, not the pure geometry module (that's
+ * floating-rect.test.ts).
  */
 
-import { act, cleanup, render } from '@testing-library/react'
+import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { registry } from '@/contrib/registry'
+import type { registry as contributionRegistry } from '@/contrib/registry'
+import { reactRoot } from '@/test/react-root'
 
-import { FloatingTiles } from './floating-panes'
+import type { FloatingPanes as FloatingPanesComponent } from './floating-panes'
 
+let registry: typeof contributionRegistry
+let FloatingPanes: typeof FloatingPanesComponent
+
+const mount = reactRoot()
 let disposers: (() => void)[] = []
 
-const card = () => document.querySelector<HTMLElement>('[data-floating-tile="hud"]')
+const card = () => document.querySelector<HTMLElement>('[data-floating-pane="hud"]')
 
 const grab = () => card()!.querySelector('header')!
 
@@ -44,24 +44,24 @@ function resizeWindow(width: number, height: number) {
   })
 }
 
-/** Registered through the FLAT payload on purpose — a floating tile is a
- *  capability nothing in the app declares today, so a plugin is its first real
- *  caller and the flat shape is what the published SDK gives it. */
-function registerHud(data: Record<string, unknown>, id = 'hud') {
+function registerHud(data: Record<string, unknown>) {
   disposers.push(
     registry.register({
       area: 'panes',
       data,
-      id,
-      render: () => <p data-testid={`${id}-body`}>live</p>,
+      id: 'hud',
+      render: () => <p data-testid="hud-body">live</p>,
       title: 'HUD'
     })
   )
 }
 
-describe('FloatingTiles (live DOM)', () => {
-  beforeEach(() => {
+describe('FloatingPanes (live DOM)', () => {
+  beforeEach(async () => {
+    vi.resetModules()
     window.localStorage.clear()
+    registry = (await import('@/contrib/registry')).registry
+    FloatingPanes = (await import('./floating-panes')).FloatingPanes
     resizeWindow(1440, 900)
     // setPointerCapture / releasePointerCapture don't exist in jsdom.
     Element.prototype.setPointerCapture = vi.fn()
@@ -69,19 +69,18 @@ describe('FloatingTiles (live DOM)', () => {
   })
 
   afterEach(() => {
-    cleanup()
+    mount.unmount()
     disposers.forEach(dispose => dispose())
     disposers = []
   })
 
-  it('mounts a fixed card in the anchored corner with the tile body inside', () => {
+  it('mounts a fixed card in the anchored corner with the pane body inside', () => {
     registerHud({ anchor: 'top-right', height: '132px', placement: 'floating', width: '224px' })
-    render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
     const el = card()!
 
     expect(el).toBeTruthy()
-    expect(el.className).toContain('fixed')
     // 1440 - 224 - 12 margin = 1204; titlebar 34 + 12 = 46.
     expect(el.style.left).toBe('1204px')
     expect(el.style.top).toBe('46px')
@@ -91,14 +90,14 @@ describe('FloatingTiles (live DOM)', () => {
 
   it('renders nothing for a non-floating placement', () => {
     registerHud({ placement: 'right', width: '224px' })
-    render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
     expect(card()).toBeNull()
   })
 
   it('moves with a real pointer drag on the header', () => {
     registerHud({ anchor: 'top-left', height: '132px', placement: 'floating', width: '224px' })
-    render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
     expect(card()!.style.left).toBe('12px')
 
@@ -112,7 +111,7 @@ describe('FloatingTiles (live DOM)', () => {
 
   it('persists the dragged position across a remount', () => {
     registerHud({ anchor: 'top-left', height: '132px', placement: 'floating', width: '224px' })
-    const first = render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
     pointer(grab(), 'pointerdown', 100, 100)
     pointer(grab(), 'pointermove', 300, 300)
@@ -120,15 +119,15 @@ describe('FloatingTiles (live DOM)', () => {
 
     const moved = card()!.style.left
 
-    first.unmount()
-    render(<FloatingTiles />)
+    mount.unmount()
+    mount.render(<FloatingPanes />)
 
     expect(card()!.style.left).toBe(moved)
   })
 
   it('rides the right edge when the window shrinks', () => {
     registerHud({ anchor: 'top-right', height: '132px', placement: 'floating', width: '224px' })
-    render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
     expect(card()!.style.left).toBe('1204px')
 
@@ -140,7 +139,7 @@ describe('FloatingTiles (live DOM)', () => {
 
   it('never lets a drag push the card under the titlebar', () => {
     registerHud({ anchor: 'top-left', height: '132px', placement: 'floating', width: '224px' })
-    render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
     pointer(grab(), 'pointerdown', 100, 100)
     pointer(grab(), 'pointermove', 100, -900)
@@ -151,13 +150,13 @@ describe('FloatingTiles (live DOM)', () => {
 
   it('collapses to the header and drops the body, and does not drag from the button', () => {
     registerHud({ anchor: 'top-left', height: '132px', placement: 'floating', width: '224px' })
-    render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
     const before = card()!.style.left
     const toggle = card()!.querySelector('button')!
 
-    // The button is inside the drag handle — [data-floating-no-drag] must stop
-    // it starting a drag.
+    // The button is inside the drag handle — [data-floating-no-drag] must
+    // stop it starting a drag.
     pointer(toggle, 'pointerdown', 100, 100)
     pointer(grab(), 'pointermove', 400, 400)
     pointer(grab(), 'pointerup', 400, 400)
@@ -172,12 +171,20 @@ describe('FloatingTiles (live DOM)', () => {
     expect(card()!.style.height).toBe('')
   })
 
-  it('renders one card per floating tile', () => {
+  it('renders one card per floating contribution', () => {
     registerHud({ anchor: 'top-left', placement: 'floating', width: '224px' })
-    registerHud({ anchor: 'bottom-right', placement: 'floating', width: '200px' }, 'hud2')
+    disposers.push(
+      registry.register({
+        area: 'panes',
+        data: { anchor: 'bottom-right', placement: 'floating', width: '200px' },
+        id: 'hud2',
+        render: () => null,
+        title: 'HUD 2'
+      })
+    )
 
-    render(<FloatingTiles />)
+    mount.render(<FloatingPanes />)
 
-    expect(document.querySelectorAll('[data-floating-tile]').length).toBe(2)
+    expect(document.querySelectorAll('[data-floating-pane]').length).toBe(2)
   })
 })

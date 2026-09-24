@@ -1,43 +1,114 @@
 import { MessagePrimitive, useAuiState } from '@assistant-ui/react'
-import { type FC } from 'react'
+import { type FC, useState } from 'react'
 
+import { MarkdownTextContent } from '@/components/assistant-ui/markdown-text'
 import { messageContentText } from '@/components/assistant-ui/thread/content'
+import { MessageTimelineTimestamp } from '@/components/assistant-ui/thread/timeline-timestamp'
+import { SCAFFOLD_GLYPH_CLASS, SCAFFOLD_LABEL_CLASS, ScaffoldRow } from '@/components/chat/scaffold-row'
 import { Codicon } from '@/components/ui/codicon'
-import { useI18n } from '@/i18n'
+import { LogView } from '@/components/ui/log-view'
+import { ToolIcon } from '@/components/ui/tool-icon'
 import { LinkifiedText } from '@/lib/external-link'
 import { cn } from '@/lib/utils'
-import { MISSED_STEER_NOTE } from '@/store/chat'
 
 const SLASH_STATUS_RE = /^slash:(?<command>\/[^\n]+)\n(?<output>[\s\S]*)$/
 const STEER_NOTE_RE = /^steer:(?<text>[\s\S]+)$/
-/** Written by `store/chat.ts` `noteMissedSteer` when the gateway pushes
- *  `steer.missed`: the correction was accepted as a deferred steer, the turn
- *  ended before any tool result could carry it, and it has been requeued as a
- *  fresh turn instead. Distinct from `steer:` above — that one says the words
- *  LANDED. Built from the producer's own constant so the two cannot drift. */
-const MISSED_STEER_NOTE_RE = new RegExp(`^${MISSED_STEER_NOTE}(?<text>[\\s\\S]+)$`)
+const REVIEW_NOTE_RE = /^review:(?<label>[^:\n]+):?\s*(?<detail>[\s\S]*)$/
+
+interface BackgroundResultProps {
+  text: string
+  report: string
+  process?: boolean
+}
+
+export const BackgroundResult: FC<BackgroundResultProps> = ({ text, report, process }) => {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div
+      className="flex w-full min-w-0 flex-col self-start py-1 ps-(--message-text-indent)"
+      data-slot="aui_background-result"
+    >
+      <div data-conversation-scaffold="">
+        <ScaffoldRow
+          onToggle={report ? () => setOpen(!open) : undefined}
+          open={open}
+          trailing={
+            <>
+              {' '}
+              <MessageTimelineTimestamp />
+            </>
+          }
+        >
+          {process && (
+            <span className={SCAFFOLD_GLYPH_CLASS}>
+              <ToolIcon className="text-(--ui-text-tertiary)" name="terminal" size="0.875rem" />
+            </span>
+          )}
+          <span className={cn(SCAFFOLD_LABEL_CLASS, 'min-w-0 truncate')}>{text}</span>
+        </ScaffoldRow>
+      </div>
+      {open &&
+        (process ? (
+          <LogView className="mt-2 max-h-80 overscroll-x-contain overscroll-y-auto">{report}</LogView>
+        ) : (
+          <div className="mt-2 max-h-80 min-w-0 max-w-full overflow-auto overscroll-x-contain overscroll-y-auto wrap-anywhere">
+            <MarkdownTextContent isRunning={false} text={report} />
+          </div>
+        ))}
+    </div>
+  )
+}
 
 export const SystemMessage: FC = () => {
-  const { t } = useI18n()
   const text = useAuiState(s => messageContentText(s.message.content))
+  const asyncResult = useAuiState(s => s.message.metadata.custom?.asyncResult)
+  const processResult = useAuiState(s => s.message.metadata.custom?.asyncResultKind === 'process')
 
   if (!text) {
     return null
   }
 
-  const missedSteer = text.match(MISSED_STEER_NOTE_RE)
-
-  if (missedSteer?.groups) {
+  if (processResult || (typeof asyncResult === 'string' && asyncResult)) {
     return (
       <MessagePrimitive.Root
-        className="flex max-w-[min(86%,44rem)] items-center gap-1.5 self-center px-2 py-0.5 text-[0.6875rem] leading-5 text-muted-foreground/60"
+        className="w-full min-w-0 self-start"
         data-role="system"
         data-slot="aui_system-message-root"
       >
-        <Codicon className="text-destructive/70" name="compass" size="0.75rem" />
-        <span className="text-destructive/70">{t.assistant.thread.steerMissed}</span>
-        <span className="text-muted-foreground/35">·</span>
-        <span className="whitespace-pre-wrap">{missedSteer.groups.text.trim()}</span>
+        <BackgroundResult
+          process={processResult}
+          report={typeof asyncResult === 'string' ? asyncResult : ''}
+          text={text}
+        />
+      </MessagePrimitive.Root>
+    )
+  }
+
+  // The self-improvement review saved something to memory/skills — the same
+  // kind of event as a landed `memory` write, so it wears the same chrome:
+  // brain glyph with the gold→purple glow, gradient label, purple detail,
+  // left-aligned in the reading column like every other scaffold line.
+  const reviewNote = text.match(REVIEW_NOTE_RE)
+
+  if (reviewNote?.groups) {
+    const detail = reviewNote.groups.detail.trim()
+
+    return (
+      <MessagePrimitive.Root
+        className="flex w-full min-w-0 max-w-full items-start gap-1.5 self-start py-0.5"
+        data-role="system"
+        data-slot="aui_system-message-root"
+      >
+        <span className="tool-memory-legendary-glyph flex h-(--conversation-line-height) w-3.5 shrink-0 items-center justify-center">
+          <ToolIcon className="text-(--tool-memory-legendary-icon)" name="brain" size="0.875rem" />
+        </span>
+        <span className={cn(SCAFFOLD_LABEL_CLASS, 'tool-memory-legendary-title shrink-0 text-transparent')}>
+          {reviewNote.groups.label.trim()}
+        </span>
+        {detail && (
+          <span className={cn(SCAFFOLD_LABEL_CLASS, 'tool-memory-legendary-meta min-w-0 wrap-anywhere')}>{detail}</span>
+        )}
       </MessagePrimitive.Root>
     )
   }
@@ -54,7 +125,7 @@ export const SystemMessage: FC = () => {
         <Codicon className="text-muted-foreground/55" name="compass" size="0.75rem" />
         <span className="text-muted-foreground/55">steered</span>
         <span className="text-muted-foreground/35">·</span>
-        <span className="whitespace-pre-wrap">{steerNote.groups.text.trim()}</span>
+        <span className="whitespace-pre-wrap">{steerNote.groups.text.trim()}</span> <MessageTimelineTimestamp />
       </MessagePrimitive.Root>
     )
   }
@@ -85,7 +156,8 @@ export const SystemMessage: FC = () => {
             <span className="mx-1.5 text-muted-foreground/35">·</span>
             <LinkifiedText className="whitespace-pre-wrap" explicitOnly pretty={false} text={output} />
           </>
-        )}
+        )}{' '}
+        <MessageTimelineTimestamp className={cn(multiline ? 'mt-0.5 block' : 'ms-1.5')} />
       </MessagePrimitive.Root>
     )
   }
@@ -101,7 +173,8 @@ export const SystemMessage: FC = () => {
       data-role="system"
       data-slot="aui_system-message-root"
     >
-      <LinkifiedText className="whitespace-pre-wrap" explicitOnly pretty={false} text={text} />
+      <LinkifiedText className="whitespace-pre-wrap" explicitOnly pretty={false} text={text} />{' '}
+      <MessageTimelineTimestamp className={cn(multiline ? 'mt-0.5 block' : 'ms-1.5')} />
     </MessagePrimitive.Root>
   )
 }

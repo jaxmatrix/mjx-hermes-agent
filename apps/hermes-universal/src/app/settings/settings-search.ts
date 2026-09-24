@@ -1,50 +1,44 @@
-/**
- * The searchable catalog of everything Settings can take you to.
- *
- * One list, three sources, so ⌘K can land on a *row* and not just a page:
- *  - schema config fields (`?field=`)   — built from the live schema × config
- *  - credential env vars (`?key=`)      — built from the live env-var map
- *  - client-pref rows (`?setting=`)     — the device-local knobs that have no
- *    config key at all (MJXHRM-489), declared statically below
- *
- * Ported from apps/desktop/src/app/settings/settings-search.ts, entry/target
- * shape kept so later syncs diff cleanly. One deliberate divergence: universal
- * routes Settings by PATH (`/settings/:section`), not by desktop's `?tab=`, so
- * desktop's `settingsSearchTargetQuery` is `settingsSearchTargetRoute` here.
- *
- * `CLIENT_PREF_SETTINGS` is the registration seam: a ticket that adds a
- * device-local settings row adds one entry here and gives its `ListRow` the
- * matching `id={settingRowElementId(...)}` — nothing else has to change for it
- * to become findable.
- */
-
-import type { Translations } from '@/i18n/types'
-import { type IconComponent, KeyRound, Settings2 } from '@/lib/icons'
-import { IS_DESKTOP } from '@/lib/platform'
+import type { IconComponent } from '@/lib/icons'
+import { normalize } from '@/lib/text'
 import type { ConfigFieldSchema, EnvVarInfo, HermesConfigRecord } from '@/types/hermes'
 
-import { SECTIONS } from './constants'
+import { FIELD_LABELS, SECTIONS } from './constants'
 import { credentialRowLabel } from './credential-key-ui'
 import { fieldCopyForSchemaKey } from './field-copy'
 import { prettyName, sectionFieldEntries, voiceFieldVisible } from './helpers'
-import type { DesktopConfigSection } from './types'
+import { settingsSubpageForTarget } from './subpages'
+import type { DesktopConfigSection, SettingsView } from './types'
 
-/** Which Keys sub-tab an env var lives on — `null` means "not searchable". */
 export type CredentialSettingsView = 'settings' | 'tools'
 
+export const APPEARANCE_SETTING_IDS = {
+  appActions: 'appearance.app-actions',
+  backdrop: 'appearance.backdrop',
+  embeds: 'appearance.embeds',
+  hideCodeDiffs: 'appearance.hide-code-diffs',
+  hideThreadTimeline: 'appearance.hide-thread-timeline',
+  introSplash: 'appearance.intro-splash',
+  language: 'appearance.language',
+  minimizeToTray: 'appearance.minimize-to-tray',
+  theme: 'appearance.theme',
+  toolView: 'appearance.tool-view',
+  interfaceMode: 'appearance.interface-mode',
+  translucency: 'appearance.translucency',
+  uiScale: 'appearance.ui-scale',
+  userBubble: 'appearance.user-bubble'
+} as const
+
 export interface SettingsSearchTarget {
-  /** Schema config key → `?field=` (config-section's deep-link highlight). */
+  subpage?: string
   field?: string
-  /** Env var name → `?key=` (the Keys page expands + highlights the card). */
   key?: string
-  /** Client-pref row id → `?setting=` (SectionBody's deep-link highlight). */
+  keysView?: CredentialSettingsView
+  providerView?: 'accounts' | 'custom-endpoints' | 'keys'
   setting?: string
-  /** Route path under `/settings` — e.g. `chat`, `keys/settings`. */
-  view: string
+  view: SettingsView
 }
 
 export interface SettingsSearchEntry {
-  /** The page the row lives on, rendered after the label ("Voice: TTS provider"). */
   context: string
   description?: string
   icon: IconComponent
@@ -54,256 +48,17 @@ export interface SettingsSearchEntry {
   target: SettingsSearchTarget
 }
 
-/** DOM id a client-pref `ListRow` must carry to be deep-linkable. */
-export const settingRowElementId = (setting: string): string => `setting-row-${setting}`
-
-/** DOM id a credential card must carry to be deep-linkable. */
-export const credentialRowElementId = (key: string): string => `credential-row-${key}`
-
-/**
- * The device-local settings rows: real UI with no config key behind it, so
- * `sectionFieldEntries` can never see them. `view` is the `/settings/:view`
- * page the row renders on; `id` doubles as the `?setting=` deep-link value and
- * the row's DOM id (via `settingRowElementId`).
- */
-export const CLIENT_PREF_SETTINGS: ReadonlyArray<{
-  /** Hidden on mobile — the row itself is `IS_DESKTOP`-gated. */
-  desktopOnly?: boolean
-  /**
-   * Hidden wherever window glass is unsupported. Not the same question as
-   * `desktopOnly`: Linux is a desktop and has no compositor material, and an
-   * older Windows 11 is a desktop below the backdrop build floor. Answered by
-   * `appearance_capabilities`, so ⌘K can never land on a row the OS refuses to
-   * render (a deep link would poll for a DOM id that is not coming).
-   */
-  glassOnly?: boolean
-  id: string
-  keywords: string[]
-  label: (t: Translations) => string
-  view: string
-}> = [
-  {
-    id: 'appearance.language',
-    keywords: ['language', 'locale', 'translation'],
-    label: t => t.language.label,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.theme',
-    keywords: ['theme', 'skin', 'colors', 'palette', 'dark', 'light'],
-    label: t => t.settings.appearance.themeTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.ui-scale',
-    keywords: ['zoom', 'scale', 'text size', 'bigger', 'smaller'],
-    label: t => t.settings.appearance.uiScaleTitle,
-    view: 'appearance'
-  },
-  {
-    desktopOnly: true,
-    id: 'appearance.translucency',
-    keywords: ['blur', 'transparent', 'vibrancy', 'window', 'glass', 'clear', 'opacity'],
-    label: t => t.settings.appearance.translucencyTitle,
-    view: 'appearance'
-  },
-  {
-    desktopOnly: true,
-    id: 'appearance.tint',
-    keywords: ['tint', 'translucency', 'glass', 'transparent', 'window'],
-    label: t => t.settings.appearance.glass.tintTitle,
-    view: 'appearance'
-  },
-  {
-    desktopOnly: true,
-    glassOnly: true,
-    id: 'appearance.frost',
-    keywords: ['frost', 'material', 'vibrancy', 'acrylic', 'mica', 'blur', 'glass'],
-    label: t => t.settings.appearance.glass.frostTitle,
-    view: 'appearance'
-  },
-  {
-    desktopOnly: true,
-    glassOnly: true,
-    id: 'appearance.area',
-    keywords: ['area', 'scope', 'sidebar', 'glass', 'window'],
-    label: t => t.settings.appearance.glass.areaTitle,
-    view: 'appearance'
-  },
-  {
-    desktopOnly: true,
-    glassOnly: true,
-    id: 'appearance.fade',
-    keywords: ['fade', 'opacity', 'dim', 'glass', 'window'],
-    label: t => t.settings.appearance.glass.fadeTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.terminal-font',
-    keywords: ['terminal', 'font', 'monospace', 'typeface'],
-    label: t => t.settings.appearance.terminalFontTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.tool-view',
-    keywords: ['tool calls', 'technical', 'product', 'display'],
-    label: t => t.settings.appearance.toolViewTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.backdrop',
-    keywords: ['backdrop', 'chat', 'background', 'wallpaper'],
-    label: t => t.settings.appearance.backdropTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.intro-splash',
-    keywords: ['intro', 'splash', 'wordmark', 'tagline', 'empty chat'],
-    label: t => t.settings.appearance.introSplashTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.restore-paint',
-    keywords: ['restore', 'reconnect', 'last conversation', 'cold start', 'launch', 'transcript'],
-    label: t => t.settings.appearance.restorePaintTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.reactions',
-    keywords: ['reactions', 'emoji', 'messages'],
-    label: t => t.settings.appearance.reactionsTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.embeds',
-    keywords: ['embeds', 'iframe', 'preview', 'links', 'youtube'],
-    label: t => t.settings.appearance.embedsTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.resize-rate',
-    keywords: ['resize', 'throttle', 'smoothness', 'performance', 'fps'],
-    label: t => t.settings.appearance.resizeRateTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'appearance.resize-calm',
-    keywords: ['resize', 'settle', 'calm', 'performance'],
-    label: t => t.settings.appearance.resizeCalmTitle,
-    view: 'appearance'
-  },
-  {
-    id: 'chat.attachment-size',
-    keywords: ['attachment', 'upload', 'image', 'size', 'megabytes', 'mb', 'preview'],
-    label: t => t.settings.config.attachmentSizeTitle,
-    view: 'chat'
-  },
-  {
-    desktopOnly: true,
-    id: 'advanced.keep-awake',
-    keywords: ['keep awake', 'sleep', 'screensaver', 'idle', 'power'],
-    label: t => t.settings.config.keepAwakeTitle,
-    view: 'advanced'
-  },
-  {
-    desktopOnly: true,
-    id: 'advanced.background-mode',
-    keywords: ['background', 'tray', 'close', 'quit', 'keep running'],
-    label: t => t.settings.config.backgroundModeTitle,
-    view: 'advanced'
-  },
-  {
-    desktopOnly: true,
-    id: 'advanced.quick-entry',
-    keywords: ['quick entry', 'hotkey', 'global', 'capture'],
-    label: t => t.quickEntry.settingsTitle,
-    view: 'advanced'
-  },
-  // The in-app browser (MJXHRM-447). NOT `desktopOnly`: a phone with the native
-  // WebView plugin has a real one, and the rows hide themselves when the
-  // platform reports no host.
-  {
-    id: 'advanced.browser-links',
-    keywords: ['browser', 'links', 'web', 'in-app', 'open'],
-    label: t => t.browser.openLinksInApp,
-    view: 'advanced'
-  },
-  {
-    id: 'advanced.browser-store',
-    keywords: ['browser', 'cookies', 'session', 'isolated', 'privacy'],
-    label: t => t.browser.isolatedStore,
-    view: 'advanced'
-  },
-  {
-    id: 'advanced.browser-console',
-    keywords: ['browser', 'console', 'logs', 'preview', 'devtools'],
-    label: t => t.browser.consoleDefault,
-    view: 'advanced'
-  },
-  {
-    id: 'advanced.browser-clear',
-    keywords: ['browser', 'clear', 'cookies', 'cache', 'browsing data'],
-    label: t => t.browser.clearData,
-    view: 'advanced'
-  },
-  {
-    id: 'workspace.terminal-host',
-    keywords: ['shell', 'terminal', 'runs on', 'device', 'gateway', 'remote'],
-    label: t => t.settings.workspace.terminalHostTitle,
-    view: 'workspace'
-  },
-  {
-    id: 'plugins.install',
-    keywords: ['plugin', 'install', 'git', 'repository', 'clone', 'add'],
-    label: t => t.settings.plugins.installFromGit,
-    view: 'plugins'
-  },
-  {
-    id: 'plugins.gatewayDoor',
-    keywords: ['plugin', 'gateway', 'backend', 'door', 'remote', 'load'],
-    label: t => t.settings.plugins.gatewayDoor,
-    view: 'plugins'
-  },
-  {
-    id: 'notifications.plugin',
-    keywords: ['plugin', 'notification', 'native', 'os', 'alert'],
-    label: t => t.settings.notifications.kinds.plugin.label,
-    view: 'notifications'
-  }
-]
-
-/**
- * `/settings/<view>?<param>=<value>` — the URL a result navigates to. The
- * section pages read the param back out through `useDeepLinkHighlight`, which
- * is what scrolls the row into view and flashes it.
- */
-export function settingsSearchTargetRoute(target: SettingsSearchTarget): string {
-  const params = new URLSearchParams()
-
-  if (target.field) {
-    params.set('field', target.field)
-  }
-
-  if (target.key) {
-    params.set('key', target.key)
-  }
-
-  if (target.setting) {
-    params.set('setting', target.setting)
-  }
-
-  const query = params.toString()
-
-  return `/settings/${target.view}${query ? `?${query}` : ''}`
+interface ConfigSearchCopy {
+  fieldDescriptions: Record<string, string>
+  fieldLabels: Record<string, string>
+  sections: Record<string, string>
 }
 
-/**
- * Which Keys sub-tab an env var belongs to, or `null` when it must not be
- * searchable at all: `channel_managed` vars are owned by the richer Messaging
- * page, and provider LLM keys (any other category) are owned by the Providers
- * page — surfacing either here would deep-link to a card the Keys page hides.
- * Mirrors `VIEW_CATEGORIES` in keys-section.tsx.
- */
+interface CredentialSearchCopy {
+  settings: string
+  tools: string
+}
+
 export function credentialSettingsView(info: EnvVarInfo): CredentialSettingsView | null {
   if (info.channel_managed) {
     return null
@@ -313,102 +68,169 @@ export function credentialSettingsView(info: EnvVarInfo): CredentialSettingsView
     return 'tools'
   }
 
-  return info.category === 'setting' || info.category === 'messaging' ? 'settings' : null
+  if (info.category === 'setting' || info.category === 'messaging') {
+    return 'settings'
+  }
+
+  return null
 }
 
-/**
- * One entry per config field the Settings UI actually renders. Reuses
- * `sectionFieldEntries` (schema ?? FALLBACK_FIELD_SCHEMA ?? inferred-from-value,
- * per MJXHRM-443) so search can never offer a row the page then drops, and
- * `voiceFieldVisible` so the Voice page's provider-filtered fields match too.
- */
+function configFieldLabel(key: string, copy: ConfigSearchCopy): string {
+  return (
+    fieldCopyForSchemaKey(copy.fieldLabels, key) ??
+    fieldCopyForSchemaKey(FIELD_LABELS, key) ??
+    prettyName(key.split('.').pop() ?? key)
+  )
+}
+
+function configFieldDescription(key: string, field: ConfigFieldSchema, copy: ConfigSearchCopy): string {
+  return fieldCopyForSchemaKey(copy.fieldDescriptions, key) ?? field.description ?? ''
+}
+
 export function buildConfigSearchEntries(
-  schema: null | Record<string, ConfigFieldSchema> | undefined,
+  schema: Record<string, ConfigFieldSchema> | null | undefined,
   config: HermesConfigRecord | null | undefined,
-  copy: {
-    fieldDescriptions: Record<string, string>
-    fieldLabels: Record<string, string>
-    sections: Record<string, string>
-  },
+  copy: ConfigSearchCopy,
   sections: DesktopConfigSection[] = SECTIONS
 ): SettingsSearchEntry[] {
   if (!schema || !config) {
     return []
   }
 
-  const bySection = sectionFieldEntries(schema, config)
+  const sectionFields = sectionFieldEntries(schema, config)
 
   return sections.flatMap(section => {
     const context = copy.sections[section.id] ?? section.label
+    const fields = sectionFields.get(section.id) ?? []
+    const visibleFields = section.id === 'voice' ? fields.filter(([key]) => voiceFieldVisible(key, config)) : fields
 
-    return (bySection.get(section.id) ?? [])
-      .filter(([key]) => section.id !== 'voice' || voiceFieldVisible(key, config))
-      .map(([key]) => ({
-        context,
-        description: fieldCopyForSchemaKey(copy.fieldDescriptions, key),
-        icon: section.icon as IconComponent,
-        id: `config-field:${key}`,
-        keywords: [key, section.label, ...key.split('.')],
-        label: fieldCopyForSchemaKey(copy.fieldLabels, key) ?? prettyName(key.split('.').pop() ?? key),
-        target: { field: key, view: section.id }
-      }))
+    return visibleFields.map(([key, field]) => ({
+      context,
+      description: configFieldDescription(key, field, copy),
+      icon: section.icon,
+      id: `config-field:${key}`,
+      keywords: ['settings', section.id, section.label, key],
+      label: configFieldLabel(key, copy),
+      target: {
+        field: key,
+        view: `config:${section.id}` as SettingsView
+      }
+    }))
   })
 }
 
-/** One entry per searchable credential env var, homed on its Keys sub-tab. */
 export function buildCredentialSearchEntries(
-  vars: null | Record<string, EnvVarInfo> | undefined,
-  copy: { settings: string; tools: string }
+  vars: Record<string, EnvVarInfo> | null | undefined,
+  copy: CredentialSearchCopy,
+  icons: Record<CredentialSettingsView, IconComponent>
 ): SettingsSearchEntry[] {
   if (!vars) {
     return []
   }
 
-  return Object.entries(vars).flatMap(([key, info]) => {
-    const view = credentialSettingsView(info)
+  return Object.entries(vars)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([key, info]) => {
+      const view = credentialSettingsView(info)
 
-    if (!view) {
-      return []
-    }
-
-    return [
-      {
-        context: view === 'tools' ? copy.tools : copy.settings,
-        description: info.description,
-        icon: KeyRound,
-        id: `credential:${key}`,
-        keywords: [key, 'credential', 'api key', 'secret', 'token', ...(info.url ? [info.url] : []), ...info.tools],
-        label: credentialRowLabel(key, info),
-        target: { key, view: view === 'tools' ? 'keys' : 'keys/settings' }
+      if (!view) {
+        return []
       }
-    ]
-  })
+
+      return [
+        {
+          context: view === 'tools' ? copy.tools : copy.settings,
+          description: info.description || undefined,
+          icon: icons[view],
+          id: `credential:${key}`,
+          keywords: [key, info.url ?? '', ...(Array.isArray(info.tools) ? info.tools : [])],
+          label: credentialRowLabel(key, info),
+          target: {
+            key,
+            keysView: view,
+            view: 'keys' as const
+          }
+        }
+      ]
+    })
 }
 
-/**
- * One entry per device-local row from `CLIENT_PREF_SETTINGS`. Desktop-only rows
- * are dropped on mobile, and glass-only rows wherever the platform reports no
- * window material, so a result can never land on a row that never renders (the
- * deep-link would poll for a DOM id that is not coming).
- *
- * `glassSupported` comes from `appearance_capabilities`, not from the platform
- * constants: on Linux Clear works and Glass does not, and on Windows the answer
- * depends on the build number. It defaults to false so a caller that has not
- * asked yet shows the rows it is sure of rather than ones it is guessing at.
- */
-export function buildClientPrefSearchEntries(
-  t: Translations,
-  sectionLabels: Record<string, string>,
-  glassSupported = false
-): SettingsSearchEntry[] {
-  return CLIENT_PREF_SETTINGS.filter(
-    pref => (IS_DESKTOP || !pref.desktopOnly) && (glassSupported || !pref.glassOnly)
-  ).map(pref => ({
-    context: sectionLabels[pref.view] ?? pref.view,
-    icon: Settings2,
-    id: `setting:${pref.id}`,
-    keywords: [...pref.keywords, pref.id],
-    label: pref.label(t),
-    target: { setting: pref.id, view: pref.view }
-  }))
+function searchScore(entry: SettingsSearchEntry, query: string): number {
+  const needle = normalize(query)
+
+  if (!needle) {
+    return 0
+  }
+
+  const label = normalize(entry.label)
+  const context = normalize(entry.context)
+  const haystack = normalize([entry.label, entry.context, entry.description ?? '', ...entry.keywords].join(' '))
+  const terms = needle.split(/\s+/).filter(Boolean)
+
+  if (!terms.every(term => haystack.includes(term))) {
+    return 0
+  }
+
+  if (label === needle) {
+    return 100
+  }
+
+  if (label.startsWith(needle)) {
+    return 90
+  }
+
+  if (label.includes(needle)) {
+    return 80
+  }
+
+  if (context.includes(needle)) {
+    return 70
+  }
+
+  if (terms.every(term => label.includes(term) || context.includes(term))) {
+    return 60
+  }
+
+  return 50
+}
+
+export function filterSettingsSearchEntries(entries: SettingsSearchEntry[], query: string): SettingsSearchEntry[] {
+  return entries
+    .map((entry, index) => ({ entry, index, score: searchScore(entry, query) }))
+    .filter(result => result.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(result => result.entry)
+}
+
+/** Serialize a search target to the Settings route's query string. */
+export function settingsSearchTargetQuery(target: SettingsSearchTarget): string {
+  const params = new URLSearchParams()
+  params.set('tab', target.view)
+  const subpage = target.subpage ?? settingsSubpageForTarget(target.view, target.field, target.setting)
+
+  if (subpage) {
+    params.set('page', subpage)
+  }
+
+  if (target.providerView) {
+    params.set('pview', target.providerView)
+  }
+
+  if (target.keysView) {
+    params.set('kview', target.keysView)
+  }
+
+  if (target.field) {
+    params.set('field', target.field)
+  }
+
+  if (target.setting) {
+    params.set('setting', target.setting)
+  }
+
+  if (target.key) {
+    params.set('key', target.key)
+  }
+
+  return params.toString()
 }

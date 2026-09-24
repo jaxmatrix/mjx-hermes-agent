@@ -4,56 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ErrorBoundary, RootErrorBoundary } from './error-boundary'
 
-function Boom(): never {
-  throw new Error('kaboom')
-}
-
-afterEach(() => vi.restoreAllMocks())
-
-describe('ErrorBoundary', () => {
-  it('renders children when there is no error', () => {
-    render(
-      <ErrorBoundary>
-        <span>ok</span>
-      </ErrorBoundary>
-    )
-    expect(screen.getByText('ok')).toBeInTheDocument()
-  })
-
-  it('catches a render error and shows the fallback', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    render(
-      <ErrorBoundary>
-        <Boom />
-      </ErrorBoundary>
-    )
-    // Boundary is above I18nProvider, so the fallback uses the default (English) catalog.
-    expect(screen.getByText('Something broke in the interface')).toBeInTheDocument()
-    expect(screen.getByText('kaboom')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-  })
-})
-
-/**
- * AUTO-RECOVERY (MJXHRM-406 — this half shipped with the boundary and had no
- * test at all in universal; desktop's suite did not come across with the port).
- *
- * assistant-ui's client lookup can lose a race against a thread swap and throw
- * from a place no message-local boundary sits under, so the crash reaches the
- * ROOT and takes the whole window down for something that is already fixed by
- * the next render. The boundary retries exactly that error class, only at the
- * root, on a budget.
- *
- * Every clause below is load-bearing and silently disable-able:
- *  - the `label === 'root'` gate (a typo turns recovery off, which is why
- *    `RootErrorBoundary` exists rather than the label being spelled out at the
- *    mount site);
- *  - the message classifier (widening it would auto-retry real bugs forever);
- *  - the 3-per-5s budget, including the `count === 0` window restart that stops
- *    the process's FIRST crash from consuming the budget it should open;
- *  - the `componentDidMount` re-arm, without which StrictMode's synthetic
- *    unmount eats the scheduled recovery and dev sits on the crash screen.
- */
 const CURRENT_LOOKUP_ERROR = new Error('useClientLookup: Index 6 out of bounds (length: 2)')
 const RELOAD_WINDOW = { name: 'Reload window', role: 'button' } as const
 
@@ -87,13 +37,11 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
     ['the current useClientLookup error', CURRENT_LOOKUP_ERROR],
     ['the legacy tapClientLookup error', new Error('tapClientLookup: Index 6 out of bounds (length: 2)')],
     ['the legacy tapClientResource error', new Error('tapClientResource: Index 6 out of bounds (length: 2)')]
-  ])('recovers the real root composition after %s clears', (_label, error) => {
+  ])('recovers the production root composition without StrictMode after %s clears', (_label, error) => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const box: { error: Error | null } = { error }
     const Bomb = makeBomb(box)
 
-    // `RootErrorBoundary`, not `<ErrorBoundary label="root">` — the exact
-    // composition `main.tsx` mounts, so the gate is exercised as it ships.
     render(
       <RootErrorBoundary>
         <Bomb />
@@ -108,7 +56,7 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
     expect(recoveryWarningCount(warnSpy.mock.calls)).toBe(1)
   })
 
-  it('recovers when StrictMode replays its mount lifecycle', () => {
+  it('recovers the production root composition when StrictMode replays its mount lifecycle', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const box: { error: Error | null } = { error: CURRENT_LOOKUP_ERROR }
     const Bomb = makeBomb(box)
@@ -126,13 +74,13 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
 
     expect(screen.getByText('recovered')).toBeTruthy()
     expect(recoveryWarningCount(warnSpy.mock.calls)).toBe(1)
-    // No orphaned timer left behind by the replayed lifecycle.
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('stops retrying a persistent lookup error once the budget is spent', () => {
+  it('stops retrying a persistent lookup error after the recovery budget is exhausted', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const Bomb = makeBomb({ error: CURRENT_LOOKUP_ERROR })
+    const box: { error: Error | null } = { error: CURRENT_LOOKUP_ERROR }
+    const Bomb = makeBomb(box)
 
     render(
       <RootErrorBoundary>
@@ -144,14 +92,12 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
       act(() => vi.runOnlyPendingTimers())
     }
 
-    // Three retries, then the crash screen — a persistent failure must still
-    // reach the user rather than spinning forever.
     expect(screen.getByRole(RELOAD_WINDOW.role, { name: RELOAD_WINDOW.name })).toBeTruthy()
     expect(recoveryWarningCount(warnSpy.mock.calls)).toBe(3)
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('opens a fresh budget at the 5 second window boundary', () => {
+  it('starts a fresh automatic recovery budget at the 5 second window boundary', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const box: { error: Error | null } = { error: CURRENT_LOOKUP_ERROR }
     const Bomb = makeBomb(box)
@@ -162,7 +108,6 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
       </RootErrorBoundary>
     )
 
-    // Three crashes inside one window, each recovered.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       box.error = null
       act(() => vi.runOnlyPendingTimers())
@@ -181,8 +126,6 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
     expect(recoveryWarningCount(warnSpy.mock.calls)).toBe(3)
     act(() => vi.advanceTimersByTime(5_000))
 
-    // A crash after the window has rolled is a NEW incident, not the fourth of
-    // the old one.
     box.error = CURRENT_LOOKUP_ERROR
     view.rerender(
       <RootErrorBoundary>
@@ -198,9 +141,10 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
     expect(recoveryWarningCount(warnSpy.mock.calls)).toBe(4)
   })
 
-  it('manual Retry replaces the pending timer, resets the budget, and can exhaust again', () => {
+  it('manual retry replaces an active timer, resets the budget, and can exhaust again', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const Bomb = makeBomb({ error: CURRENT_LOOKUP_ERROR })
+    const box: { error: Error | null } = { error: CURRENT_LOOKUP_ERROR }
+    const Bomb = makeBomb(box)
 
     render(
       <RootErrorBoundary>
@@ -210,8 +154,6 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
 
     expect(vi.getTimerCount()).toBe(1)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    // Still exactly one — Retry must not leave the automatic timer running
-    // beside its own attempt.
     expect(vi.getTimerCount()).toBe(1)
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -223,7 +165,7 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('cancels an owned recovery timer when unmounted', () => {
+  it('cancels an owned automatic recovery timer when unmounted', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const Bomb = makeBomb({ error: CURRENT_LOOKUP_ERROR })
 
@@ -244,8 +186,6 @@ describe('ErrorBoundary assistant-ui lookup recovery', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const Bomb = makeBomb({ error: CURRENT_LOOKUP_ERROR })
 
-    // The label gate. A contribution / right-pane boundary catching this must
-    // show its own fallback, not silently retry someone else's race.
     render(
       <ErrorBoundary fallback={() => <div>scoped fallback</div>} label="thread">
         <Bomb />

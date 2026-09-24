@@ -15,19 +15,8 @@ import {
   WEBHOOKS_ROUTE
 } from '@/app/routes'
 import type { Translations } from '@/i18n'
-import {
-  Box,
-  Clock,
-  Cpu,
-  LayoutGrid,
-  MessageCircle,
-  Send,
-  Settings,
-  Sparkles,
-  Stars,
-  Users,
-  Webhook
-} from '@/lib/icons'
+import { Box, Clock, Cpu, MessageCircle, Send, Settings, Users } from '@/lib/icons'
+import { LayoutGrid, Sparkles, Stars, Webhook } from '@/lib/icons-extra'
 
 /** Keybind action a destination advertises — the command-menu row's live combo,
  *  and the rail row's tooltip hint. Keyed by view so both surfaces resolve it

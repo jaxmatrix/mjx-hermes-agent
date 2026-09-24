@@ -30,16 +30,20 @@
 
 import type { PointerEvent as ReactPointerEvent } from 'react'
 
+/** Optional double-tap metadata for tab-strip gestures (hide/show strip). */
+export type DoubleTapContext = { target: HTMLElement }
+
 import { createDragGhost, type DragGhost } from '@/lib/drag-ghost'
 import { ESCAPE_PRIORITY, pushEscapeLayer } from '@/lib/escape-layers'
 import { guardGuestPointers } from '@/lib/guest-pointer-guard'
 import { reorderCommitHaptic, reorderStepHaptic } from '@/lib/reorder'
-import { dragSlopPx, LONG_PRESS_MS, TAP_MAX_MS } from '@/lib/touch'
 
-import type { DropPosition } from '../model'
-import { $dropHint, $treeDragging, type DropHint, mergeTreeZones, moveTreePanes, reorderTreePanes } from '../store'
+import { type DropPosition, findGroup } from '../model'
+import { $dropHint, $layoutTree, $treeDragging, type DropHint, mergeTreeZones, moveTreePanes, reorderTreePanes } from '../store'
 import { clearTabSelection } from '../tab-selection'
 import { type EngineZone, HighlightedZones, primaryZone, type ZoneRect } from '../zones-engine'
+
+const DRAG_THRESHOLD_PX = 4
 
 /** Normalized radius of the elliptical CENTER region (stack/link). Outside it
  *  the drop targets the dominant-axis edge — the boundary curves with the
@@ -48,7 +52,9 @@ import { type EngineZone, HighlightedZones, primaryZone, type ZoneRect } from '.
 const CENTER_RADIUS = 0.62
 
 export function snapshotZones(): EngineZone[] {
-  return [...document.querySelectorAll<HTMLElement>('[data-tree-group]')].map(el => {
+  // Stable guest bodies carry group identity for focus/tooltip lookup, but
+  // only the tree's placement owns the full zone (including its tab strip).
+  return [...document.querySelectorAll<HTMLElement>('[data-tree-group]:not([data-pane-host])')].map(el => {
     const r = el.getBoundingClientRect()
 
     return { id: el.dataset.treeGroup!, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }
@@ -154,17 +160,10 @@ const sameHint = (a: DropHint | null, b: DropHint | null) =>
   (a?.groupIds?.length ?? 0) === (b?.groupIds?.length ?? 0) &&
   (a?.groupIds ?? []).every((id, i) => b?.groupIds?.[i] === id)
 
-/** Double-tap detection for drag handles. Pane handles preventDefault
- *  pointerdown, which suppresses native `dblclick` — so rapid same-handle
- *  taps are detected here instead. */
-const DOUBLE_TAP_MS = 400
-let lastTap: { key: string; time: number } | null = null
-
-export interface DoubleTapContext {
-  /** Two sub-threshold releases with the same key within DOUBLE_TAP_MS. */
-  key: string
-  onDoubleTap: () => void
-}
+// Drag handles carry NO double-tap. Handles preventDefault pointerdown, so a
+// synthesized one is the only way to get it here — and a gesture this machinery
+// hands to every handle at once is the wrong home for anything destructive.
+// Trackpad double-tap is a separate concern: `@/lib/trackpad-gestures`.
 
 // ---------------------------------------------------------------------------
 // The generic drag session (machinery) — resolvers plug in below / elsewhere.
@@ -185,12 +184,6 @@ export interface DragSessionSpec {
   onEnd?(): void
   /** Sub-threshold release = a click on the handle. */
   onTap?(): void
-  /** Release BEYOND the window's own edges — the tear-off. A drag that ends
-   *  nowhere in this window is the gesture for "give this its own window", so
-   *  the handles that can leave declare what that means; without it an
-   *  off-window release just cancels, as every other deny area does. */
-  tearOff?(): void
-  double?: DoubleTapContext
   /** Floating chip following the pointer — for drags whose source doesn't
    *  stay visibly "held" (a sidebar row, unlike a dimmed tab). See
    *  `@/lib/drag-ghost`. */
@@ -222,31 +215,11 @@ function suppressDragClick(committed: boolean) {
 
 /**
  * Begin a drag session from a handle's pointerdown. A sub-threshold release
- * is a click (`onTap` / `double.onDoubleTap`); past the threshold the spec's
- * resolver owns targeting and the machinery owns everything else. Esc aborts
- * instantly: the session registers as the TOP escape layer, tears down
- * synchronously, and nothing commits.
- *
- * EVERY WAY A DRAG CAN END HAS TO END IT. A drag holds four global locks —
- * `body`'s cursor and `user-select`, the guest-pointer lock that makes every
- * iframe in the app inert, and the top escape layer — plus window-level
- * pointer listeners, a ghost chip and whatever the spec dimmed. Ending only on
- * pointerup / pointercancel / Esc left the whole set pinned whenever the WINDOW
- * lost the gesture instead: Alt-Tab (or clicking another window, or a native
- * menu taking the pointer) mid-drag delivers no pointerup here, so the app came
- * back with `grabbing` glued to the cursor, no text selectable anywhere, every
- * embed unclickable, Escape dead app-wide — and the next click landed as a DROP
- * at wherever the pointer happened to be. `blur` and `lostpointercapture` close
- * that, exactly as the sash resize already does (lib/resize-gesture).
+ * is a click (`onTap`); past the threshold the spec's resolver owns targeting
+ * and the machinery owns everything else. Esc aborts instantly: the session
+ * registers as the TOP escape layer, tears down synchronously, and nothing
+ * commits.
  */
-/** Is this point outside the window's own viewport? The pointer keeps
- *  reporting through a held drag (capture is taken on engage), so it reads
- *  negative or past the edge once the drag leaves the window — which is the
- *  tear-off gesture rather than a miss. */
-export function isOffWindow(x: number, y: number, width: number, height: number): boolean {
-  return x < 0 || y < 0 || x > width || y > height
-}
-
 export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSessionSpec) {
   if (e.button !== 0) {
     return
@@ -258,23 +231,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   const sy = e.clientY
   const restoreCursor = document.body.style.cursor
   const restoreSelect = document.body.style.userSelect
-  // A finger competes with the scroll it is probably actually doing. A mouse
-  // does not: nothing else claims a held left button, so a 4px twitch is a
-  // drag. On touch the same 4px is the first frame of every list scroll — which
-  // is what made thumb-scrolling the phone's session list flash a ghost chip
-  // and light up drop hints. So a touch drag must be DELIBERATE: hold still
-  // past LONG_PRESS_MS first, and moving before that settles it as a scroll,
-  // permanently.
-  const touch = e.pointerType !== 'mouse'
-  const slopPx = dragSlopPx(e.pointerType)
-  const startedAt = Date.now()
-  let scrolling = false
   let engaged = false
-  // The session ends exactly ONCE. It now has five exits and two of them race
-  // each other by construction — `releasePointerCapture` below synthesizes
-  // `lostpointercapture` from inside the teardown — so without this a commit
-  // would run its spec twice.
-  let ended = false
   let releaseEscapeLayer: (() => void) | null = null
   let releaseGuests: (() => void) | null = null
   let ghost: DragGhost | null = null
@@ -283,9 +240,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   // point; all hit testing happens at most once per frame.
   let pending: { x: number; y: number; shift: boolean } | null = null
   let raf = 0
-  // Set by the last processed move: the release lands where the pointer was,
-  // and off-window that means tear-off rather than cancel.
-  let tearingOff = false
+  let ended = false
 
   // Cursor writes are per-frame; only touch the style when the value changes.
   const setCursor = (value: string) => {
@@ -320,8 +275,8 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
 
     setCursor('grabbing')
     document.body.style.userSelect = 'none'
-    // An iframe guest hit-tests on its own — dragging a tab across the artifact
-    // preview or a transcript embed would go silent without this.
+    // Webview/iframe guests hit-test in their own process — dragging a tab
+    // across the in-app browser would go silent without this.
     releaseGuests = guardGuestPointers()
     // While dragging, Esc belongs to the drag ALONE — lower layers (edit
     // mode, overlays) must not also fire on the same press.
@@ -336,16 +291,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
 
   const processMove = (x: number, y: number, shift: boolean) => {
     if (!engaged) {
-      if (scrolling || Math.hypot(x - sx, y - sy) < slopPx) {
-        return
-      }
-
-      // Moved before the hold elapsed — that was a scroll, and it stays one for
-      // the rest of this gesture. Without the latch the drag would simply
-      // engage half a second into the scroll instead.
-      if (touch && Date.now() - startedAt < LONG_PRESS_MS) {
-        scrolling = true
-
+      if (Math.hypot(x - sx, y - sy) < DRAG_THRESHOLD_PX) {
         return
       }
 
@@ -355,13 +301,10 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
     ghost?.moveTo(x, y)
 
     const hint = spec.resolveMove(x, y, shift)
-    tearingOff = !hint && Boolean(spec.tearOff) && isOffWindow(x, y, window.innerWidth, window.innerHeight)
 
-    // Over a deny area (no target — titlebar / statusbar / gutters) the release
-    // cancels; the cursor says so up front. OFF the window is not a deny area
-    // for a handle that can tear off — saying no-drop there is what made the
-    // gesture read as unsupported.
-    setCursor(hint || tearingOff ? 'grabbing' : 'no-drop')
+    // Over a deny area (no target — titlebar / statusbar / gutters /
+    // off-window) the release cancels; the cursor says so up front.
+    setCursor(hint ? 'grabbing' : 'no-drop')
     publishHint(hint)
   }
 
@@ -380,7 +323,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
     raf ||= requestAnimationFrame(flushMove)
   }
 
-  const finish = (commit: boolean, lostPointer = false) => {
+  const finish = (commit: boolean) => {
     if (ended) {
       return
     }
@@ -418,32 +361,17 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
     window.removeEventListener('pointerup', onUp, true)
     window.removeEventListener('pointercancel', onCancel, true)
     window.removeEventListener('keydown', onKey, true)
-    window.removeEventListener('blur', onLost)
-    handle.removeEventListener('lostpointercapture', onLost)
+    window.removeEventListener('blur', onAbort)
+    handle.removeEventListener('lostpointercapture', onAbort)
 
     if (engaged) {
-      // A gesture the window LOST synthesizes no click here — the release
-      // happened somewhere else entirely. Arming the swallow would only eat the
-      // first real click the user makes when they come back.
-      if (!lostPointer) {
-        suppressDragClick(commit)
-      }
+      suppressDragClick(commit)
 
-      if (commit && tearingOff) {
-        spec.tearOff?.()
-      } else if (commit) {
+      if (commit) {
         spec.onCommit($dropHint.get())
       }
-    } else if (commit && (!touch || (!scrolling && Date.now() - startedAt <= TAP_MAX_MS))) {
-      const now = Date.now()
-
-      if (spec.double && lastTap?.key === spec.double.key && now - lastTap.time < DOUBLE_TAP_MS) {
-        lastTap = null
-        spec.double.onDoubleTap()
-      } else {
-        lastTap = spec.double ? { key: spec.double.key, time: now } : null
-        spec.onTap?.()
-      }
+    } else if (commit) {
+      spec.onTap?.()
     }
 
     spec.onEnd?.()
@@ -453,12 +381,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
 
   const onUp = () => finish(true)
   const onCancel = () => finish(false)
-  // The window stopped owning the gesture: focus went to another window (the
-  // pointerup will be delivered THERE, never here) or the capture was revoked —
-  // including by the handle itself leaving the DOM, which is what a source tab
-  // closing mid-drag looks like. Abort, never commit: the last hint was
-  // resolved against a pointer position that no longer means anything.
-  const onLost = () => finish(false, true)
+  const onAbort = () => finish(false)
 
   // Esc aborts the drag — the target selection vanishes and nothing moves,
   // the universal "never mind" for an in-flight drag. Capture-phase + stop so
@@ -476,10 +399,8 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   window.addEventListener('pointerup', onUp, true)
   window.addEventListener('pointercancel', onCancel, true)
   window.addEventListener('keydown', onKey, true)
-  // Non-capture on purpose: a bubbling-phase `blur` on `window` is the WINDOW
-  // losing focus, not an element inside it handing focus to a sibling.
-  window.addEventListener('blur', onLost)
-  handle.addEventListener('lostpointercapture', onLost)
+  window.addEventListener('blur', onAbort)
+  handle.addEventListener('lostpointercapture', onAbort)
 }
 
 // ---------------------------------------------------------------------------
@@ -498,14 +419,13 @@ const TEAR_OFF_SLACK_PX = 18
 
 /**
  * Begin a pane drag from any handle. A sub-threshold release is a click
- * (`onTap`, used to activate tabs; rapid repeat fires `double.onDoubleTap`
- * instead). With a `reorder` context (tab drags), movement inside the strip
- * targets an insertion slot — the strip renders a divider at it, NOTHING
- * moves until release (placement-on-release, like every other drop); tearing
- * away from the strip converts the drag into a zone move. Zone mode: zones
- * light up, the target's tab strip stacks at its divider slot, Shift extends
- * the highlight range, release drops into the ClosestCenter primary zone.
- * Esc aborts either mode.
+ * (`onTap`, used to activate tabs). With a `reorder` context (tab drags),
+ * movement inside the strip targets an insertion slot — the strip renders a
+ * divider at it, NOTHING moves until release (placement-on-release, like every
+ * other drop); tearing away from the strip converts the drag into a zone move.
+ * Zone mode: zones light up, the target's tab strip stacks at its divider slot,
+ * Shift extends the highlight range, release drops into the ClosestCenter
+ * primary zone. Esc aborts either mode.
  *
  * `ghostLabel` opts into the pointer-following chip (`@/lib/drag-ghost`) — the
  * same "what am I holding" affordance sessions use. The in-strip dim only
@@ -517,9 +437,7 @@ export function startPaneDrag(
   e: ReactPointerEvent<HTMLElement>,
   onTap?: () => void,
   reorder?: ReorderContext,
-  double?: DoubleTapContext,
   ghostLabel?: string,
-  tearOff?: () => void,
   /** Multi-tab selection riding this drag (strip order, includes `paneId`).
    *  The whole block moves/reorders together; `paneId` stays the pressed tab
    *  (it fronts at the destination). */
@@ -585,10 +503,8 @@ export function startPaneDrag(
     Boolean(reorder) && rectContains(reorderStrip().rect, x, y, TEAR_OFF_SLACK_PX)
 
   startDragSession(e, {
-    double,
     ghost: ghostLabel ? { label: ghostLabel } : undefined,
     onTap,
-    tearOff,
 
     onEngage(x, y) {
       if (reorder && withinStrip(x, y)) {
@@ -613,6 +529,20 @@ export function startPaneDrag(
 
         // Tear-off: the tab leaves the strip and becomes a zone move.
         enterZoneMode()
+      }
+
+      // A strip is an exact target. Resolve it before the fuzzy zone engine:
+      // near a panel seam, proximity can otherwise pick the neighboring sidebar.
+      const hitStrip = !shift && strips.find(strip => rectContains(strip.rect, x, y))
+
+      if (hitStrip) {
+        return {
+          kind: 'group',
+          groupId: hitStrip.groupId,
+          groupIds: [hitStrip.groupId],
+          pos: 'center',
+          stack: slotBefore(hitStrip.slots, x, moving)
+        }
       }
 
       // The hint updates on highlight-set changes AND on sub-zone position
@@ -659,14 +589,19 @@ export function startPaneDrag(
       }
 
       if (mode === 'reorder' && reorder && hint?.stack !== undefined) {
-        // The caret's slot goes through AS THE ANCHOR TAB'S ID. It used to be
-        // converted here into an index over the strip's DOM tabs — a different
-        // index space from `group.panes` the moment the zone holds a pane the
-        // strip doesn't draw (a store-hidden tile, or a disabled plugin's pane,
-        // which stays in the tree by design). See `reorderPanesInGroup`.
-        reorderTreePanes(reorder.groupId, moving, hint.stack.before)
-        reorderCommitHaptic()
-        spendSelection()
+        // The caret reads off strip DOM; the tree may hold panes the strip never
+        // draws (hidden / disabled plugin). Map the slot to an index in the
+        // group's full pane list, not the strip's tab list.
+        const tree = $layoutTree.get()
+        const group = tree ? findGroup(tree, reorder.groupId) : null
+        const without = group?.panes.filter(p => !moving.includes(p)) ?? []
+        const toIndex = hint.stack.before ? without.indexOf(hint.stack.before) : without.length
+
+        if (toIndex >= 0) {
+          reorderTreePanes(reorder.groupId, moving, toIndex)
+          reorderCommitHaptic()
+          spendSelection()
+        }
       }
 
       if (mode === 'zone') {

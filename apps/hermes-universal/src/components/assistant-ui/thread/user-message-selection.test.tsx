@@ -50,7 +50,11 @@ vi.mock('@assistant-ui/react', () => {
     MessagePrimitive: { Root: passthrough },
     useAuiState: (selector: (state: unknown) => unknown) =>
       selector({
-        message: { id: 'm1', content: [{ type: 'text', text: 'fix the login redirect' }] },
+        message: {
+          id: 'm1',
+          content: [{ type: 'text', text: 'fix the login redirect' }],
+          parts: [{ type: 'text', text: 'fix the login redirect' }]
+        },
         thread: { isRunning: false, messages: [{ id: 'm1', role: 'user' }] }
       })
   }

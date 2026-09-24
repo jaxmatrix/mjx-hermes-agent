@@ -5,10 +5,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   hydratingKey,
   rekeySession,
@@ -17,6 +17,12 @@ import {
 import { __resetTranscriptCacheSync, awaitSessionPainted, SessionWakeError } from '@/store/transcript-cache-sync'
 import { __resetTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { beginTurn, settleTurn } from '@/store/turn-lifecycle'
+
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
 
 const row = (id: string, body: string): ChatMessage => ({ id, parts: [{ text: body, type: 'text' }], role: 'user' })
 
@@ -29,7 +35,7 @@ const flushSaves = async () => {
 beforeEach(() => {
   vi.useFakeTimers()
   localStorage.clear()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   __resetTranscriptTailCache()
   __resetTranscriptPaint()
   __resetTranscriptCacheSync()
@@ -41,7 +47,7 @@ afterEach(() => {
 
 describe('cache writes', () => {
   it('writes the tail when a turn settles, once, after the throttle', async () => {
-    ensureSessionSlice('runtime-1', { storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { storedSessionId: 'stored-1' })
     updateSession('runtime-1', state => ({ ...state, messages: [row('m1', 'answer')] }))
 
     beginTurn('runtime-1', { origin: 'local', prompt: 'q' })
@@ -60,7 +66,7 @@ describe('cache writes', () => {
   it('writes the tail when a hydrating key binds its runtime id', async () => {
     const key = hydratingKey('stored-1')
 
-    ensureSessionSlice(key, { busy: true, storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'stored-1' })
     rekeySession(key, 'runtime-1', {
       messages: [row('rest-1', 'history')],
       runtimeSessionId: 'runtime-1',
@@ -72,7 +78,7 @@ describe('cache writes', () => {
   })
 
   it('does not write for a draft taking its issued id — there is no history yet', async () => {
-    ensureSessionSlice('draft:1', {})
+    ensureSessionSlice({ draftKey: 'draft:1' }, {})
     rekeySession('draft:1', 'runtime-1', { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
 
     await flushSaves()
@@ -80,7 +86,7 @@ describe('cache writes', () => {
   })
 
   it('never writes an empty transcript', async () => {
-    ensureSessionSlice('runtime-1', { storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { storedSessionId: 'stored-1' })
     beginTurn('runtime-1', { origin: 'local', prompt: 'q' })
     settleTurn('runtime-1')
 
@@ -91,7 +97,7 @@ describe('cache writes', () => {
   // MJX-133: an auto-compaction rotates the stored id, and every tile, pane id
   // and persisted blob still names the id from before it.
   it('leaves a one-hop alias behind when the stored id rotates', async () => {
-    ensureSessionSlice('runtime-1', { storedSessionId: 'stored-old' })
+    ensureSessionSlice(localSite('runtime-1'), { storedSessionId: 'stored-old' })
     updateSession('runtime-1', state => ({ ...state, messages: [row('m1', 'before')] }))
     beginTurn('runtime-1', { origin: 'local', prompt: 'q' })
     settleTurn('runtime-1')
@@ -120,7 +126,10 @@ describe('awaitSessionPainted', () => {
   it('wakes on the same publish that creates the slice', async () => {
     const wake = awaitSessionPainted('stored-fresh')
 
-    ensureSessionSlice('runtime-fresh', { runtimeSessionId: 'runtime-fresh', storedSessionId: 'stored-fresh' })
+    ensureSessionSlice(localSite('runtime-fresh'), {
+      runtimeSessionId: 'runtime-fresh',
+      storedSessionId: 'stored-fresh'
+    })
 
     await expect(wake).resolves.toBeUndefined()
   })
@@ -128,7 +137,7 @@ describe('awaitSessionPainted', () => {
   it('completes on the runtime binding for an expected-empty session', async () => {
     const wake = awaitSessionPainted('stored-1')
 
-    ensureSessionSlice('runtime-1', { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
 
     await expect(wake).resolves.toBeUndefined()
   })
@@ -136,7 +145,7 @@ describe('awaitSessionPainted', () => {
   // The sequencing rule this seam exists to keep singular: a history-bearing
   // chat completes on TRANSCRIPT PAINT, not on the runtime being bound.
   it('waits for the transcript when history is expected', async () => {
-    ensureSessionSlice('runtime-1', { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
 
     let done = false
     const wake = awaitSessionPainted('stored-1', { expectHistory: true }).then(() => (done = true))
@@ -157,7 +166,7 @@ describe('awaitSessionPainted', () => {
 
     const key = hydratingKey('stored-1')
 
-    ensureSessionSlice(key, { busy: true, runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite(key), { busy: true, runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
 
     const wake = awaitSessionPainted('stored-1', { expectHistory: true })
 
@@ -180,7 +189,7 @@ describe('awaitSessionPainted', () => {
   })
 
   it('times out in the hydration phase when the transcript never arrives', async () => {
-    ensureSessionSlice('runtime-1', { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { runtimeSessionId: 'runtime-1', storedSessionId: 'stored-1' })
 
     const wake = awaitSessionPainted('stored-1', { expectHistory: true, timeoutMs: 1_000 }).catch(
       (e: unknown) => e as SessionWakeError

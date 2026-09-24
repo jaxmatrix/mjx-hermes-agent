@@ -2,7 +2,6 @@ import { useStore } from '@nanostores/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { openExternalLink } from '@/lib/external-link'
 import { $gateway } from '@/store/gateway'
 
 import { useBillingApi } from './api'
@@ -19,11 +18,6 @@ export interface StepUpMessage {
   kind: 'error' | 'success'
   text: string
   title: string
-}
-
-interface StepUpVerificationPayload {
-  user_code?: unknown
-  verification_url?: unknown
 }
 
 export function useStepUpFlow() {
@@ -65,7 +59,7 @@ export function useStepUpFlow() {
       return
     }
 
-    void openExternalLink(verification.url)
+    void window.hermesDesktop?.openExternal?.(verification.url)
   }, [verification?.url])
 
   const start = useCallback(async () => {
@@ -83,7 +77,7 @@ export function useStepUpFlow() {
     setPhase('waiting')
 
     offRef.current =
-      gateway?.on<StepUpVerificationPayload>('billing.step_up.verification', event => {
+      gateway?.on('billing.step_up.verification', event => {
         const payload = event.payload
         const url = typeof payload?.verification_url === 'string' ? payload.verification_url : null
 

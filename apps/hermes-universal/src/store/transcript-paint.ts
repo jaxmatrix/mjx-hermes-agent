@@ -7,7 +7,7 @@
  * it has more readers, and its reducer REPLACES the array on every delta, which
  * breaks identity and silently releases such a latch.
  *
- * So the guard is structural. The cached rows are not in `$sessionStates` at
+ * So the guard is structural. The cached rows are not in `$sessionKeyStates` at
  * all, and exactly one projection can see them
  * (`SessionView.$paintedMessages` → `app/chat/runtime.tsx`). Three universal
  * readers would each have consumed them as knowledge, and every one is a shipped
@@ -33,10 +33,10 @@
  * reconciles, journals, narrates, branches or submits reads `$messages`.
  */
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
-import { $sessionStates } from '@/store/session-state-types'
+import { $sessionKeyStates, scopedStoredKey } from '@/store/session-state-types'
 
 export interface PaintedTail {
   /** The slice key this paint belongs to — `hydrating:<storedId>` for a cold
@@ -44,7 +44,7 @@ export interface PaintedTail {
   key: string
   storedSessionId: string
   /** DISPLAY ONLY. Never reconciled, journaled, narrated, branched or submitted
-   *  from. Not in `$sessionStates` on purpose — see the module header. */
+   *  from. Not in `$sessionKeyStates` on purpose — see the module header. */
   messages: ChatMessage[]
   paintedAt: number
 }
@@ -68,6 +68,19 @@ export const $transcriptPaint = atom<Record<string, PaintedTail>>({})
  * session's transcript is already correct and richer than any cache, so painting
  * over it would be a flicker on top of the right answer.
  */
+/**
+ * The cache key a slice's tail is filed under (MJXHRM-591).
+ *
+ * The SCOPED stored key, not the bare id: two backends mint the same
+ * `uuid4().hex[:8]`, so one cache keyed by the id alone would paint another
+ * machine's conversation under a same-named session — the hazard the switch
+ * used to answer by wiping every tail, which cost every bound tab its cache
+ * along with it. Scoping the key closes the bleed AND keeps the tails; for the
+ * local connection's default profile it is the bare id, so a single-source
+ * install's entries are byte-identical to the ones already on disk.
+ */
+export const transcriptTailKey = scopedStoredKey
+
 export function paintCachedTail(key: string, storedSessionId: null | string): boolean {
   if (!key || !storedSessionId) {
     return false
@@ -77,11 +90,11 @@ export function paintCachedTail(key: string, storedSessionId: null | string): bo
     return false
   }
 
-  if ($sessionStates.get()[key]?.messages.length) {
+  if ($sessionKeyStates.get()[key]?.messages.length) {
     return false
   }
 
-  const messages = readTranscriptTail(storedSessionId)
+  const messages = readTranscriptTail(transcriptTailKey(key, storedSessionId))
 
   if (!messages?.length) {
     return false

@@ -1,4 +1,4 @@
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 
 import { SessionActionsMenu, SessionContextMenu } from '@/app/chat/sidebar/session-actions-menu'
 import { appViewForPath } from '@/app/routes'
@@ -9,7 +9,8 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $liveSessionTitle, $sessionId } from '@/store/chat'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
-import { $activeStoredSessionId, archiveSessionLocal, deleteSessionLocal, sessionPinId } from '@/store/session'
+import { sessionPinId } from '@/store/session'
+import { $activeStoredSessionId, archiveSessionLocal, deleteSessionLocal } from '@/store/session-lifecycle'
 import { useSessionRow } from '@/store/session-lookup'
 import { $sessionOwnerLabels, withSessionOwner } from '@/store/session-owner-label'
 

@@ -1,34 +1,45 @@
-import { useEffect, useMemo, useState } from 'react'
+import { createCronTriggerController, type CronTriggerController } from '@hermes/shared'
+import { useStore } from '@nanostores/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { jobState, jobTitle, STATE_DOT } from '@/app/cron/job-state'
+import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
 import { ActionsContextMenu, ActionsMenu, type MenuKit, renderActionItem } from '@/components/ui/actions-menu'
-import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
+import { GlyphSpinner } from '@/components/ui/glyph-spinner'
+import { SidebarGroup, SidebarGroupContent } from '@/components/ui/sidebar'
 import { Tip } from '@/components/ui/tooltip'
-import { deleteCronJob, getCronJobRuns, pauseCronJob, resumeCronJob } from '@/hermes'
+import { deleteCronJob, getCronJobRuns, pauseCronJob, resumeCronJob, type SessionInfo } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { fmtDayTime, relativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/store/atom'
 import { confirm } from '@/store/confirm'
 import { updateCronJobs } from '@/store/cron'
-import { $changeEventsAvailable, $cronChangeTick, livePollIntervalMs } from '@/store/live-sync'
+import { $changeEventsAvailable, $cronChangeTick } from '@/store/live-sync'
 import { notify, notifyError } from '@/store/notifications'
-import { $activeStoredSessionId } from '@/store/session'
-import type { CronJob, SessionInfo } from '@/types/hermes'
+import { $selectedStoredSessionId } from '@/store/session'
+import type { CronJob } from '@/types/hermes'
 
+import { jobState, jobTitle, nextRunOverdueMs, STATE_DOT } from '../../cron/job-state'
 import { SidebarPanelLabel } from '../../shell/sidebar-label'
 
+import { SidebarRowBody, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
 import { SidebarLoadMoreRow } from './load-more-row'
 
-// Ported/adapted from desktop `app/chat/sidebar/cron-jobs-section.tsx`.
 const INACTIVE_STATES = new Set(['completed', 'disabled', 'error', 'paused'])
+
+// Recent runs shown in the inline quick-peek — enough to glance at history
+// without turning the sidebar into the full Cron page.
 const PEEK_RUN_LIMIT = 5
-// Runs are written by the background scheduler tick. `cron.changed` reloads the
-// open peek immediately on an event-capable backend, so the poll drops to a
-// backstop there; an older gateway keeps the legacy cadence.
+
+// Runs are written by the background scheduler tick. cron.changed reloads the
+// open peek immediately on event-capable backends (poll drops to a backstop);
+// older backends keep the legacy cadence.
 const PEEK_POLL_INTERVAL_MS = 8000
 const PEEK_BACKSTOP_INTERVAL_MS = 60_000
+
+// Keep the section compact: show a few jobs up front, reveal more in larger
+// steps on demand (mirrors the messaging sections in the sidebar).
 const INITIAL_VISIBLE_JOBS = 3
 const LOAD_MORE_STEP = 10
 
@@ -42,42 +53,29 @@ function nextRunMs(job: CronJob): null | number {
   return Number.isNaN(ms) ? null : ms
 }
 
-// Compact future/past countdown, e.g. "in 5m" / "3h ago".
-function relativeTime(target: number, now: number): string {
-  const diff = target - now
-  const s = Math.round(Math.abs(diff) / 1000)
-
-  const unit =
-    s < 60
-      ? `${s}s`
-      : s < 3600
-        ? `${Math.floor(s / 60)}m`
-        : s < 86_400
-          ? `${Math.floor(s / 3600)}h`
-          : `${Math.floor(s / 86_400)}d`
-
-  return diff >= 0 ? `in ${unit}` : `${unit} ago`
-}
-
+// Runs all belong to the same job, so the run name just repeats the job name —
+// the timestamp is what tells them apart. Compact (no year, no seconds) for the
+// narrow sidebar.
 function formatRunTime(seconds?: null | number): string {
   if (!seconds) {
     return '—'
   }
 
-  const date = new Date(seconds < 1e12 ? seconds * 1000 : seconds)
+  const date = new Date(seconds * 1000)
 
-  return Number.isNaN(date.valueOf())
-    ? '—'
-    : date.toLocaleString(undefined, { day: 'numeric', hour: 'numeric', minute: '2-digit', month: 'short' })
+  return Number.isNaN(date.valueOf()) ? '—' : fmtDayTime.format(date)
 }
 
 interface SidebarCronJobsSectionProps {
   jobs: CronJob[]
   label: string
   max?: number
+  // Open a run session's chat (1 click to output).
   onOpenRun: (sessionId: string) => void
+  // Open the full Cron page focused on this job (manage / full history).
   onManageJob: (jobId: string) => void
-  onTriggerJob: (jobId: string, profile?: null | string) => void
+  // Fire the job now.
+  onTriggerJob: (jobId: string) => Promise<void>
   onToggle: () => void
   open: boolean
 }
@@ -93,19 +91,66 @@ export function SidebarCronJobsSection({
   open
 }: SidebarCronJobsSectionProps) {
   const [nowMs, setNowMs] = useState(() => Date.now())
+  // Single-open inline peek so the section stays scannable.
   const [peekJobId, setPeekJobId] = useState<null | string>(null)
+  // Rows revealed so far; starts compact, grows in steps via "load more".
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_JOBS)
+  const [triggeringJobIds, setTriggeringJobIds] = useState<ReadonlySet<string>>(() => new Set())
+  const triggerControllerRef = useRef<CronTriggerController | null>(null)
 
+   
   useEffect(() => {
-    if (!open) {
+    const controller = createCronTriggerController((jobId, running) => {
+      if (triggerControllerRef.current !== controller) {
+        return
+      }
+
+      setTriggeringJobIds(current => {
+        const next = new Set(current)
+
+        if (running) {
+          next.add(jobId)
+        } else {
+          next.delete(jobId)
+        }
+
+        return next
+      })
+    })
+
+    triggerControllerRef.current = controller
+
+    return () => {
+      triggerControllerRef.current = null
+    }
+  }, [])
+
+  const triggerJob = (jobId: string) => {
+    const controller = triggerControllerRef.current
+
+    if (!controller) {
+      return
+    }
+
+    void controller.run(jobId, () => onTriggerJob(jobId)).catch(() => undefined)
+  }
+
+  const visible = usePaneVisible()
+
+  // One clock for the whole section (rows are pure) so the countdowns tick
+  // without re-rendering the rest of the sidebar. Only runs while expanded and visible.
+  useEffect(() => {
+    if (!open || !visible) {
       return
     }
 
     const id = window.setInterval(() => setNowMs(Date.now()), 1000)
 
     return () => window.clearInterval(id)
-  }, [open])
+  }, [open, visible])
 
+  // Upcoming first (soonest next run), jobs with no next run sink to the bottom,
+  // then alphabetical for stability.
   const sorted = useMemo(() => {
     return [...jobs].sort((a, b) => {
       const an = nextRunMs(a)
@@ -130,18 +175,16 @@ export function SidebarCronJobsSection({
   const cap = Math.min(visibleCount, max)
   const shown = sorted.slice(0, cap)
   const hiddenCount = Math.min(sorted.length, max) - shown.length
-  const countLabel = jobs.length > max ? `${max}+` : String(jobs.length)
 
   return (
-    <div className="flex shrink-0 flex-col p-0 pb-1">
+    <SidebarGroup className="shrink-0 p-0 pb-1">
       <div className="group/section flex shrink-0 items-center justify-between pb-1 pt-1.5">
         <button
-          className="group/section-label flex w-fit items-center gap-1 bg-transparent text-start leading-none"
+          className="group/section-label flex w-fit min-w-0 items-center gap-1 bg-transparent text-start leading-none"
           onClick={onToggle}
           type="button"
         >
           <SidebarPanelLabel>{label}</SidebarPanelLabel>
-          <span className="text-[0.6875rem] font-medium text-(--ui-text-quaternary)">{countLabel}</span>
           <DisclosureCaret
             className="text-(--ui-text-tertiary) opacity-0 transition group-hover/section-label:opacity-100"
             open={open}
@@ -149,9 +192,10 @@ export function SidebarCronJobsSection({
         </button>
       </div>
       {open && (
-        <div className="flex max-h-72 flex-col gap-px overflow-x-hidden overflow-y-auto overscroll-contain pb-1.5 pe-2.5">
+        <SidebarGroupContent className="scrollbar-fade flex max-h-72 flex-col gap-px overflow-x-hidden overflow-y-auto overscroll-contain pb-1.75 compact:max-h-none compact:overflow-visible">
           {shown.map(job => (
             <CronJobSidebarRow
+              busy={triggeringJobIds.has(job.id)}
               expanded={peekJobId === job.id}
               job={job}
               key={job.id}
@@ -159,7 +203,7 @@ export function SidebarCronJobsSection({
               onManage={() => onManageJob(job.id)}
               onOpenRun={onOpenRun}
               onTogglePeek={() => setPeekJobId(prev => (prev === job.id ? null : job.id))}
-              onTrigger={() => onTriggerJob(job.id, job.profile)}
+              onTrigger={() => triggerJob(job.id)}
             />
           ))}
           {hiddenCount > 0 && (
@@ -168,13 +212,14 @@ export function SidebarCronJobsSection({
               step={Math.min(LOAD_MORE_STEP, hiddenCount)}
             />
           )}
-        </div>
+        </SidebarGroupContent>
       )}
-    </div>
+    </SidebarGroup>
   )
 }
 
 function CronJobSidebarRow({
+  busy,
   expanded,
   job,
   nowMs,
@@ -183,6 +228,7 @@ function CronJobSidebarRow({
   onTogglePeek,
   onTrigger
 }: {
+  busy: boolean
   expanded: boolean
   job: CronJob
   nowMs: number
@@ -198,7 +244,13 @@ function CronJobSidebarRow({
   const label = jobTitle(job)
   const isPaused = state === 'paused'
 
-  const meta = INACTIVE_STATES.has(state) ? (c.states[state] ?? state) : next !== null ? relativeTime(next, nowMs) : '—'
+  const overdue = nextRunOverdueMs(job, nowMs) !== null
+
+  const meta = INACTIVE_STATES.has(state)
+    ? (c.states[state] ?? state)
+    : next !== null
+      ? `${overdue ? `${c.overdueSince.replace(/:$/, '')} ` : ''}${relativeTime(next, nowMs)}`
+      : '—'
 
   // Pause/resume and delete aren't threaded through the sidebar's prop chain, so
   // drive them against the shared $cronJobs atom directly (same path the cron
@@ -206,7 +258,7 @@ function CronJobSidebarRow({
   // row updates in place.
   const togglePause = async () => {
     try {
-      const updated = isPaused ? await resumeCronJob(job.id, job.profile) : await pauseCronJob(job.id, job.profile)
+      const updated = isPaused ? await resumeCronJob(job.id) : await pauseCronJob(job.id)
       updateCronJobs(rows => rows.map(row => (row.id === job.id ? updated : row)))
       notify({ kind: 'success', title: isPaused ? c.resumed : c.paused, message: label })
     } catch (err) {
@@ -227,7 +279,7 @@ function CronJobSidebarRow({
     }
 
     try {
-      await deleteCronJob(job.id, job.profile)
+      await deleteCronJob(job.id)
       updateCronJobs(rows => rows.filter(row => row.id !== job.id))
       notify({ kind: 'success', title: c.deleted, message: label })
     } catch (err) {
@@ -259,17 +311,71 @@ function CronJobSidebarRow({
 
   return (
     <div>
+      {/* The shared row chrome, not a copy of it: a cron job and a session sit
+          in the same list, so they line up only if one place owns the geometry. */}
       <ActionsContextMenu ariaLabel={c.actionsTitle} contentClassName="w-44" items={items}>
-        <div className="group/cron relative grid min-h-[1.625rem] grid-cols-[minmax(0,1fr)_auto] items-center rounded-md hover:bg-(--chrome-action-hover)">
+        <SidebarRowShell
+          actions={
+            /* Trailing cluster: countdown by default; touch gets a kebab (the
+               only pause/delete door without a right-click); fine pointers get
+               hover quick-actions instead. */
+            <div className="flex items-center gap-0.5">
+              <span className="text-[0.6875rem] text-(--ui-text-tertiary) tabular-nums group-hover/cron:hidden">
+                {meta}
+              </span>
+              <div className="flex items-center gap-0.5 fine:hidden">
+                <ActionsMenu ariaLabel={c.actionsTitle} contentClassName="w-44" items={items}>
+                  <button
+                    aria-label={c.actionsTitle}
+                    className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
+                    onClick={event => event.stopPropagation()}
+                    type="button"
+                  >
+                    <Codicon name="kebab-vertical" size="0.75rem" />
+                  </button>
+                </ActionsMenu>
+              </div>
+              <div className="hidden items-center gap-0.5 fine:group-hover/cron:flex">
+                <Tip label={c.triggerNow}>
+                  <button
+                    aria-label={c.triggerNow}
+                    className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground disabled:cursor-wait disabled:opacity-60"
+                    disabled={busy}
+                    onClick={onTrigger}
+                    type="button"
+                  >
+                    {busy ? (
+                      <GlyphSpinner ariaLabel={c.triggerNow} className="text-[0.75rem]" />
+                    ) : (
+                      <Codicon name="zap" size="0.75rem" />
+                    )}
+                  </button>
+                </Tip>
+                <Tip label={c.manage}>
+                  <button
+                    aria-label={c.manage}
+                    className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
+                    onClick={onManage}
+                    type="button"
+                  >
+                    <Codicon name="watch" size="0.75rem" />
+                  </button>
+                </Tip>
+              </div>
+            </div>
+          }
+          className="group/cron relative hover:bg-(--chrome-action-hover)"
+        >
+          {/* The caret sits next to the label (matching the other sidebar
+              disclosures) and the whole label area toggles the run peek. */}
           <Tip label={label}>
-            <button
+            <SidebarRowBody
               aria-expanded={expanded}
               aria-label={expanded ? c.hideRuns : c.showRuns}
-              className="flex min-w-0 items-center gap-1.5 bg-transparent py-0.5 ps-2 pe-1 text-start"
+              className="focus-visible:bg-(--chrome-action-hover) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               onClick={onTogglePeek}
-              type="button"
             >
-              <span className="grid w-3.5 shrink-0 place-items-center">
+              <SidebarRowLead>
                 <span
                   aria-hidden="true"
                   className={cn(
@@ -278,10 +384,8 @@ function CronJobSidebarRow({
                     state === 'running' && 'size-1.5 animate-pulse'
                   )}
                 />
-              </span>
-              <span className="min-w-0 truncate text-[0.8125rem] text-(--ui-text-secondary) group-hover/cron:text-foreground">
-                {label}
-              </span>
+              </SidebarRowLead>
+              <SidebarRowLabel className="group-hover/cron:text-foreground">{label}</SidebarRowLabel>
               <DisclosureCaret
                 className={cn(
                   'shrink-0 text-(--ui-text-tertiary) transition',
@@ -289,87 +393,29 @@ function CronJobSidebarRow({
                 )}
                 open={expanded}
               />
-            </button>
+            </SidebarRowBody>
           </Tip>
-          <div className="group/cron-actions flex items-center gap-0.5 justify-self-end pe-1">
-            {/* Hover swaps the next-run time out for the actions; on touch there
-                is no hover, so the buttons stay put. Inverted rather than
-                layered: the touch layout is the base and the swap is scoped to
-                `fine:`, so the two can never both claim the slot. The label
-                beside them is `min-w-0 truncate`, so it yields the width.
-                Right-click reaches the same actions, and so does the kebab —
-                which is the ONLY route to pause/resume/delete for a finger,
-                since a touch device has no right-click. */}
-            {/* `group-has-[[data-state=open]]` keeps the cluster up while the
-                kebab's menu is open — otherwise moving the pointer onto the
-                portalled menu unhovers the row and pulls the trigger out from
-                under it. */}
-            <span className="text-[0.6875rem] text-(--ui-text-tertiary) tabular-nums fine:group-hover/cron:hidden fine:group-has-[[data-state=open]]/cron-actions:hidden">
-              {meta}
-            </span>
-            <div className="flex items-center gap-0.5 fine:hidden fine:group-hover/cron:flex fine:group-has-[[data-state=open]]/cron-actions:flex">
-              <Tip label={c.triggerNow}>
-                <button
-                  aria-label={c.triggerNow}
-                  className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
-                  onClick={onTrigger}
-                  type="button"
-                >
-                  <Codicon name="zap" size="0.75rem" />
-                </button>
-              </Tip>
-              <Tip label={c.manage}>
-                <button
-                  aria-label={c.manage}
-                  className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
-                  onClick={onManage}
-                  type="button"
-                >
-                  <Codicon name="watch" size="0.75rem" />
-                </button>
-              </Tip>
-              <ActionsMenu ariaLabel={c.actionsTitle} contentClassName="w-44" items={items} sideOffset={4}>
-                <Button
-                  aria-label={c.actionsTitle}
-                  // No tip: this is a DropdownMenu trigger, and a tooltip on a
-                  // menu trigger fights the open menu. `aria-label` names it.
-                  className="size-5 rounded-sm bg-transparent text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground [&_svg]:size-3!"
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Codicon name="kebab-vertical" size="0.75rem" />
-                </Button>
-              </ActionsMenu>
-            </div>
-          </div>
-        </div>
+        </SidebarRowShell>
       </ActionsContextMenu>
-      {expanded && <CronJobSidebarRuns jobId={job.id} onOpenRun={onOpenRun} profile={job.profile} />}
+      {expanded && <CronJobSidebarRuns jobId={job.id} onOpenRun={onOpenRun} />}
     </div>
   )
 }
 
-function CronJobSidebarRuns({
-  jobId,
-  onOpenRun,
-  profile
-}: {
-  jobId: string
-  onOpenRun: (sessionId: string) => void
-  profile?: null | string
-}) {
+function CronJobSidebarRuns({ jobId, onOpenRun }: { jobId: string; onOpenRun: (sessionId: string) => void }) {
   const { t } = useI18n()
   const c = t.cron
-  const selectedSessionId = useStore($activeStoredSessionId)
+  const selectedSessionId = useStore($selectedStoredSessionId)
   const changeEventsAvailable = useStore($changeEventsAvailable)
   const cronChangeTick = useStore($cronChangeTick)
   const [runs, setRuns] = useState<null | SessionInfo[]>(null)
+  const visible = usePaneVisible()
 
   useEffect(() => {
     let cancelled = false
 
     const load = () =>
-      getCronJobRuns(jobId, PEEK_RUN_LIMIT, profile)
+      getCronJobRuns(jobId, PEEK_RUN_LIMIT)
         .then(result => {
           if (!cancelled) {
             setRuns(result)
@@ -381,6 +427,15 @@ function CronJobSidebarRuns({
           }
         })
 
+    // Hidden pane: skip the peek entirely — no initial load, no interval.
+    // `visible` is in the dep array, so becoming visible re-runs this effect
+    // and starts the load + timer fresh (same shape as the section clock).
+    if (!visible) {
+      return () => {
+        cancelled = true
+      }
+    }
+
     void load()
 
     const intervalId = window.setInterval(
@@ -389,42 +444,42 @@ function CronJobSidebarRuns({
           void load()
         }
       },
-      livePollIntervalMs(PEEK_POLL_INTERVAL_MS, PEEK_BACKSTOP_INTERVAL_MS)
+      changeEventsAvailable ? PEEK_BACKSTOP_INTERVAL_MS : PEEK_POLL_INTERVAL_MS
     )
 
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
-    // cronChangeTick in the deps IS the refresh: a run the scheduler just wrote
-    // moves cron/jobs.json, the watcher broadcasts, and this effect re-runs and
-    // reloads — instead of the peek sitting stale for up to a poll window.
-  }, [changeEventsAvailable, cronChangeTick, jobId, profile])
+    // cronChangeTick: a fired run reloads the peek immediately.
+  }, [changeEventsAvailable, cronChangeTick, jobId, visible])
 
   return (
     <div className="mb-1 ms-[1.375rem] flex flex-col gap-px">
       {runs === null ? (
         <div className="flex items-center gap-1.5 py-1 ps-1 text-[0.6875rem] text-(--ui-text-tertiary)">
-          <Codicon className="animate-spin" name="loading" size="0.75rem" />
+          <GlyphSpinner ariaLabel={c.loading} className="text-[0.75rem]" />
         </div>
       ) : runs.length === 0 ? (
         <div className="py-1 ps-1 text-[0.6875rem] text-(--ui-text-tertiary)">{c.noRuns}</div>
       ) : (
-        runs.map(run => (
-          <button
-            className={cn(
-              'truncate rounded-md px-1.5 py-0.5 text-start text-[0.6875rem] tabular-nums',
-              run.id === selectedSessionId
-                ? 'bg-(--ui-row-active-background) text-foreground'
-                : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'
-            )}
-            key={run.id}
-            onClick={() => onOpenRun(run.id)}
-            type="button"
-          >
-            {formatRunTime(run.last_active || run.started_at)}
-          </button>
-        ))
+        <>
+          {runs.map(run => (
+            <button
+              className={cn(
+                'truncate rounded-md px-1.5 py-0.5 text-start text-[0.6875rem] tabular-nums focus-visible:bg-(--chrome-action-hover) focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                run.id === selectedSessionId
+                  ? 'bg-(--ui-row-active-background) text-foreground'
+                  : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'
+              )}
+              key={run.id}
+              onClick={() => onOpenRun(run.id)}
+              type="button"
+            >
+              {formatRunTime(run.last_active || run.started_at)}
+            </button>
+          ))}
+        </>
       )}
     </div>
   )

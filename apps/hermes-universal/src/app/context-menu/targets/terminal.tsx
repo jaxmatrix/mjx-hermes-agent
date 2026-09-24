@@ -2,7 +2,8 @@ import type { ContextMenuItemContext, ContextMenuSection } from '@/app/context-m
 import { registerContextTarget } from '@/app/context-menu/registry'
 import type { TerminalMenuHandle } from '@/app/right-pane/terminal/context-menu'
 import { terminalMenuHandleFor } from '@/app/right-pane/terminal/context-menu'
-import { readClipboardText, writeClipboardText } from '@/lib/clipboard'
+import { writeClipboardText } from '@/components/ui/copy-button'
+import { readClipboardText } from '@/lib/clipboard-tauri'
 import { formatCombo } from '@/lib/keybinds/combo'
 
 // The terminal target, at `order` 10 — BEFORE `dom`, and that ordering is

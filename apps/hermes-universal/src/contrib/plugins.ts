@@ -2,30 +2,30 @@
  * Plugin discovery — both delivery modes:
  *
  *  - BUNDLED (samples): every `<name>/plugin.{ts,tsx}` under the shared
- *    sample-plugin source (`packages/hermes-sample-plugins/`) default-exporting
- *    a `HermesPlugin` registers automatically (vite glob — drop a folder in).
- *    That directory is the ONE canonical copy: desktop runs the same glob
- *    against the same files, so the samples can't drift between the two apps.
- *  - BUNDLED (in-tree): every `src/plugins/<name>/plugin.{js,ts,tsx}` — this
- *    app's OWN plugins, which are not samples and must not be put in the shared
- *    directory (rule 30). Today the accent picker; MJXHRM-445's Bot Mode lands
- *    here too. `.js` entries are SDK-consumer plugins adopted from standalone
- *    repos, kept in plain-ESM form so the same file still loads through the
- *    runtime disk door.
- *  - RUNTIME: the disk doors (`<hermes home>/desktop-plugins/<name>/plugin.js`
- *    and the unified agent-package half `<hermes home>/plugins/<name>/desktop/
- *    plugin.js`, locally or on the connected gateway) — the agent's/user's
- *    doors, watched + hot-reloaded by the runtime loader.
+ *    sample-plugin source (`packages/hermes-sample-plugins/`) default-exporting a
+ *    `HermesPlugin` registers automatically (vite glob — drop a folder in).
+ *    That directory is the ONE canonical copy: hermes-universal runs the same
+ *    glob against the same files, so the samples can't drift between the apps.
+ *  - BUNDLED (in-tree): every `src/plugins/<name>/plugin.{js,ts,tsx}` — today
+ *    `hermes-bots` (Bot Mode), which ships in-tree and is ON by default. `.js`
+ *    entries are SDK-consumer plugins adopted from standalone repos — they keep
+ *    the plain-ESM plugin.js form so the file stays loadable by older desktops'
+ *    runtime door too.
+ *  - RUNTIME: the on-disk doors (`<hermes home>/desktop-plugins/<name>/plugin.js`
+ *    and the unified-package half `<hermes home>/plugins/<name>/desktop/plugin.js`)
+ *    — the agent's/user's doors, watched + hot-reloaded by the runtime loader.
  */
 
+import { trackGatewayEventDisposers } from './events'
 import { createPluginContext, type HermesPlugin } from './plugin'
 import { pluginActive, publishPlugin } from './plugins-store'
 import { watchRuntimePlugins } from './runtime-loader'
 
 const modules = {
-  ...import.meta.glob<{ default: HermesPlugin }>('../../../../packages/hermes-sample-plugins/*/plugin.{ts,tsx}', {
-    eager: true
-  }),
+  ...import.meta.glob<{ default: HermesPlugin }>(
+    '../../../../packages/hermes-sample-plugins/*/plugin.{ts,tsx}',
+    { eager: true }
+  ),
   ...import.meta.glob<{ default: HermesPlugin }>('../plugins/*/plugin.{js,ts,tsx}', { eager: true })
 }
 
@@ -68,7 +68,10 @@ export function discoverBundledPlugins(): void {
       disposers = []
 
       try {
-        plugin.register(createPluginContext(plugin.id, dispose => disposers.push(dispose)))
+        trackGatewayEventDisposers(
+          dispose => disposers.push(dispose),
+          () => plugin.register(createPluginContext(plugin.id, dispose => disposers.push(dispose)))
+        )
         publishPlugin({ ...record, status: 'loaded' })
       } catch (error) {
         console.error(`[plugins] ${plugin.id} failed to register`, error)
@@ -88,7 +91,7 @@ export function discoverBundledPlugins(): void {
     }
   }
 
-  // The SELF-MAINTAINING disk door (polled hot reloads, folder reconciliation) —
-  // the runtime loader pipeline's real, shipping consumer.
+  // The SELF-MAINTAINING disk door (fs-watched hot reloads, slow folder
+  // reconciliation) — the runtime loader pipeline's real, shipping consumer.
   watchRuntimePlugins()
 }

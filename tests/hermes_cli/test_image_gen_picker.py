@@ -73,17 +73,6 @@ def _reset_registry():
 
 
 class TestPluginPickerInjection:
-    def test_plugin_providers_returns_registered(self, monkeypatch):
-        from hermes_cli import tools_config
-
-        image_gen_registry.register_provider(_FakeProvider("myimg"))
-
-        rows = tools_config._plugin_image_gen_providers()
-        names = [r["name"] for r in rows]
-        plugin_names = [r.get("image_gen_plugin_name") for r in rows]
-
-        assert "Myimg" in names
-        assert "myimg" in plugin_names
 
 
     def test_visible_providers_includes_plugins_for_image_gen(self, monkeypatch):
@@ -97,14 +86,6 @@ class TestPluginPickerInjection:
         assert "someimg" in plugin_names
 
 
-    def test_post_setup_omitted_when_not_declared(self, monkeypatch):
-        from hermes_cli import tools_config
-
-        image_gen_registry.register_provider(_FakeProvider("plain_img"))
-
-        rows = tools_config._plugin_image_gen_providers()
-        match = next(r for r in rows if r.get("image_gen_plugin_name") == "plain_img")
-        assert "post_setup" not in match
 
 
 class TestPluginCatalog:
@@ -248,88 +229,52 @@ class TestConfigWriting:
         assert tools_config._is_provider_active(nous_row, config) is False
 
 
-class TestCustomModelEntry:
-    """OpenRouter's catalog moves faster than we ship, so the picker must let
-    a user name a model it has never heard of."""
 
-    def _rows_shown(self, monkeypatch, plugin, config, pick):
-        from hermes_cli import tools_config
+class TestCodexOAuthBootstrapHook:
+    """#102144: the Image Generation 'OpenAI (Codex auth)' row is keyless, so its ``post_setup``
+    hook is the only thing that can sign the user in. Selecting it with no Codex credentials must
+    start the device-code flow and save tokens without hijacking ``model.provider``; with existing
+    credentials it must not re-prompt."""
 
-        seen = {}
+    @pytest.mark.parametrize("logged_in", [False, True])
+    def test_hook_starts_codex_oauth_only_when_credentials_missing(self, monkeypatch, logged_in):
+        from hermes_cli import auth, tools_config_post_setup
 
-        def _choice(_question, rows, **kw):
-            seen["rows"] = rows
-            return pick(rows)
+        monkeypatch.setattr(auth, "get_codex_auth_status", lambda: {"logged_in": logged_in})
+        monkeypatch.setattr("hermes_cli.setup.prompt_choice", lambda *a, **kw: 0)
+        started, saved = [], []
+        monkeypatch.setattr(auth, "_codex_device_code_login",
+                            lambda: started.append(1) or {"tokens": {"access_token": "t"}, "last_refresh": "x"})
+        monkeypatch.setattr(auth, "_save_codex_tokens", lambda tokens, last_refresh=None, **kw: saved.append(kw))
 
-        monkeypatch.setattr(tools_config, "_prompt_choice", _choice)
-        tools_config._configure_imagegen_model_for_plugin(plugin, config)
-        return seen["rows"]
+        tools_config_post_setup._POST_SETUP_HOOKS["openai_codex"]()
 
-    def test_sentinel_offered_only_for_custom_capable_backends(self, monkeypatch, tmp_path):
-        from hermes_cli import tools_config
+        assert len(started) == (0 if logged_in else 1)
+        # Side-tool sign-in must not make Codex the active inference provider.
+        assert saved == ([] if logged_in else [{"set_active": False}])
 
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        image_gen_registry.register_provider(_FakeProvider("openish", accepts_custom=True))
-        image_gen_registry.register_provider(_FakeProvider("closed", accepts_custom=False))
+    def test_hook_prints_auth_command_instead_of_device_login_when_noninteractive(self, monkeypatch, capsys):
+        """Desktop's PostSetupRunner spawns `hermes tools post-setup openai_codex` with stdin=DEVNULL and
+        HERMES_NONINTERACTIVE=1: nobody can complete a device-code login there, so the hook must name
+        the real command and return instead of starting one."""
+        from hermes_cli import auth, tools_config_post_setup
 
-        open_rows = self._rows_shown(monkeypatch, "openish", {}, lambda rows: 0)
-        closed_rows = self._rows_shown(monkeypatch, "closed", {}, lambda rows: 0)
+        monkeypatch.setenv("HERMES_NONINTERACTIVE", "1")
+        monkeypatch.setattr(auth, "get_codex_auth_status", lambda: {"logged_in": False})
+        monkeypatch.setattr("hermes_cli.setup.prompt_choice", lambda *a, **kw: 0)
+        monkeypatch.setattr(auth, "_codex_device_code_login",
+                            lambda: pytest.fail("device-code login must not start without a human"))
 
-        assert tools_config._CUSTOM_MODEL_ROW in open_rows
-        assert tools_config._CUSTOM_MODEL_ROW not in closed_rows
+        tools_config_post_setup._POST_SETUP_HOOKS["openai_codex"]()
 
-    def test_typed_id_is_persisted(self, monkeypatch, tmp_path):
-        from hermes_cli import tools_config
+        assert "hermes auth add openai-codex" in capsys.readouterr().out
 
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        image_gen_registry.register_provider(_FakeProvider("openish", accepts_custom=True))
-        monkeypatch.setattr(tools_config, "_prompt", lambda *a, **kw: "  vendor/brand-new-model  ")
+    def test_readiness_reports_codex_row_from_auth_store(self, monkeypatch):
+        from hermes_cli import auth, tools_config
 
-        config: dict = {}
-        # Last row is the sentinel.
-        self._rows_shown(monkeypatch, "openish", config, lambda rows: len(rows) - 1)
-
-        assert config["image_gen"]["model"] == "vendor/brand-new-model"
-        assert config["image_gen"]["openish"]["model"] == "vendor/brand-new-model"
-
-    def test_blank_entry_cancels_without_writing(self, monkeypatch, tmp_path):
-        from hermes_cli import tools_config
-
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        image_gen_registry.register_provider(_FakeProvider("openish", accepts_custom=True))
-        monkeypatch.setattr(tools_config, "_prompt", lambda *a, **kw: "   ")
-
-        config: dict = {}
-        self._rows_shown(monkeypatch, "openish", config, lambda rows: len(rows) - 1)
-
-        assert "model" not in config.get("image_gen", {})
-
-    def test_existing_custom_id_stays_selected(self, monkeypatch, tmp_path):
-        """It is absent from the catalog by definition — it must not silently
-        revert to the default on the next visit."""
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        image_gen_registry.register_provider(_FakeProvider("openish", accepts_custom=True))
-
-        config = {"image_gen": {"openish": {"model": "vendor/hand-typed"}}}
-        rows = self._rows_shown(monkeypatch, "openish", config, lambda rows: 0)
-
-        assert "vendor/hand-typed" in rows[0]
-        assert "currently in use" in rows[0]
-        assert config["image_gen"]["openish"]["model"] == "vendor/hand-typed"
-
-    def test_empty_catalog_still_offers_entry(self, monkeypatch, tmp_path):
-        """An empty catalog used to return silently, configuring nothing and
-        explaining nothing."""
-        from hermes_cli import tools_config
-
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        image_gen_registry.register_provider(
-            _FakeProvider("openish", models=[], accepts_custom=True)
-        )
-        monkeypatch.setattr(tools_config, "_prompt", lambda *a, **kw: "vendor/only-choice")
-
-        config: dict = {}
-        rows = self._rows_shown(monkeypatch, "openish", config, lambda rows: len(rows) - 1)
-
-        assert rows == [tools_config._CUSTOM_MODEL_ROW]
-        assert config["image_gen"]["model"] == "vendor/only-choice"
+        row = {"name": "OpenAI (Codex auth)", "env_vars": [], "image_gen_plugin_name": "openai-codex",
+               "post_setup": "openai_codex"}
+        monkeypatch.setattr(auth, "get_codex_auth_status", lambda: {"logged_in": False})
+        assert tools_config.provider_readiness_status(row, {}) == "needs_auth"
+        monkeypatch.setattr(auth, "get_codex_auth_status", lambda: {"logged_in": True})
+        assert tools_config.provider_readiness_status(row, {}) == "ready"

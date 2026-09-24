@@ -1,10 +1,11 @@
-import { queryClient } from '@/lib/query-client'
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
-// Ported from desktop `lib/slash-completion-cache.ts`.
-//
+import { queryClient } from '@/lib/query-client'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+
 // Root for every cached `/` completion response — the bare-slash catalog and
-// each typed query.
+// each typed query. Not in PROFILE_INDEPENDENT_QUERY_ROOTS, so a profile or
+// gateway switch drops it with the rest of the profile-scoped cache.
 const SLASH_COMPLETIONS_KEY = 'slash-completions'
 
 // The command catalog and its completions are a scan of the command registry
@@ -38,9 +39,9 @@ export function hasCachedSlashCompletion(key: string): boolean {
 
 /**
  * Read a cached completion response without fetching. For data that improves a
- * response but must not cost a round trip to get — the catalog's per-skill usage
- * map, which refines the ordering of a typed query but is not worth delaying that
- * query for.
+ * response but must not cost a round trip to get — the catalog's per-skill
+ * usage map, which refines the ordering of a typed query but is not worth
+ * delaying that query for.
  */
 export function peekCachedSlashCompletion<T>(key: string): T | undefined {
   return hasCachedSlashCompletion(key) ? queryClient.getQueryData<T>([SLASH_COMPLETIONS_KEY, key]) : undefined
@@ -80,9 +81,10 @@ export function hasCachedPathCompletion(key: string): boolean {
 export const $slashCompletionsEpoch = atom(0)
 
 /**
- * Drop cached `/` completions. Call from every site that changes which skills
- * exist or are enabled, so the composer's list matches the backend without
- * waiting out the TTL.
+ * Drop cached `/` completions. Called from every site that changes which
+ * skills exist or are enabled — install/uninstall/update from the hub, a
+ * skill toggle or delete in Capabilities — so the composer's list matches
+ * the backend without waiting out the TTL.
  */
 export function invalidateSlashCompletions(): void {
   void queryClient.invalidateQueries({ queryKey: [SLASH_COMPLETIONS_KEY] })
@@ -90,8 +92,16 @@ export function invalidateSlashCompletions(): void {
 }
 
 // Each profile has its own skills directory, so a cached catalog is only valid
-// for the profile that produced it. Desktop watches its profile atom from here;
-// universal calls `invalidateSlashCompletions` from `setActiveProfile`
-// (store/profiles) instead — this module stays free of store imports so pulling
-// it into store/chat.ts doesn't drag the profile store (and its module-load REST
-// re-scope) into every test that mocks `@/hermes` partially.
+// for the profile that produced it. Dropped at the source rather than in the
+// composer so it holds whether or not a chat is mounted at switch time.
+let cachedProfile: null | string = null
+
+$activeGatewayProfile.subscribe(value => {
+  const key = normalizeProfileKey(value)
+
+  if (cachedProfile !== null && cachedProfile !== key) {
+    invalidateSlashCompletions()
+  }
+
+  cachedProfile = key
+})

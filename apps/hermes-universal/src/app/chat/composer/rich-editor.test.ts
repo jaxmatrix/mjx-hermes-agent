@@ -1,212 +1,572 @@
-/**
- * The composer's line breaks — who is allowed to delete one, and who is not.
- *
- * `normalizeComposerEditorDom` exists to throw away the block wrappers and
- * trailing `<br>`s a contenteditable invents when you edit around a
- * `contenteditable=false` chip. Those serialize as `\n` and visibly grow the
- * composer, so they have to go. The hazard is that a line break the USER asked
- * for is the same node, and for a long time the only thing separating the two
- * was shape — "a `<br>` after real text is real; a trailing block wrapper is
- * junk" — which is a statement about Chromium rather than about the web.
- *
- * WebKit (WKWebView on macOS/iOS, WebKitGTK on Linux) reaches for a block
- * wrapper where Chromium reaches for a bare `<br>`, so on those engines the junk
- * rule matched the newline the user had just typed and deleted it on the very
- * next flush. That is the whole of "Shift+Enter does nothing on macOS"
- * and it is why the composer now inserts its own TAGGED break
- * instead of inferring one: ownership is a fact about the node, not a guess
- * about the engine.
- *
- * These cases pin the discrimination in both directions. A regression that
- * loosened the tag check would fail the "junk is still junk" cases; one that
- * tightened the shape rules again would fail the WebKit ones.
- */
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { describe, expect, it } from 'vitest'
+import { rememberDesktopCommandsCatalog } from '@/lib/desktop-slash-commands'
 
+import { insertInlineRefsIntoEditor } from './inline-refs'
 import {
-  composerBreakElement,
-  composerHtml,
+  caretOffsetInEditor,
   composerPlainText,
-  insertComposerLineBreak,
+  deleteSelectionInEditor,
+  insertComposerContentsAtCaret,
   normalizeComposerEditorDom,
+  placeCaretAtOffset,
+  placeCaretEnd,
+  refChipElement,
   renderComposerContents,
+  replaceBeforeCaret,
   RICH_INPUT_SLOT
 } from './rich-editor'
+import { placeCaretAtEnd } from './test-utils'
 
-const CHIP = '<span contenteditable="false" data-ref-text="@file:`a.ts`" data-ref-id="a.ts">a.ts</span>'
-
-/** An editor carrying the composer's own slot marker — `composerPlainText`
- *  appends a trailing newline to any OTHER block element, so a scratch div
- *  without it measures one character long. */
-function editorWith(html: string): HTMLElement {
-  const editor = document.createElement('div')
-
-  editor.dataset.slot = RICH_INPUT_SLOT
-  editor.innerHTML = html
-
-  return editor
-}
-
-/** Put the caret at the very end of `editor`, as a real focused edit would. */
-function caretAtEnd(editor: HTMLElement): void {
-  document.body.append(editor)
-
-  const range = document.createRange()
-
-  range.selectNodeContents(editor)
-  range.collapse(false)
-
-  const selection = window.getSelection()
-
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-}
-
-describe('a break the composer inserted survives normalization', () => {
-  it('keeps a tagged break at the end of the text', () => {
-    // The shape Chromium leaves for Shift+Enter, and the shape we now emit
-    // everywhere. It already survived; it must keep surviving.
-    const editor = editorWith(`hello${composerBreakElement().outerHTML}`)
-
-    normalizeComposerEditorDom(editor)
-
-    expect(composerPlainText(editor)).toBe('hello\n')
-  })
-
-  it('keeps a tagged break straight after a chip', () => {
-    // Engine-independent, and the case that made this a bug on Windows too: the
-    // "trailing <br> after a chip is a phantom line" rule matched a newline the
-    // user typed immediately after picking an @file: completion.
-    const editor = editorWith(`${CHIP}${composerBreakElement().outerHTML}`)
-
-    normalizeComposerEditorDom(editor)
-
-    expect(composerPlainText(editor)).toBe('@file:`a.ts`\n')
-  })
-
-  it('keeps a tagged break as the only thing in the editor', () => {
-    // Shift+Enter as the first keystroke into an empty composer. `!prev` used to
-    // send it straight to the phantom branch.
-    const editor = editorWith(composerBreakElement().outerHTML)
-
-    normalizeComposerEditorDom(editor)
-
-    expect(composerPlainText(editor)).toBe('\n')
-  })
-
-  it('keeps a tagged break the webview has wrapped in a block', () => {
-    // The WebKit shape. The wrapper is the engine's; the break inside it is
-    // ours, so the wrapper is not "blank" and the whole node stays.
-    const editor = editorWith(`hello<div>${composerBreakElement().outerHTML}</div>`)
-
-    normalizeComposerEditorDom(editor)
-
-    expect(composerPlainText(editor)).toContain('\n')
+beforeEach(() => {
+  rememberDesktopCommandsCatalog({
+    commands: { '/goal': { argument_mode: 'mixed', desktop: null } }
   })
 })
 
-describe('junk the webview invented is still deleted', () => {
-  it('drops an untagged trailing block wrapper', () => {
-    // The phantom "new line" left behind by backspacing around a chip. Identical
-    // in shape to WebKit's Shift+Enter result — which is exactly why the tag,
-    // and not the shape, is what decides.
-    const editor = editorWith(`${CHIP}<div><br></div>`)
+afterEach(() => {
+  rememberDesktopCommandsCatalog(undefined)
+})
 
-    normalizeComposerEditorDom(editor)
+describe('renderComposerContents', () => {
+  it('renders refs and raw text without interpreting user text as HTML', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
 
-    expect(composerPlainText(editor)).toBe('@file:`a.ts`')
+    renderComposerContents(editor, '@file:`<img src=x onerror=alert(1)>` <b>raw</b>')
+
+    expect(editor.querySelector('img')).toBeNull()
+    expect(editor.querySelector('b')).toBeNull()
+    expect(editor.textContent).toContain('<img src=x onerror=alert(1)>')
+    expect(editor.textContent).toContain('<b>raw</b>')
+    expect(composerPlainText(editor)).toBe('@file:`<img src=x onerror=alert(1)>` <b>raw</b>')
   })
 
-  it('drops an untagged trailing <br> after a chip', () => {
-    const editor = editorWith(`${CHIP}<br>`)
+  it('hydrates a committed leading slash command back to its pill', () => {
+    // Text-hydration parity with @ refs: a re-render from serialized text
+    // (draft restore, undo, the trigger commit fallback) must not demote a
+    // committed no-arg command chip to plain text.
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
 
-    normalizeComposerEditorDom(editor)
+    renderComposerContents(editor, '/some-skill @folder:`Desktop` ')
 
-    expect(composerPlainText(editor)).toBe('@file:`a.ts`')
+    const pill = editor.querySelector('[data-slash-kind]')
+
+    expect(pill?.getAttribute('data-ref-text')).toBe('/some-skill')
+    expect(editor.querySelector('[data-ref-kind="folder"]')).not.toBeNull()
+    expect(composerPlainText(editor)).toBe('/some-skill @folder:`Desktop` ')
   })
 
-  it('drops an untagged trailing <br> in an otherwise empty editor', () => {
-    const editor = editorWith('<br>')
+  it('keeps a still-typed leading slash token as editable text', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
 
-    normalizeComposerEditorDom(editor)
+    // No trailing whitespace — not committed yet.
+    renderComposerContents(editor, '/some-skil')
 
-    expect(composerPlainText(editor)).toBe('')
+    expect(editor.querySelector('[data-slash-kind]')).toBeNull()
+    expect(composerPlainText(editor)).toBe('/some-skil')
+  })
+
+  it('keeps an arg-taking command as text — its tail may be uncommitted prose', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+
+    renderComposerContents(editor, '/goal ship the redesign')
+
+    expect(editor.querySelector('[data-slash-kind]')).toBeNull()
+    expect(composerPlainText(editor)).toBe('/goal ship the redesign')
   })
 })
 
-describe('a draft round-trips its newlines', () => {
-  it('survives text → DOM → text', () => {
-    // The repaint path: a restored draft, an undo step, a programmatic insert.
-    // Every break it paints has to be one normalization will not then eat, or a
-    // multi-line draft loses a line each time it is put back.
-    const text = 'first\nsecond\n\nfourth'
-    const editor = editorWith('')
+describe('replaceBeforeCaret across split text nodes', () => {
+  it('replaces a token that Chromium fragmented into multiple text nodes', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.contentEditable = 'true'
+    document.body.append(editor)
+    editor.append(document.createTextNode('see @Desk'), document.createTextNode('top/'))
 
-    renderComposerContents(editor, text)
-    normalizeComposerEditorDom(editor)
+    const caret = document.createRange()
+    caret.setStart(editor.lastChild!, 4)
+    caret.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(caret)
 
-    expect(composerPlainText(editor)).toBe(text)
-  })
+    const fragment = document.createDocumentFragment()
+    fragment.append(refChipElement('folder', '`Desktop`'), document.createTextNode(' '))
 
-  it('survives text → composerHtml → text', () => {
-    // The string serializer has to agree with the node builder about tagging.
-    // It did not, and a draft repainted through it lost its newlines on the next
-    // flush.
-    const text = 'note\nabout @file:`a.ts`\nand more'
-    const editor = editorWith(composerHtml(text))
-
-    normalizeComposerEditorDom(editor)
-
-    expect(composerPlainText(editor)).toBe(text)
-  })
-
-  it('keeps a trailing newline through composerHtml', () => {
-    const editor = editorWith(composerHtml('hello\n'))
-
-    normalizeComposerEditorDom(editor)
-
-    expect(composerPlainText(editor)).toBe('hello\n')
-  })
-})
-
-describe('insertComposerLineBreak', () => {
-  it('inserts at the caret and survives the flush that follows', () => {
-    const editor = editorWith('hello')
-
-    caretAtEnd(editor)
-
-    expect(insertComposerLineBreak(editor)).toBe(true)
-
-    // What `flushEditorToDraft` does on the very next tick — the step that used
-    // to delete the newline before the user saw it.
-    normalizeComposerEditorDom(editor)
-
-    expect(composerPlainText(editor)).toBe('hello\n')
+    // Token `@Desktop/` (9 chars) spans both text nodes.
+    expect(replaceBeforeCaret(editor, 9, fragment)).toBe(true)
+    expect(composerPlainText(editor)).toBe('see @folder:`Desktop` ')
 
     editor.remove()
   })
 
-  it('appends when the caret is not in this editor', () => {
-    // A programmatic call must not silently do nothing.
-    const editor = editorWith('hello')
+  it('refuses when a chip interrupts the span — the token is not contiguous text', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.contentEditable = 'true'
+    document.body.append(editor)
+    editor.append(document.createTextNode('a'), refChipElement('file', '`x`'), document.createTextNode('bc'))
 
-    expect(insertComposerLineBreak(editor)).toBe(true)
-    normalizeComposerEditorDom(editor)
+    const caret = document.createRange()
+    caret.setStart(editor.lastChild!, 2)
+    caret.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(caret)
 
-    expect(composerPlainText(editor)).toBe('hello\n')
+    expect(replaceBeforeCaret(editor, 5, document.createDocumentFragment())).toBe(false)
+    expect(composerPlainText(editor)).toBe('a@file:`x`bc')
+
+    editor.remove()
+  })
+})
+
+describe('normalizeComposerEditorDom', () => {
+  it.each([
+    [6, 6],
+    [2, 12],
+    [12, 2]
+  ])('preserves selection %i → %i inside a native block wrapper', (anchor, focus) => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.contentEditable = 'true'
+    const wrapper = document.createElement('div')
+    const text = document.createTextNode('still typing here')
+    wrapper.append(text)
+    editor.append(wrapper)
+    document.body.append(editor)
+    const selection = window.getSelection()!
+    selection.setBaseAndExtent(text, anchor, text, focus)
+
+    try {
+      normalizeComposerEditorDom(editor)
+
+      expect(composerPlainText(editor)).toBe('still typing here')
+      expect(selection.anchorNode).toBe(text)
+      expect(selection.anchorOffset).toBe(anchor)
+      expect(selection.focusNode).toBe(text)
+      expect(selection.focusOffset).toBe(focus)
+    } finally {
+      editor.remove()
+    }
   })
 
-  it('produces the same text on both engine shapes', () => {
-    // The point of owning the gesture: one DOM, so one answer, everywhere.
-    const chromiumish = editorWith('hello')
-    const webkitish = editorWith('hello')
+  it('leaves another editor’s selection alone when normalizing a background draft', () => {
+    const foreground = document.createElement('div')
+    const text = document.createTextNode('foreground draft')
+    foreground.append(text)
+    const background = document.createElement('div')
+    background.dataset.slot = RICH_INPUT_SLOT
+    const wrapper = document.createElement('p')
+    wrapper.textContent = 'background draft'
+    background.append(wrapper)
+    document.body.append(foreground, background)
+    const selection = window.getSelection()!
+    selection.setBaseAndExtent(text, 10, text, 3)
 
-    insertComposerLineBreak(chromiumish)
-    insertComposerLineBreak(webkitish)
-    normalizeComposerEditorDom(chromiumish)
-    normalizeComposerEditorDom(webkitish)
+    try {
+      normalizeComposerEditorDom(background)
 
-    expect(composerPlainText(chromiumish)).toBe(composerPlainText(webkitish))
+      expect(composerPlainText(background)).toBe('background draft')
+      expect(selection.anchorNode).toBe(text)
+      expect(selection.anchorOffset).toBe(10)
+      expect(selection.focusNode).toBe(text)
+      expect(selection.focusOffset).toBe(3)
+    } finally {
+      foreground.remove()
+      background.remove()
+    }
+  })
+
+  it('unwraps a single insertHTML wrapper div so plain text stays one line', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.innerHTML = '<div><span data-ref-text="@file:`src/foo.ts`" contenteditable="false">foo.ts</span> </div>'
+
+    normalizeComposerEditorDom(editor)
+
+    expect(composerPlainText(editor)).toBe('@file:`src/foo.ts` ')
+    expect(editor.querySelector(':scope > div')).toBeNull()
+  })
+
+  it('removes a trailing br after a ref chip', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.append(refChipElement('file', '`src/foo.ts`'), document.createElement('br'))
+
+    normalizeComposerEditorDom(editor)
+
+    expect(composerPlainText(editor)).toBe('@file:`src/foo.ts`')
+    expect(editor.querySelector('br')).toBeNull()
+  })
+
+  it('preserves a live caret anchored in an empty direct text node', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.contentEditable = 'true'
+    document.body.append(editor)
+
+    const leadingLitter = document.createTextNode('')
+    const caretContainer = document.createTextNode('')
+    const trailingLitter = document.createTextNode('')
+    editor.append(leadingLitter, refChipElement('file', '`src/foo.ts`'), caretContainer, trailingLitter)
+
+    const caret = document.createRange()
+    caret.setStart(caretContainer, 0)
+    caret.collapse(true)
+
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(caret)
+
+    normalizeComposerEditorDom(editor)
+
+    expect(leadingLitter.isConnected).toBe(false)
+    expect(trailingLitter.isConnected).toBe(false)
+    expect(caretContainer.isConnected).toBe(true)
+    expect(editor.contains(selection.getRangeAt(0).startContainer)).toBe(true)
+    expect(selection.getRangeAt(0).startContainer).toBe(caretContainer)
+    expect(composerPlainText(editor)).toBe('@file:`src/foo.ts`')
+
+    selection.removeAllRanges()
+    editor.remove()
+  })
+})
+
+describe('insertInlineRefsIntoEditor', () => {
+  it('inserts chips without wrapper divs or spurious newlines', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+
+    insertInlineRefsIntoEditor(editor, ['@file:`src/foo.ts`'])
+
+    expect(editor.querySelector(':scope > div')).toBeNull()
+    expect(composerPlainText(editor)).toBe('@file:`src/foo.ts` ')
+  })
+
+  it('separates a chip from the word the caret sits after', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.append(document.createTextNode('review'))
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    expect(insertInlineRefsIntoEditor(editor, ['@file:`src/a.ts`'])).toBe('review @file:`src/a.ts` ')
+
+    editor.remove()
+  })
+
+  it('does not double the space when one is already there', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.append(document.createTextNode('review '))
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    expect(insertInlineRefsIntoEditor(editor, ['@file:`src/a.ts`'])).toBe('review @file:`src/a.ts` ')
+
+    editor.remove()
+  })
+})
+
+describe('insertComposerContentsAtCaret', () => {
+  it('inserts multiline text as text nodes + br', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    insertComposerContentsAtCaret(editor, 'one\ntwo\nthree')
+
+    expect(editor.querySelectorAll('br').length).toBe(2)
+    expect(composerPlainText(editor)).toBe('one\ntwo\nthree')
+
+    editor.remove()
+  })
+
+  it('replaces the selected span', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.textContent = 'abXYef'
+    document.body.append(editor)
+
+    const text = editor.firstChild!
+    const selection = window.getSelection()!
+    const range = document.createRange()
+
+    range.setStart(text, 2)
+    range.setEnd(text, 4)
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    insertComposerContentsAtCaret(editor, 'cd')
+
+    expect(composerPlainText(editor)).toBe('abcdef')
+
+    editor.remove()
+  })
+
+  it('lands directives in the text as chips', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    insertComposerContentsAtCaret(editor, 'read @url:`https://example.dev/a` now')
+
+    expect(editor.querySelectorAll('[data-ref-kind="url"]').length).toBe(1)
+    expect(composerPlainText(editor)).toBe('read @url:`https://example.dev/a` now')
+
+    editor.remove()
+  })
+
+  // A directive typed by hand chips; the same directive pasted has to chip too,
+  // or copy/pasting a prompt silently drops every command in it.
+  it('chips a pasted slash command, including one that ends the paste', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    insertComposerContentsAtCaret(editor, '/some-skill')
+
+    expect(editor.querySelector('[data-slash-kind]')?.getAttribute('data-ref-text')).toBe('/some-skill')
+    // Committed pills carry the trailing space the typed path appends, so a
+    // later full re-render doesn't read the token as half-typed.
+    expect(composerPlainText(editor)).toBe('/some-skill ')
+
+    editor.remove()
+  })
+
+  it('chips a skill named mid-paste alongside a ref', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    insertComposerContentsAtCaret(editor, 'clean @file:`a.ts` with /some-skill then ship')
+
+    expect(editor.querySelectorAll('[data-slash-kind]').length).toBe(1)
+    expect(editor.querySelectorAll('[data-ref-kind="file"]').length).toBe(1)
+    expect(composerPlainText(editor)).toBe('clean @file:`a.ts` with /some-skill then ship')
+
+    editor.remove()
+  })
+
+  it('leaves a pasted path alone — /usr/local is not a command', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    insertComposerContentsAtCaret(editor, 'see /usr/local/bin and /goal ship it')
+
+    expect(editor.querySelector('[data-slash-kind]')).toBeNull()
+    expect(composerPlainText(editor)).toBe('see /usr/local/bin and /goal ship it')
+
+    editor.remove()
+  })
+
+  it('does not chip a command pasted against a word — foo/clean is not a command', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.textContent = 'foo'
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    insertComposerContentsAtCaret(editor, '/some-skill')
+
+    expect(editor.querySelector('[data-slash-kind]')).toBeNull()
+    expect(composerPlainText(editor)).toBe('foo/some-skill')
+
+    editor.remove()
+  })
+
+  it('chips a command pasted right after an existing chip', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.append(refChipElement('file', '`a.ts`'))
+    document.body.append(editor)
+    placeCaretAtEnd(editor)
+
+    insertComposerContentsAtCaret(editor, '/some-skill')
+
+    expect(editor.querySelector('[data-slash-kind]')).not.toBeNull()
+
+    editor.remove()
+  })
+})
+
+describe('replaceBeforeCaret', () => {
+  it('swaps the token before the caret and leaves the caret after the insert', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.textContent = 'see foo'
+    document.body.append(editor)
+
+    const text = editor.firstChild!
+    const selection = window.getSelection()!
+    const range = document.createRange()
+
+    range.setStart(text, 7)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    const fragment = document.createDocumentFragment()
+    fragment.append(refChipElement('file', '`src/foo.ts`'), document.createTextNode(' '))
+
+    expect(replaceBeforeCaret(editor, 3, fragment)).toBe(true)
+    expect(composerPlainText(editor)).toBe('see @file:`src/foo.ts` ')
+    expect(selection.getRangeAt(0).collapsed).toBe(true)
+
+    editor.remove()
+  })
+
+  it('leaves the editor alone when the caret has no room for the token', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.textContent = 'hi'
+    document.body.append(editor)
+
+    const selection = window.getSelection()!
+    const range = document.createRange()
+
+    range.setStart(editor.firstChild!, 2)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    const fragment = document.createDocumentFragment()
+    fragment.append(document.createTextNode('x'))
+
+    expect(replaceBeforeCaret(editor, 20, fragment)).toBe(false)
+    expect(composerPlainText(editor)).toBe('hi')
+
+    editor.remove()
+  })
+})
+
+describe('deleteSelectionInEditor', () => {
+  it('clears a non-collapsed range and leaves a collapsed caret', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.textContent = 'hello world'
+    document.body.append(editor)
+
+    const selection = window.getSelection()!
+    const range = document.createRange()
+
+    range.selectNodeContents(editor)
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    expect(deleteSelectionInEditor(editor)).toBe(true)
+    expect(composerPlainText(editor)).toBe('')
+    expect(selection.getRangeAt(0).collapsed).toBe(true)
+    expect(deleteSelectionInEditor(editor)).toBe(false)
+
+    editor.remove()
+  })
+})
+
+describe('caret placement on a detached editor', () => {
+  it('leaves the document selection alone instead of selecting into a detached node', () => {
+    const attached = document.createElement('div')
+    attached.textContent = 'visible composer'
+    document.body.append(attached)
+    placeCaretAtEnd(attached)
+
+    const detached = document.createElement('div')
+    detached.dataset.slot = RICH_INPUT_SLOT
+    detached.textContent = 'unmounted composer'
+
+    const selection = window.getSelection()
+    const before = selection?.getRangeAt(0).startContainer
+
+    expect(() => placeCaretEnd(detached)).not.toThrow()
+    expect(() => placeCaretAtOffset(detached, 3)).not.toThrow()
+    expect(selection?.rangeCount).toBe(1)
+    expect(selection?.getRangeAt(0).startContainer).toBe(before)
+    expect(detached.contains(selection?.anchorNode ?? null)).toBe(false)
+
+    attached.remove()
+  })
+})
+
+describe('normalizeComposerEditorDom — caret preservation', () => {
+  it('re-establishes a caret anchored inside a removed phantom tail block', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.contentEditable = 'true'
+    editor.tabIndex = 0
+    document.body.append(editor)
+    editor.focus()
+
+    expect(document.activeElement).toBe(editor)
+
+    const text = document.createTextNode('hi')
+    const tailBlock = document.createElement('div')
+
+    tailBlock.append(document.createElement('br'))
+    editor.append(text, tailBlock)
+
+    const caret = document.createRange()
+    caret.setStart(tailBlock, 0)
+    caret.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(caret)
+
+    normalizeComposerEditorDom(editor)
+
+    expect(tailBlock.isConnected).toBe(false)
+    expect(selection.isCollapsed).toBe(true)
+
+    const range = selection.getRangeAt(0)
+    expect(editor.contains(range.startContainer)).toBe(true)
+    expect(range.startContainer).toBe(text)
+    expect(range.startOffset).toBe(2)
+
+    editor.remove()
+  })
+
+  it('leaves a still-valid selection untouched', () => {
+    const editor = document.createElement('div')
+    editor.dataset.slot = RICH_INPUT_SLOT
+    editor.contentEditable = 'true'
+    editor.tabIndex = 0
+    document.body.append(editor)
+    editor.focus()
+
+    const br = document.createElement('br')
+    editor.append(refChipElement('file', '`a.ts`'), br)
+
+    const caret = document.createRange()
+    caret.setStart(editor, 1)
+    caret.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(caret)
+
+    const offsetBefore = caretOffsetInEditor(editor)
+
+    normalizeComposerEditorDom(editor)
+
+    // The trailing <br> after a chip is gone — normalization did mutate — but
+    // the selection was valid, so it must come through untouched.
+    expect(editor.contains(br)).toBe(false)
+
+    const range = selection.getRangeAt(0)
+    expect(range.startContainer).toBe(editor)
+    expect(range.startOffset).toBe(1)
+    expect(caretOffsetInEditor(editor)).toBe(offsetBefore)
+
+    editor.remove()
   })
 })

@@ -1,30 +1,74 @@
-import { Direction } from 'radix-ui'
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from 'react'
+import { applyDocumentLocale, isRecord } from '@hermes/shared/i18n'
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
-import { Codecs, persistentAtom } from '@/lib/persisted'
-import { useStore } from '@/store/atom'
+import { getHermesConfigRecord, type HermesConfigRecord, retainConfigReadOrigin, saveHermesConfig } from '@/hermes'
+import { $appLocale } from '@/store/tray'
 
 import { TRANSLATIONS } from './catalog'
-import { DEFAULT_LOCALE, localeDirection, normalizeLocale } from './languages'
+import {
+  DEFAULT_LOCALE,
+  isSupportedLocaleValue,
+  localeConfigValue,
+  normalizeLocale,
+  resolveInitialLocale
+} from './languages'
 import { setRuntimeI18nLocale } from './runtime'
 import type { Locale, Translations } from './types'
 
 export { LOCALE_META } from './languages'
 
-// Mobile persists the locale in localStorage (the desktop round-trips it through
-// the Hermes config). Same public contract as desktop I18nContextValue so ported
-// components + translateNow work unchanged; the async/config fields are trivially
-// satisfied (localStorage is synchronous).
-// Exported as `$appLocale` (re-exported from `i18n/index.ts`) for the surfaces
-// React cannot reach: the system tray's menu is native, so `store/tray.ts` has to
-// be told when the language changes rather than re-rendering into it.
-export const $locale = persistentAtom<string>('hermes.locale', DEFAULT_LOCALE, Codecs.text)
-setRuntimeI18nLocale(normalizeLocale($locale.get()))
+export interface I18nConfigClient {
+  getConfig: () => Promise<HermesConfigRecord>
+  saveConfig: (config: HermesConfigRecord) => Promise<{ ok: boolean }>
+}
+
+const defaultConfigClient: I18nConfigClient = {
+  getConfig: () => {
+    if (typeof window === 'undefined' || !window.hermesDesktop?.api) {
+      return Promise.resolve({})
+    }
+
+    // Merged defaults make an unset language indistinguishable from saved English.
+    // Older backends ignore the option and keep returning English as before.
+    return getHermesConfigRecord(undefined, { includeDefaults: false })
+  },
+  saveConfig: config => {
+    if (typeof window === 'undefined' || !window.hermesDesktop?.api) {
+      return Promise.resolve({ ok: true })
+    }
+
+    // No explicit scope: saveHermesConfig resolves the record's captured read
+    // origin itself (resolveConfigWriteScope), and withConfigDisplayLanguage
+    // retains that origin onto the derived record.
+    return saveHermesConfig(config, undefined, { preserveLanguage: true })
+  }
+}
+
+export function getConfigDisplayLanguage(config: HermesConfigRecord): unknown {
+  return isRecord(config.display) ? config.display.language : undefined
+}
+
+export function withConfigDisplayLanguage(config: HermesConfigRecord, locale: Locale): HermesConfigRecord {
+  const display = isRecord(config.display) ? config.display : {}
+
+  return retainConfigReadOrigin(
+    {
+      ...config,
+      display: {
+        ...display,
+        language: localeConfigValue(locale)
+      }
+    },
+    config
+  )
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
 
 export interface I18nContextValue {
   configLoadError: Error | null
-  /** Writing direction of the active locale — mirrors the document's `dir`. */
-  direction: 'ltr' | 'rtl'
   isLoadingConfig: boolean
   isSavingLocale: boolean
   locale: Locale
@@ -35,7 +79,6 @@ export interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue>({
   configLoadError: null,
-  direction: 'ltr',
   isLoadingConfig: false,
   isSavingLocale: false,
   locale: DEFAULT_LOCALE,
@@ -44,58 +87,159 @@ const I18nContext = createContext<I18nContextValue>({
   t: TRANSLATIONS[DEFAULT_LOCALE]
 })
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const locale = normalizeLocale(useStore($locale))
+export interface I18nProviderProps {
+  children: ReactNode
+  configClient?: I18nConfigClient | null
+  initialLocale?: unknown
+}
 
+export function I18nProvider({ children, configClient = defaultConfigClient, initialLocale }: I18nProviderProps) {
+  const [locale, setLocaleState] = useState<Locale>(() => normalizeLocale(initialLocale))
+  const [isLoadingConfig, setIsLoadingConfig] = useState(false)
+  const [isSavingLocale, setIsSavingLocale] = useState(false)
+  const [configLoadError, setConfigLoadError] = useState<Error | null>(null)
+  const [saveError, setSaveError] = useState<Error | null>(null)
+  const localeRef = useRef(locale)
+  // Set once the user picks a language through setLocale: a startup read that
+  // resolves (or fails) after that must never overwrite an explicit choice.
+  const userLocaleRef = useRef(false)
+
+   
   useEffect(() => {
+    localeRef.current = locale
     setRuntimeI18nLocale(locale)
+    $appLocale.set(locale)
+    applyDocumentLocale(locale)
   }, [locale])
 
-  // The document's `dir` and `lang` are the ONLY place RTL is switched on.
-  // Everything downstream — CSS logical properties, `text-align: start`, native
-  // caret and selection behaviour in inputs, the browser's own bidi resolution —
-  // reads the inherited direction, so setting it here is what makes an Arabic UI
-  // an Arabic UI rather than English text in Arabic glyphs. `lang` matters too:
-  // it picks the right font fallback and hyphenation.
   useEffect(() => {
-    if (typeof document === 'undefined') {
+    if (!configClient) {
       return
     }
 
-    document.documentElement.dir = localeDirection(locale)
-    document.documentElement.lang = locale
-  }, [locale])
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let retryCount = 0
 
-  const setLocale = useCallback(async (next: Locale) => {
-    $locale.set(next)
-  }, [])
+    // The desktop races its own backend at startup: the renderer mounts before
+    // the backend is ready, so the first /api/config call can time out. We keep
+    // the established permanent-failure contract — a rejected config load
+    // settles on English so the UI stays usable — but bounded retries recover
+    // transient startup failures, applying the persisted display.language once
+    // the backend comes up.
+    const MAX_LOCALE_RETRIES = 10
+    const LOCALE_RETRY_DELAY_MS = 3_000
+
+    const loadLocale = () => {
+      setIsLoadingConfig(true)
+      setConfigLoadError(null)
+
+      return configClient
+        .getConfig()
+        .then(async config => {
+          if (cancelled || userLocaleRef.current) {
+            return
+          }
+
+          const saved = getConfigDisplayLanguage(config)
+
+          // A saved choice needs no machine probe and always takes precedence.
+          if (isSupportedLocaleValue(saved)) {
+            setLocaleState(normalizeLocale(saved))
+
+            return
+          }
+
+          // Keep inference unsaved so OS language changes apply on the next boot
+          // until the user explicitly picks a language.
+          const machineProfile = await window.hermesDesktop?.getMachineProfile?.().catch(() => null)
+
+          if (!cancelled && !userLocaleRef.current) {
+            setLocaleState(resolveInitialLocale(undefined, machineProfile?.locale))
+          }
+        })
+        .catch(error => {
+          if (cancelled || userLocaleRef.current) {
+            return
+          }
+
+          setConfigLoadError(toError(error))
+          setLocaleState(DEFAULT_LOCALE)
+
+          if (retryCount < MAX_LOCALE_RETRIES) {
+            retryCount += 1
+            retryTimer = setTimeout(() => {
+              loadLocale()
+            }, LOCALE_RETRY_DELAY_MS)
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsLoadingConfig(false)
+          }
+        })
+    }
+
+    loadLocale()
+
+    return () => {
+      cancelled = true
+
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+      }
+    }
+  }, [configClient, initialLocale])
+
+  const setLocale = useCallback(
+    async (next: Locale) => {
+      const previousLocale = localeRef.current
+
+      userLocaleRef.current = true
+      setSaveError(null)
+      setLocaleState(next)
+
+      if (!configClient) {
+        return
+      }
+
+      setIsSavingLocale(true)
+
+      try {
+        const latestConfig = await configClient.getConfig()
+        const result = await configClient.saveConfig(withConfigDisplayLanguage(latestConfig, next))
+
+        if (!result.ok) {
+          throw new Error('Failed to save language')
+        }
+      } catch (error) {
+        const nextError = toError(error)
+
+        setLocaleState(previousLocale)
+        setSaveError(nextError)
+
+        throw nextError
+      } finally {
+        setIsSavingLocale(false)
+      }
+    },
+    [configClient]
+  )
 
   const value = useMemo<I18nContextValue>(
     () => ({
-      configLoadError: null,
-      isLoadingConfig: false,
-      isSavingLocale: false,
-      direction: localeDirection(locale),
+      configLoadError,
+      isLoadingConfig,
+      isSavingLocale,
       locale,
-      saveError: null,
+      saveError,
       setLocale,
       t: TRANSLATIONS[locale]
     }),
-    [locale, setLocale]
+    [configLoadError, isLoadingConfig, isSavingLocale, locale, saveError, setLocale]
   )
 
-  // Radix does NOT read the document's `dir`. Every primitive that places itself
-  // on an edge or walks an inline axis takes its direction from this provider and
-  // defaults to `ltr` without it: the ScrollArea pins its vertical bar with a
-  // literal `right: 0` unless `dir === 'rtl'`, and Dropdown/Context submenus both
-  // open toward, and are opened by the arrow key pointing at, the same hard-coded
-  // side. So an RTL document with no DirectionProvider mirrors its own CSS while
-  // every Radix surface stays left-to-right — worse than either extreme.
-  return (
-    <Direction.Provider dir={value.direction}>
-      <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
-    </Direction.Provider>
-  )
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 
 export function useI18n(): I18nContextValue {

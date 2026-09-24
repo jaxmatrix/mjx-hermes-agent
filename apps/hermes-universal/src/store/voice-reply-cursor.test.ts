@@ -2,7 +2,7 @@ import { atom } from 'nanostores'
 import { describe, expect, it } from 'vitest'
 
 import type { SessionView } from '@/app/chat/session-view'
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 
 import { lastReply, markReplySpoken, unspokenTurn } from './voice-reply-cursor'
 

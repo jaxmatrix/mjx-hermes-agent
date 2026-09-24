@@ -17,7 +17,8 @@ import {
   SidebarRowStack
 } from './chrome'
 import { SidebarLoadMoreRow } from './load-more-row'
-import { type SidebarSessionGroup, useWorkspaceNodeOpen } from './projects/model'
+import { useWorkspaceNodeOpen } from './projects/model'
+import { type SidebarSessionGroup } from './projects/workspace-groups'
 
 // One per-profile lane in the "All profiles" browse view: a color-dot header with
 // the profile name, its session count, a "+" that starts a chat in that profile,

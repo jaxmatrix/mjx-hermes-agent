@@ -20,14 +20,6 @@
  *     the destination while the cutout is still gliding.
  *
  * App surface only — a preview guest page keeps driver.js's stock look.
- *
- * UNIVERSAL (MJXHRM-473): a verbatim port of desktop `lib/tour/spotlight-blur.ts`.
- * The two CSS features it needs — an inline SVG `<mask>` referenced from
- * `mask`/`-webkit-mask`, and `backdrop-filter` — are WebKitGTK territory here
- * rather than Chromium's; the prefixed pair is already how every floating panel
- * in `styles.css` frosts itself, so the second is proven. The mask is on the
- * runtime checklist: if WebKitGTK ignores it the layer stops being a ring and
- * greys the spotlight too, which is visible in one glance.
  */
 
 /** Matches DialogOverlay's scrim treatment. The actual effect (grayscale/fade)

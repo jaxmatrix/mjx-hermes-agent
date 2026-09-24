@@ -2,8 +2,8 @@ import { useEffect } from 'react'
 
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { $effectiveCwd } from '@/store/effective-cwd'
 import { $activeTerminalId, $terminals, ensureTerminal, selectTerminalForCwd } from '@/store/terminals'
-import { $effectiveCwd } from '@/store/workspace-events'
 
 import { TerminalRail } from './terminal-rail'
 import { TerminalView } from './terminal-view'

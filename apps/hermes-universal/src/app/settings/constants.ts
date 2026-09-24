@@ -1,28 +1,48 @@
-// Curated desktop config surface for the mobile Settings track (Jc1). Ported from
-// apps/desktop/src/app/settings/constants.ts: SECTIONS (config tabs → dotted keys),
-// ENUM_OPTIONS (schema-side select overrides), PROVIDER_GROUPS (Keys-tab grouping),
-// BUILTIN_PERSONALITIES, plus the FIELD_LABELS/FIELD_DESCRIPTIONS copy that i18n
-// en.ts imports. Icons come from the shared @/lib/icons seam.
-import { Box, Brain, Lock, MessageCircle, Mic, Monitor, Palette, Wrench } from '@/lib/icons'
-import { REASONING_EFFORTS } from '@/lib/reasoning-effort'
-import type { ConfigFieldSchema } from '@/types/hermes'
+import { REASONING_EFFORTS } from '@hermes/shared'
+
+import {
+  Box,
+  Brain,
+  Globe,
+  type IconComponent,
+  Lock,
+  MessageCircle,
+  Mic,
+  Monitor,
+  Moon,
+  Palette,
+  Sun,
+  Wrench
+} from '@/lib/icons'
+import type { ThemeMode } from '@/themes/context'
+
+// Single source of truth for built-in personality names lives in
+// lib/personalities (mirrors hermes_cli/personality.py BUILTIN_PERSONALITIES).
+export { BUILTIN_PERSONALITIES } from '@/lib/personalities'
 
 import { defineFieldCopy } from './field-copy'
 import type { DesktopConfigSection } from './types'
 
-export const EMPTY_SELECT_VALUE = '__hermes_empty__'
-export const CONTROL_TEXT = 'text-xs'
-
-// Provider group definitions fold raw env-var names (`XAI_API_KEY`) into a single
-// labeled card. Longest-prefix match (see `providerGroup` in helpers.ts) so more
-// specific prefixes (`MINIMAX_CN_`) beat their parents (`MINIMAX_`).
+// Provider group definitions used to fold raw env-var names like
+// ``XAI_API_KEY`` into a single "xAI" card with a friendly label, short
+// description, and signup URL. Membership is determined by longest
+// prefix match (see ``providerGroup`` in helpers.ts) so more specific
+// prefixes (``MINIMAX_CN_``) correctly beat their general parents
+// (``MINIMAX_``). New providers should be added here so they get their
+// own card in Settings → Keys instead of being lumped into "Other".
 interface ProviderPrefix {
   prefix: string
   name: string
+  /** Optional one-line tagline shown beneath the group name. */
   description?: string
+  /** Optional canonical signup/console URL surfaced from the card header. */
   docsUrl?: string
+  /** Lower numbers float to the top of the providers list. */
   priority: number
 }
+
+export const EMPTY_SELECT_VALUE = '__hermes_empty__'
+export const CONTROL_TEXT = 'text-xs'
 
 export const PROVIDER_GROUPS: ProviderPrefix[] = [
   {
@@ -38,7 +58,7 @@ export const PROVIDER_GROUPS: ProviderPrefix[] = [
     description: 'OpenAI-compatible direct model API',
     docsUrl: 'https://app.fireworks.ai/settings/users/api-keys',
     // Slot #2 — mirrors CANONICAL_PROVIDERS (after Nous, ahead of OpenRouter).
-    // Same numeric priority as OpenRouter; the name sort puts Fireworks first.
+    // Same numeric priority as OpenRouter; name sort puts Fireworks first.
     priority: 1
   },
   {
@@ -209,52 +229,124 @@ export const PROVIDER_GROUPS: ProviderPrefix[] = [
   }
 ]
 
-export const BUILTIN_PERSONALITIES = [
-  'helpful',
-  'concise',
-  'technical',
-  'creative',
-  'teacher',
-  'kawaii',
-  'catgirl',
-  'pirate',
-  'shakespeare',
-  'surfer',
-  'noir',
-  'uwu',
-  'philosopher',
-  'hype'
-]
-
-// Schema-side select overrides for enum fields whose backend schema only declares
-// a string type.
+// Schema-side select overrides for desktop-relevant enum fields whose
+// backend schema only declares a string type.
 export const ENUM_OPTIONS: Record<string, string[]> = {
   'agent.image_input_mode': ['auto', 'native', 'text'],
   'approvals.mode': ['manual', 'smart', 'off'],
   'code_execution.mode': ['project', 'strict'],
-  // agent/context_compressor.py: anything but 'lean' falls back to 'legacy'.
-  'compression.tail_mode': ['legacy', 'lean'],
   'context.engine': ['compressor', 'default', 'custom'],
-  // Derived, never re-typed: this list had stopped at `xhigh`, so a subagent
-  // could not be asked for `max`/`ultra` from the UI even though the gateway
-  // accepts both (MJXHRM-459).
+  // '' = inherit the agent's own effort; the rest is the shared scale.
   'delegation.reasoning_effort': ['', ...REASONING_EFFORTS],
   // NOTE: memory.provider is intentionally NOT listed here. Its options are
   // discovery-driven and served by the backend config schema (merged
   // per-request in web_server._schema_with_dynamic_provider_options), so
   // config-field consumes schema.options directly — a static list here would
   // shadow that and hide user-installed/pip providers (#49513).
+  // Terminal execution backends — kept in sync with the dispatch ladder in
+  // tools/terminal_tool.py::_create_environment (local/docker/singularity/
+  // modal/daytona/ssh). Remote backends need extra env (image, tokens, host).
   'terminal.backend': ['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'],
   'stt.elevenlabs.model_id': ['scribe_v2', 'scribe_v1'],
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
-  // Mirrors tools/transcription_tools.py BUILTIN_STT_PROVIDERS. The backend's
-  // own option list is now unreachable (see FALLBACK_FIELD_SCHEMA), so this is
-  // the only thing that renders the picker — `deepinfra` was missing from it.
-  // `local_command` is deliberately absent: it is the `stt.providers.<name>:
-  // type: command` escape hatch, and enumOptionsFor appends a stored value that
-  // is not in this list, so configuring one by hand still shows and survives.
-  'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs', 'deepinfra'],
-  'tts.openai.voice': ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'],
+  // Speech-to-text backends — kept in sync with the stt block in
+  // hermes_cli/config.py (local/groq/openai/mistral/elevenlabs).
+  'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
+  // How the desktop voice conversation is wired — tools/voice_live.py owns the
+  // gpt-live branch (one full-duplex voice model delegating to Hermes).
+  'voice.voice_chat_mode': ['chained', 'gpt-live'],
+  'voice.gpt_live.voice': [
+    'marin',
+    'cedar',
+    'quartz',
+    'ripple',
+    'vesper',
+    'willow',
+    'stone',
+    'gleam',
+    'meridian',
+    'bossa',
+    'tempo',
+    'beacon',
+    'delta',
+    'cinder'
+  ],
+  // OpenAI TTS voices — the union across models (per the OpenAI TTS API
+  // docs). Model-specific narrowing happens in enumOptionsFor():
+  // tts-1 / tts-1-hd support 9 voices; gpt-4o-mini-tts supports all 13.
+  // Free-input field — the list is suggestions, not a gate (FREE_INPUT_KEYS).
+  'tts.openai.voice': [
+    'alloy',
+    'ash',
+    'ballad',
+    'cedar',
+    'coral',
+    'echo',
+    'fable',
+    'marin',
+    'nova',
+    'onyx',
+    'sage',
+    'shimmer',
+    'verse'
+  ],
+  // Popular Edge neural voices (the full catalog is 400+ — free input).
+  'tts.edge.voice': [
+    'en-US-AriaNeural',
+    'en-US-JennyNeural',
+    'en-US-AndrewNeural',
+    'en-US-BrianNeural',
+    'en-US-GuyNeural',
+    'en-GB-SoniaNeural'
+  ],
+  'tts.gemini.model': ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'],
+  // Gemini TTS prebuilt voice set.
+  'tts.gemini.voice': [
+    'Zephyr',
+    'Puck',
+    'Charon',
+    'Kore',
+    'Fenrir',
+    'Leda',
+    'Orus',
+    'Aoede',
+    'Callirrhoe',
+    'Autonoe',
+    'Enceladus',
+    'Iapetus',
+    'Umbriel',
+    'Algieba',
+    'Despina',
+    'Erinome',
+    'Algenib',
+    'Rasalgethi',
+    'Laomedeia',
+    'Achernar',
+    'Alnilam',
+    'Schedar',
+    'Gacrux',
+    'Pulcherrima',
+    'Achird',
+    'Zubenelgenubi',
+    'Vindemiatrix',
+    'Sadachbia',
+    'Sadaltager',
+    'Sulafat'
+  ],
+  'tts.xai.voice_id': ['eve'],
+  'tts.minimax.model': ['speech-02-hd', 'speech-02-turbo'],
+  'tts.mistral.model': ['voxtral-mini-tts-2603'],
+  'tts.kittentts.model': [
+    'KittenML/kitten-tts-nano-0.8-int8',
+    'KittenML/kitten-tts-micro-0.8-int8',
+    'KittenML/kitten-tts-mini-0.8-int8'
+  ],
+  'tts.kittentts.voice': ['Jasper'],
+  'tts.piper.voice': ['en_US-lessac-medium', 'en_US-amy-medium', 'en_US-ryan-high', 'en_GB-alan-medium'],
+  'tts.neutts.model': ['neuphonic/neutts-air-q4-gguf', 'neuphonic/neutts-air-q8-gguf', 'neuphonic/neutts-air'],
+  // Text-to-speech backends — kept in sync with the built-in source of truth
+  // (agent/tts_registry.py::_BUILTIN_NAMES / tools/tts_tool.py::
+  // BUILTIN_TTS_PROVIDERS). 'xai' is Grok TTS.
   'tts.provider': [
     'edge',
     'elevenlabs',
@@ -267,56 +359,36 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'kittentts',
     'piper'
   ],
-  'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
+  'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'gpt-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
-  // hermes_cli/config.py rejects anything else at load time.
-  'voice.submit_mode': ['direct', 'draft'],
   'tts.openai.model': ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
-  'tts.elevenlabs.model_id': ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5'],
+  'tts.elevenlabs.model_id': [
+    'eleven_v3',
+    'eleven_ttv_v3',
+    'eleven_multilingual_v2',
+    'eleven_turbo_v2',
+    'eleven_turbo_v2_5',
+    'eleven_flash_v2',
+    'eleven_flash_v2_5'
+  ],
+  // NeuTTS local inference device.
   'tts.neutts.device': ['cpu', 'cuda', 'mps'],
   'updates.non_interactive_local_changes': ['stash', 'discard']
 }
 
-/**
- * Field shapes for keys the backend's schema does not declare.
- *
- * `/api/config/schema` is DERIVED from `DEFAULT_CONFIG`
- * (`web_server._build_schema_from_config`), so a key that is real, read by the
- * agent, and documented — but deliberately NOT seeded — has no schema entry and
- * no config value either, and `sectionFieldEntries` then drops the row
- * entirely. Both of these are that case:
- *
- *  - `stt.provider` lost its `"local"` seed in the 08-20 sync, on purpose: a
- *    stored value is now an explicit user pick and a fresh install must be
- *    indistinguishable from unset so the autodetect ladder runs. The side
- *    effect is that the backend's own `_SCHEMA_OVERRIDES['stt.provider']` entry
- *    became unreachable (overrides are applied while walking DEFAULT_CONFIG),
- *    so the STT provider picker DISAPPEARED from Settings on a fresh install.
- *  - `timeouts.tools.sequential_call` is read by `agent/tool_executor.py` and
- *    has never been seeded.
- *
- * Consulted only when the backend omits the key, so a gateway that does declare
- * one still wins. Nothing here writes a value — an unset field stays unset
- * until the user picks something.
- */
-export const FALLBACK_FIELD_SCHEMA: Record<string, ConfigFieldSchema> = {
-  'stt.provider': { description: 'Speech-to-text provider', type: 'select' },
-  'timeouts.tools.sequential_call': {
-    description: 'Per-tool timeout in seconds for a sequential (non-batched) call',
-    type: 'number'
-  }
-}
-
-// Voice/model name fields render as a free-input combobox instead of a closed
-// Select: providers accept custom voice IDs (ElevenLabs cloned voices, xAI
-// custom voices, Edge's 400+ catalog) and ship new model names faster than this
-// list updates. The ENUM_OPTIONS above become suggestions rather than a gate for
-// these keys.
+// Voice/model name fields render as a free-input combobox (Input + datalist)
+// instead of a closed Select: providers accept custom voice IDs (ElevenLabs
+// cloned voices, xAI custom voices, Edge's 400+ catalog) and ship new model
+// names faster than this list updates. The ENUM_OPTIONS above become
+// suggestions rather than a gate for these keys.
 export const FREE_INPUT_KEYS = new Set([
   'tts.edge.voice',
+  'voice.gpt_live.voice',
   'tts.openai.model',
   'tts.openai.voice',
   'tts.elevenlabs.voice_id',
+  'tts.elevenlabs.model_id',
+  'stt.openai.model',
   'tts.gemini.model',
   'tts.gemini.voice',
   'tts.xai.voice_id',
@@ -334,13 +406,18 @@ export const FREE_INPUT_KEYS = new Set([
 
 export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   model: 'Default Model',
-  modelContextLength: 'Context Window',
+  modelContextLength: 'Main model context window (override)',
   fallbackProviders: 'Fallback Models',
   toolsets: 'Enabled Toolsets',
   timezone: 'Timezone',
   display: {
     personality: 'Personality',
     showReasoning: 'Reasoning Blocks'
+  },
+  desktop: {
+    repoScanEnabled: 'Automatic Repository Discovery',
+    repoScanRoots: 'Repository Discovery Roots',
+    repoScanExcludePaths: 'Excluded Repository Paths'
   },
   agent: {
     maxTurns: 'Max Agent Steps',
@@ -359,11 +436,6 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     singularityImage: 'Singularity Image',
     modalImage: 'Modal Image',
     daytonaImage: 'Daytona Image'
-  },
-  desktop: {
-    repoScanEnabled: 'Automatic Repository Discovery',
-    repoScanRoots: 'Repository Discovery Roots',
-    repoScanExcludePaths: 'Excluded Repository Paths'
   },
   fileReadMaxChars: 'File Read Limit',
   toolOutput: {
@@ -386,7 +458,8 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   },
   browser: {
     allowPrivateUrls: 'Browser Private URLs',
-    autoLocalForPrivateUrls: 'Local Browser For Private URLs'
+    autoLocalForPrivateUrls: 'Local Browser For Private URLs',
+    useRealProfile: 'Use My Real Browser Profile'
   },
   checkpoints: {
     enabled: 'File Checkpoints',
@@ -395,7 +468,12 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   voice: {
     recordKey: 'Voice Shortcut',
     maxRecordingSeconds: 'Max Recording Length',
-    autoTts: 'Read Responses Aloud'
+    autoTts: 'Read Responses Aloud',
+    voiceChatMode: 'Voice Chat Mode',
+    gptLive: {
+      voice: 'GPT-Live Voice',
+      instructions: 'GPT-Live Persona'
+    }
   },
   stt: {
     enabled: 'Speech To Text',
@@ -436,7 +514,12 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     },
     xai: {
       voiceId: 'xAI (Grok) Voice',
-      language: 'xAI Language'
+      language: 'xAI Language',
+      speed: 'xAI Playback Speed',
+      autoSpeechTags: 'xAI Auto Speech Tags',
+      optimizeStreamingLatency: 'xAI Streaming Latency Optimization',
+      sampleRate: 'xAI Sample Rate',
+      bitRate: 'xAI Bit Rate'
     },
     minimax: {
       model: 'MiniMax TTS Model',
@@ -460,6 +543,10 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     },
     piper: {
       voice: 'Piper Voice'
+    },
+    deepinfra: {
+      model: 'DeepInfra TTS Model',
+      voice: 'DeepInfra Voice'
     }
   },
   memory: {
@@ -475,8 +562,14 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   compression: {
     enabled: 'Auto-Compression',
     threshold: 'Compression Threshold',
+    codexGpt55Autoraise: 'Codex Compression Auto-Raise',
     targetRatio: 'Compression Target',
     protectLastN: 'Protected Recent Messages'
+  },
+  auxiliary: {
+    compression: {
+      timeout: 'Compression model timeout (s)'
+    }
   },
   delegation: {
     model: 'Subagent Model',
@@ -493,13 +586,23 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
 
 export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
   model: 'Used for new chats unless you pick a different model in the composer.',
-  modelContextLength: "Leave at 0 to use the selected model's detected context window.",
+  modelContextLength:
+    "Overrides the detected context window of the MAIN chat model only (tokens). Leave at 0 to use the selected model's detected value. Does not affect auxiliary/MoA models.",
   fallbackProviders: 'Backup provider:model entries to try if the default model fails.',
   display: {
     personality: 'Default assistant style for new sessions.',
     showReasoning: 'Show reasoning sections when the backend provides them.'
   },
-  timezone: 'Used when Hermes needs local time context. Blank uses the system timezone.',
+  desktop: {
+    repoScanEnabled: 'Scan local folders for Git repositories to show in Projects.',
+    repoScanRoots: 'Folders to scan. Leave empty to scan your home directory.',
+    repoScanExcludePaths: 'Folders and their descendants to skip during repository discovery.'
+  },
+  timezone: 'IANA timezone identifier. Blank uses the system timezone.',
+  browser: {
+    useRealProfile:
+      "Local browsing uses your real logins. Hermes copies your default browser's profile (cookies, logins, preferences) into a managed snapshot and drives it with its packaged Chromium — your live profile is never opened directly, and the copy is refreshed from it on each run. Also lets the agent open a local real-profile session on request even when a cloud browser backend is configured. Only Chromium browsers (Chrome, Edge, Brave, Brave Origin, Chromium) are supported; a non-Chromium default fails with a clear message. Off by default."
+  },
   agent: {
     imageInputMode: 'Controls how image attachments are sent to the model.',
     maxTurns: 'Upper bound for tool-calling turns before Hermes stops a run.'
@@ -512,11 +615,6 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     singularityImage: 'Image used when the execution backend is Singularity.',
     modalImage: 'Image used when the execution backend is Modal.',
     daytonaImage: 'Image used when the execution backend is Daytona.'
-  },
-  desktop: {
-    repoScanEnabled: 'Scan local folders for Git repositories to show in Projects.',
-    repoScanRoots: 'Folders to scan. Leave empty to scan your home directory.',
-    repoScanExcludePaths: 'Folders and their descendants to skip during repository discovery.'
   },
   codeExecution: {
     mode: 'How strictly code execution is scoped to the current project.'
@@ -540,15 +638,34 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     engine: 'Strategy for managing long conversations near the context limit.'
   },
   compression: {
-    enabled: 'Summarize older context when conversations get large.'
+    enabled: 'Summarize older context when conversations get large.',
+    codexGpt55Autoraise: 'Raise compression to 85% for supported ChatGPT Codex OAuth models.'
+  },
+  auxiliary: {
+    compression: {
+      timeout:
+        'Seconds to wait for the auxiliary compression model per call (default 120). Raise for slow local models.'
+    }
   },
   voice: {
-    autoTts: 'Automatically speak assistant responses.'
+    autoTts: 'Automatically speak assistant responses.',
+    voiceChatMode:
+      'chained: speech-to-text → Hermes → text-to-speech with the providers below. gpt-live: one full-duplex OpenAI voice model (gpt-live-1) listens and talks, and hands every real request to Hermes — any model you have selected answers with the full toolset. Needs an OpenAI API key; the voice layer bills $0.05 per minute.',
+    gptLive: {
+      voice: 'Voice for GPT-Live mode. Custom voice IDs are accepted.',
+      instructions:
+        'Extra sentences for the live voice persona (tone, pace, language). Hermes keeps its own system prompt.'
+    }
   },
   tts: {
     xai: {
       voiceId: 'xAI voice ID (e.g. eve) or a custom voice ID.',
-      language: 'Spoken language code, e.g. en.'
+      language: 'Spoken language code (e.g. en, pt-BR) or "auto" for auto-detection.',
+      speed: 'Playback speed. 0.7 = slower, 1.0 = normal, 1.5 = faster.',
+      autoSpeechTags: 'Let an LLM insert expressive audio tags ([laughing], [sighs]) into the script before synthesis.',
+      optimizeStreamingLatency: 'Latency vs. quality trade-off. 0 = best quality, 2 = lowest latency.',
+      sampleRate: 'Audio sample rate in Hz. Higher = better quality, larger files.',
+      bitRate: 'MP3 bitrate in bps. Only applies when codec is mp3.'
     },
     neutts: {
       device: 'Local inference device for NeuTTS.'
@@ -567,18 +684,26 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
   }
 })
 
-// The config tabs and their dotted config keys. `appearance` carries no schema
-// keys (it's a custom tab bound to the theme engine). Ported from desktop; keys
-// kept in sync with the backend config schema.
+// Curated desktop config surface: only fields a user might tune from the app.
 export const SECTIONS: DesktopConfigSection[] = [
-  { id: 'model', label: 'Model', icon: Box, keys: ['model_context_length', 'fallback_providers', 'model_overrides'] },
+  {
+    id: 'model',
+    label: 'Model',
+    icon: Box,
+    keys: ['model_context_length', 'fallback_providers']
+  },
   {
     id: 'chat',
     label: 'Chat',
     icon: MessageCircle,
-    keys: ['display.personality', 'timezone', 'display.show_reasoning', 'display.timestamps', 'agent.image_input_mode']
+    keys: ['display.personality', 'timezone', 'display.show_reasoning', 'agent.image_input_mode']
   },
-  { id: 'appearance', label: 'Appearance', icon: Palette, keys: [] },
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    icon: Palette,
+    keys: []
+  },
   {
     id: 'workspace',
     label: 'Workspace',
@@ -605,10 +730,14 @@ export const SECTIONS: DesktopConfigSection[] = [
       'command_allowlist',
       'security.redact_secrets',
       'security.allow_private_urls',
-      'browser.allow_private_urls',
-      'browser.auto_local_for_private_urls',
       'checkpoints.enabled'
     ]
+  },
+  {
+    id: 'browser',
+    label: 'Browser',
+    icon: Globe,
+    keys: ['browser.use_real_profile', 'browser.allow_private_urls', 'browser.auto_local_for_private_urls']
   },
   {
     id: 'memory',
@@ -623,10 +752,10 @@ export const SECTIONS: DesktopConfigSection[] = [
       'context.engine',
       'compression.enabled',
       'compression.threshold',
+      'compression.codex_gpt55_autoraise',
       'compression.target_ratio',
       'compression.protect_last_n',
-      'compression.tail_mode',
-      'memory.nudge_interval'
+      'auxiliary.compression.timeout'
     ]
   },
   {
@@ -634,6 +763,9 @@ export const SECTIONS: DesktopConfigSection[] = [
     label: 'Voice',
     icon: Mic,
     keys: [
+      'voice.voice_chat_mode',
+      'voice.gpt_live.voice',
+      'voice.gpt_live.instructions',
       'tts.provider',
       'stt.enabled',
       'stt.echo_transcripts',
@@ -646,6 +778,11 @@ export const SECTIONS: DesktopConfigSection[] = [
       'tts.elevenlabs.model_id',
       'tts.xai.voice_id',
       'tts.xai.language',
+      'tts.xai.speed',
+      'tts.xai.auto_speech_tags',
+      'tts.xai.optimize_streaming_latency',
+      'tts.xai.sample_rate',
+      'tts.xai.bit_rate',
       'tts.minimax.model',
       'tts.minimax.voice_id',
       'tts.mistral.model',
@@ -657,6 +794,8 @@ export const SECTIONS: DesktopConfigSection[] = [
       'tts.kittentts.model',
       'tts.kittentts.voice',
       'tts.piper.voice',
+      'tts.deepinfra.model',
+      'tts.deepinfra.voice',
       'stt.local.model',
       'stt.local.language',
       'stt.openai.model',
@@ -668,7 +807,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.elevenlabs.diarize',
       'voice.record_key',
       'voice.max_recording_seconds',
-      'voice.submit_mode'
+      'voice.client_direct'
     ]
   },
   {
@@ -677,6 +816,7 @@ export const SECTIONS: DesktopConfigSection[] = [
     icon: Wrench,
     keys: [
       'toolsets',
+      'terminal.backend',
       'terminal.timeout',
       'terminal.docker_image',
       'terminal.singularity_image',
@@ -696,23 +836,19 @@ export const SECTIONS: DesktopConfigSection[] = [
       'delegation.max_concurrent_children',
       'delegation.child_timeout_seconds',
       'delegation.reasoning_effort',
-      'updates.non_interactive_local_changes',
-      // The 08-18 + 08-20 backend sync (MJXHRM-443). Dot-paths verified against
-      // hermes_cli/config_defaults.py DEFAULT_CONFIG, which is what
-      // web_server._build_schema_from_config derives /api/config/schema from —
-      // three of them are not where the sync notes said (`nofile_soft_limit` is
-      // under `runtime.`, and execution_guidance/reasoning_echo under `agent.`,
-      // not `model.`).
-      'agent.run_budget_seconds',
-      'agent.stall_guards',
-      'agent.execution_guidance',
-      'agent.reasoning_echo',
-      'timeouts.tools.sequential_call',
-      'web.keyless_fallback',
-      'web.keyless_rescue',
-      'web.provider_tier',
-      'cron.media_send_timeout_seconds',
-      'runtime.nofile_soft_limit'
+      'updates.non_interactive_local_changes'
     ]
   }
+]
+
+export interface ModeOption {
+  id: ThemeMode
+  label: string
+  icon: IconComponent
+}
+
+export const MODE_OPTIONS: ModeOption[] = [
+  { id: 'light', label: 'Light', icon: Sun },
+  { id: 'dark', label: 'Dark', icon: Moon },
+  { id: 'system', label: 'System', icon: Monitor }
 ]

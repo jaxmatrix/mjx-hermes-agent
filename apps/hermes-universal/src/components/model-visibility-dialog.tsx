@@ -1,6 +1,7 @@
+import type { ModelOptionProvider, ModelOptionsResult } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -13,31 +14,28 @@ import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { Search } from '@/lib/icons'
 import { modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
-import { modelDisplayParts } from '@/lib/model-status-label'
-import { normalize } from '@/lib/text'
+import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
+import { foldIncludes, normalize } from '@/lib/text'
 import {
   $visibleModels,
   collapseModelFamilies,
-  curatedFamilies,
   effectiveVisibleKeys,
   modelVisibilityKey,
+  seedKnownModels,
   setProviderVisibility,
   setVisibleModels,
   toggleModelVisibility
 } from '@/store/model-visibility'
 import { $collapsedProviders, toggleCollapsedProvider } from '@/store/provider-collapse'
-import type { ModelOptionProvider, ModelOptionsResponse } from '@/types/hermes'
 
 interface ModelVisibilityDialogProps {
   gw?: HermesGateway
   onOpenChange: (open: boolean) => void
-  /** Hand-off to the provider setup surface. Omit in a window that has no such
-   *  surface (a satellite chat) — the footer row then stands down rather than
-   *  offering a link with nowhere to go, exactly as the picker's does. */
-  onOpenProviders?: () => void
+  onOpenProviders: () => void
   open: boolean
+  ownerConnectionId?: string
   profile?: string
-  sessionId?: null | string
+  sessionId?: string | null
 }
 
 export function ModelVisibilityDialog({
@@ -45,6 +43,7 @@ export function ModelVisibilityDialog({
   onOpenChange,
   onOpenProviders,
   open,
+  ownerConnectionId,
   profile = 'default',
   sessionId
 }: ModelVisibilityDialogProps) {
@@ -55,10 +54,8 @@ export function ModelVisibilityDialog({
   const collapsedProviders = useStore($collapsedProviders)
 
   const modelOptions = useQuery({
-    // The same key the model menu and the picker use, so all three share the
-    // cached catalog rather than each refetching it.
-    queryKey: modelOptionsQueryKey(profile, sessionId),
-    queryFn: (): Promise<ModelOptionsResponse> => requestModelOptions({ gateway: gw, sessionId }),
+    queryKey: modelOptionsQueryKey(profile, sessionId, ownerConnectionId),
+    queryFn: (): Promise<ModelOptionsResult> => requestModelOptions({ gateway: gw, profile, sessionId }),
     enabled: open
   })
 
@@ -67,21 +64,26 @@ export function ModelVisibilityDialog({
     [modelOptions.data]
   )
 
+  useEffect(() => seedKnownModels(providers), [providers])
+
   const visible = effectiveVisibleKeys(stored, providers)
 
   const toggle = (provider: ModelOptionProvider, model: string) => {
-    setVisibleModels(toggleModelVisibility($visibleModels.get(), providers, provider.slug, model))
+    setVisibleModels(toggleModelVisibility($visibleModels.get(), providers, provider.slug, model), providers)
   }
 
   const setProviderVisible = (provider: ModelOptionProvider, next: boolean) => {
-    setVisibleModels(setProviderVisibility($visibleModels.get(), providers, provider.slug, next))
+    setVisibleModels(setProviderVisibility($visibleModels.get(), providers, provider.slug, next), providers)
   }
 
   const q = normalize(search)
 
+  const matches = (provider: ModelOptionProvider, model: string) =>
+    !q || foldIncludes(`${model} ${provider.name} ${provider.slug} ${displayModelName(model)}`, q)
+
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-xs gap-0 overflow-hidden p-0">
+      <DialogContent bodyClassName="gap-0 overflow-hidden p-0" className="max-w-xs">
         <DialogHeader className="px-3 pb-1 pt-3">
           <DialogTitle className="text-[0.8125rem]">{copy.title}</DialogTitle>
         </DialogHeader>
@@ -105,19 +107,13 @@ export function ModelVisibilityDialog({
             </div>
           ) : (
             providers.map(provider => {
-              // This dialog is where hidden models are found again, so it lists
-              // EVERY family (visibility is the switch, not the filter) — only
-              // the search narrows it. Passing an all-inclusive `visible` set
-              // reuses the one curation/search matcher the pickers use.
-              const allFamilies = collapseModelFamilies(provider.models ?? [])
+              const models = collapseModelFamilies(provider.models ?? []).filter(family => matches(provider, family.id))
 
-              const everyKey = new Set(allFamilies.map(family => modelVisibilityKey(provider.slug, family.id)))
-
-              const families = curatedFamilies(provider, { search, visible: everyKey })
-
-              if (families.length === 0) {
+              if (models.length === 0) {
                 return null
               }
+
+              const allFamilies = collapseModelFamilies(provider.models ?? [])
 
               const onCount = allFamilies.filter(family =>
                 visible.has(modelVisibilityKey(provider.slug, family.id))
@@ -125,8 +121,6 @@ export function ModelVisibilityDialog({
 
               const checkState = onCount === 0 ? false : onCount === allFamilies.length ? true : 'indeterminate'
 
-              // Collapsed when the user stored it — but never while searching,
-              // which spans every provider regardless of collapse state.
               const collapsed = collapsedProviders.includes(provider.slug) && !q
 
               return (
@@ -138,7 +132,7 @@ export function ModelVisibilityDialog({
                       type="button"
                     >
                       <span className="min-w-0 truncate">
-                        <HighlightMatches query={search} text={provider.name} />
+                        <HighlightMatches foldSeparators query={search} text={provider.name} />
                       </span>
                       <DisclosureCaret
                         className="shrink-0 opacity-0 transition group-hover/label:opacity-100"
@@ -146,16 +140,13 @@ export function ModelVisibilityDialog({
                         size="0.625rem"
                       />
                     </button>
-                    {/* Select-all: tri-state, so a partially customized provider
-                        reads as partial rather than as "off". */}
                     <Checkbox
-                      aria-label={provider.name}
                       checked={checkState}
                       onCheckedChange={next => setProviderVisible(provider, next !== false)}
                     />
                   </div>
                   {!collapsed &&
-                    families.map(family => {
+                    models.map(family => {
                       const { name, tag } = modelDisplayParts(family.id)
                       const key = modelVisibilityKey(provider.slug, family.id)
 
@@ -165,7 +156,7 @@ export function ModelVisibilityDialog({
                           key={key}
                         >
                           <span className="min-w-0 flex-1 truncate">
-                            <HighlightMatches query={search} text={name} />
+                            <HighlightMatches foldSeparators query={search} text={name} />
                             {tag ? <span className="text-(--ui-text-tertiary)"> {tag}</span> : null}
                           </span>
                           <Switch
@@ -182,22 +173,20 @@ export function ModelVisibilityDialog({
           )}
         </div>
 
-        {onOpenProviders && (
-          <div className="px-3 py-2">
-            <Button
-              className="-ms-2 text-(--ui-text-tertiary)"
-              onClick={() => {
-                onOpenChange(false)
-                onOpenProviders()
-              }}
-              size="xs"
-              type="button"
-              variant="text"
-            >
-              {copy.addProvider}
-            </Button>
-          </div>
-        )}
+        <div className="px-3 py-2">
+          <Button
+            className="-ml-2 text-(--ui-text-tertiary)"
+            onClick={() => {
+              onOpenChange(false)
+              onOpenProviders()
+            }}
+            size="xs"
+            type="button"
+            variant="text"
+          >
+            {copy.addProvider}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   )

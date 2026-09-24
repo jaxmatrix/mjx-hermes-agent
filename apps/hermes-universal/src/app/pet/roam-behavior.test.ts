@@ -1,85 +1,85 @@
 import { describe, expect, it } from 'vitest'
 
-import { chooseMove, dwellMs, HOP_CHANCE, PAUSE_DWELL, pickStrollTarget, REST_CHANCE } from './roam-behavior'
-import type { Span } from './wall-geometry'
+import {
+  chooseMove,
+  dwellMs,
+  type DwellRange,
+  HOP_CHANCE,
+  pickStrollTarget,
+  REST_CHANCE,
+  type Rng
+} from './roam-behavior'
+import type { Ledge } from './roam-geometry'
 
-/** A scripted rng, so a "random" decision is an assertion rather than a hope. */
-function scripted(...values: number[]): () => number {
-  let i = 0
+// Deterministic rng that replays a fixed sequence (last value sticks).
+const seq =
+  (...vals: number[]): Rng =>
+  () =>
+    vals.shift() ?? vals[vals.length - 1] ?? 0
 
-  return () => values[Math.min(i++, values.length - 1)] ?? 0
-}
+const RANGE: DwellRange = { maxMs: 13000, meanMs: 4000, minMs: 1500 }
+const ledge = (left: number, right: number, y = 0): Ledge => ({ left, right, y })
 
 describe('dwellMs', () => {
-  it('floors at minMs so a near-zero draw is not a jittery micro-pause', () => {
-    expect(dwellMs(PAUSE_DWELL, () => 0)).toBe(PAUSE_DWELL.minMs)
+  it('clamps the degenerate draws to the floor and ceiling', () => {
+    // rng→0 ⇒ u=1 ⇒ -ln(1)·mean = 0, raised to the floor.
+    expect(dwellMs(RANGE, () => 0)).toBe(RANGE.minMs)
+    // rng→~1 ⇒ u→0 ⇒ -ln(u) blows up, capped at the ceiling.
+    expect(dwellMs(RANGE, () => 1 - 1e-9)).toBe(RANGE.maxMs)
   })
 
-  it('saturates at maxMs so a fat-tail draw cannot freeze the pet', () => {
-    expect(dwellMs(PAUSE_DWELL, () => 1 - Number.EPSILON)).toBeLessThanOrEqual(PAUSE_DWELL.maxMs)
-    expect(dwellMs(PAUSE_DWELL, () => 0.999999)).toBe(PAUSE_DWELL.maxMs)
+  it('returns the mean at the exponential median point', () => {
+    // rng = 1 - 1/e ⇒ u = 1/e ⇒ -ln(u) = 1 ⇒ exactly the mean.
+    expect(dwellMs(RANGE, () => 1 - 1 / Math.E)).toBeCloseTo(RANGE.meanMs, 6)
   })
 
-  it('lands inside the range for a middling draw', () => {
-    const ms = dwellMs(PAUSE_DWELL, () => 0.5)
+  it('stays within [min, max] across the whole rng domain', () => {
+    let state = 0.123456789
 
-    expect(ms).toBeGreaterThanOrEqual(PAUSE_DWELL.minMs)
-    expect(ms).toBeLessThanOrEqual(PAUSE_DWELL.maxMs)
+    for (let i = 0; i < 5000; i++) {
+      state = (state * 9301 + 0.49297) % 1 // cheap deterministic walk
+      const ms = dwellMs(RANGE, () => state)
+      expect(ms).toBeGreaterThanOrEqual(RANGE.minMs)
+      expect(ms).toBeLessThanOrEqual(RANGE.maxMs)
+    }
   })
 })
 
 describe('chooseMove', () => {
-  it('rests on the common draw — loafing is the default, not pacing', () => {
-    expect(chooseMove(true, () => REST_CHANCE - 0.01)).toBe('rest')
+  it('rests whenever the first draw lands under restChance — even where it could hop', () => {
+    expect(chooseMove(true, seq(0))).toBe('rest')
+    expect(chooseMove(false, seq(REST_CHANCE - 1e-9))).toBe('rest')
   })
 
-  it('hops when it moves, can hop, and the dice agree', () => {
-    expect(chooseMove(true, scripted(REST_CHANCE + 0.01, HOP_CHANCE - 0.01))).toBe('hop')
+  it('strolls when moving with nowhere to hop', () => {
+    expect(chooseMove(false, seq(0.99))).toBe('stroll')
   })
 
-  it('strolls when the hop draw misses', () => {
-    expect(chooseMove(true, scripted(REST_CHANCE + 0.01, HOP_CHANCE + 0.01))).toBe('stroll')
-  })
-
-  it('never hops in place when nothing is reachable', () => {
-    expect(chooseMove(false, scripted(REST_CHANCE + 0.01, 0))).toBe('stroll')
+  it('hops only when moving, a ledge is reachable, and the second draw says so', () => {
+    expect(chooseMove(true, seq(0.99, HOP_CHANCE - 1e-9))).toBe('hop')
+    expect(chooseMove(true, seq(0.99, HOP_CHANCE))).toBe('stroll')
   })
 })
 
 describe('pickStrollTarget', () => {
-  const span: Span = { from: 0, to: 400 }
-
-  it('covers ground rather than shuffling', () => {
-    const target = pickStrollTarget(span, 0, () => 0)
-
-    expect(Math.abs(target - 0)).toBeGreaterThanOrEqual(110)
+  it('collapses to the left edge on a ledge too narrow to walk', () => {
+    expect(pickStrollTarget(ledge(100, 102), 100, seq(0))).toBe(100)
   })
 
-  it('stays inside the span', () => {
-    for (const u of [0, 0.25, 0.5, 0.75, 0.999]) {
-      const target = pickStrollTarget(span, 200, () => u)
+  it('lands inside the ledge and clears the minimum travel distance', () => {
+    const wide = ledge(0, 1000)
+    const from = 500
+    const x = pickStrollTarget(wide, from, seq(0.5, 0))
 
-      expect(target).toBeGreaterThanOrEqual(span.from)
-      expect(target).toBeLessThanOrEqual(span.to)
-    }
+    expect(x).toBeGreaterThanOrEqual(wide.left)
+    expect(x).toBeLessThanOrEqual(wide.right)
+    expect(Math.abs(x - from)).toBeGreaterThanOrEqual(110) // STROLL_MIN_PX
   })
 
-  it('degenerates gracefully on a span with no room', () => {
-    expect(pickStrollTarget({ from: 40, to: 42 }, 40, () => 0.5)).toBe(40)
-  })
-
-  it('is orientation-blind: the same span up a wall behaves identically', () => {
-    // The span is a tangent range, so a floor from 0..400 and a wall from
-    // 0..400 must produce the same answer — that is what let wall-walking
-    // land without touching this file's logic.
-    const onFloor = pickStrollTarget({ from: 0, to: 400 }, 100, () => 0.3)
-    const onWall = pickStrollTarget({ from: 0, to: 400 }, 100, () => 0.3)
-
-    expect(onWall).toBe(onFloor)
-  })
-
-  it('leans toward the roomier side', () => {
-    // Sitting near the start, the roomier direction is "onward".
-    expect(pickStrollTarget(span, 20, () => 0)).toBeGreaterThan(20)
+  it('heads toward the side with more room', () => {
+    // Pinned near the right wall, the roomier side is left. First draw clears the
+    // rare double-back coin ⇒ it commits to the roomy (left) side ⇒ target < x.
+    const x = pickStrollTarget(ledge(0, 1000), 950, seq(0.5, 0))
+    expect(x).toBeLessThan(950)
   })
 })

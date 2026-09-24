@@ -4,9 +4,11 @@ import { IS_DESKTOP, IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $sessionId } from '@/store/chat'
-import { $leftEdgeOpen, $panesFlipped, $terminalOpen } from '@/store/layout'
+import { $panesFlipped } from '@/store/layout'
+import { $leftEdgeOpen } from '@/store/layout-edges'
 import { $reviewOpen } from '@/store/review'
-import { $activeStoredSessionId } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
+import { $terminalOpen } from '@/store/terminal-open'
 import { isSatelliteWindow, isSecondaryWindow } from '@/store/windows'
 
 // The chat title header — ported from desktop's in-pane ChatHeader

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -18,9 +18,9 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undef
 
 import { applyResumedApproval, readApprovalPayload, replayPendingApproval } from '@/store/approvals'
 import { routeGatewayEvent } from '@/store/event-router'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { clearAllPrompts, sessionApprovalRequest } from '@/store/prompts'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 /**
  * MJXHRM-458. An approval is not a `_block()` prompt — it queues in
@@ -31,7 +31,7 @@ import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
 describe('approval queue correlation', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
     vi.mocked(requestGateway).mockReset()
     vi.mocked(requestGateway).mockResolvedValue({})
@@ -139,7 +139,7 @@ describe('approval queue correlation', () => {
 
     it('ignores a session with nothing parked, and a nameless one', () => {
       expect(applyResumedApproval('s1', {})).toBe(false)
-      expect(applyResumedApproval('s1', { pending_approval: null })).toBe(false)
+      expect(applyResumedApproval('s1', { pending_approval: undefined })).toBe(false)
       expect(applyResumedApproval('s1', { pending_approval: { command: 'rm -rf /' } })).toBe(false)
       expect(sessionApprovalRequest('s1').get()).toBeNull()
     })

@@ -1,10 +1,11 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { resolveBrandIcon } from '@/lib/brand-icon'
 import { ArrowUpRight } from '@/lib/icons'
-import { IS_TAURI } from '@/lib/platform'
-import { cn } from '@/lib/utils'
+import { IS_MAC } from '@/lib/keybinds/combo'
+
+import { resolveBrandIcon } from './brand-icon'
+import { cn } from './utils'
 
 const titleCache = new Map<string, string>()
 const titleInflight = new Map<string, Promise<string>>()
@@ -13,124 +14,18 @@ const titleSubs = new Map<string, Set<(value: string) => void>>()
 const URL_RE =
   /(?:https?:\/\/|www\.)[^\s<>"'`]+[^\s<>"'`.,;:!?)]|[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}(?:\/[^\s<>"'`.,;:!?)]*)?/gi
 
-// Explicit-scheme / www. URLs only — no bare-domain matching.
+// Explicit-scheme / www. URLs only — no bare-domain matching. Used where the
+// surrounding text is full of filename-shaped tokens (e.g. `agent.log`,
+// `errors.log` in a /debug report) that the bare-domain branch of URL_RE would
+// otherwise mistake for domains and linkify.
 const EXPLICIT_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"'`]+[^\s<>"'`.,;:!?)]/gi
 
 const DOMAIN_RE = /^(?:www\.)?[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}(?::\d+)?(?:[/?#][^\s]*)?$/i
 const SKIP_PROTO_RE = /^(?:file|data|mailto|javascript|blob|chrome|about|hermes):/i
 const LOCAL_HOST_RE = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?$/i
 
-// A fetched <title> that describes the FETCH rather than the page. Naming a
-// link "Just a moment…" or "Page not found" is worse than no title at all, so
-// these fall back to the URL slug instead.
 const ERROR_TITLE_RE =
   /\b(?:access denied|attention required|captcha|error|forbidden|just a moment|not found|request blocked|too many requests)\b/i
-
-// Hand a URL to the OS default handler, REPORTING whether it was taken. In a
-// Tauri webview a plain <a> or window.open would navigate the app away (or
-// no-op), so this routes through the native Rust command `open_external`, which
-// calls the opener plugin's Rust API.
-//
-// The Rust command is the only working door, not a stylistic preference. Its JS
-// counterpart (`@tauri-apps/plugin-opener`'s `openUrl`) is ACL-SCOPED: the
-// `opener:allow-open-url` permission this app grants enables the command
-// "without any pre-configured scope", and the plugin's `open_url` answers
-// `Err(ForbiddenUrl)` unless some scope entry MATCHES the url. No scope is
-// declared anywhere in `capabilities/` or `tauri.conf.json`, so the allow-list is
-// empty and every url is forbidden — the JS path fails for all of them, on every
-// platform. A Rust-internal `app.opener().open_url(..)` is not scope-checked at
-// all. See `open_external` in `src-tauri/src/lib.rs`; eslint bans the JS import
-// so this cannot be rediscovered a third time.
-//
-// False off Tauri (plain-web dev / vitest) — there is no OS door there to report on.
-export async function tryOpenExternalLink(url: string): Promise<boolean> {
-  if (!IS_TAURI) {
-    return false
-  }
-
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('open_external', { url })
-
-    return true
-  } catch {
-    return false
-  }
-}
-
-// Fire-and-forget twin for UI callers (links, menu items) with nothing to say
-// about a failure: off Tauri, or when the native command is unavailable, it falls
-// back to window.open rather than reporting anything.
-export async function openExternalLink(url: string): Promise<void> {
-  if (await tryOpenExternalLink(url)) {
-    return
-  }
-
-  try {
-    window.open(url, '_blank', 'noopener,noreferrer')
-  } catch {
-    /* nothing to do */
-  }
-}
-
-/**
- * Does this click want the OS browser rather than the in-app one?
- *
- * Desktop's rule, kept exactly: the platform modifier and the middle button are
- * the escape hatch, and everything else stays in Hermes. Middle-click needs its
- * own handler because it never fires `click` — the `auxclick` event is the only
- * one it produces, and forgetting that is how "middle-click opens two tabs" and
- * "middle-click does nothing" both happen.
- */
-export function wantsNativeBrowser(event: {
-  button?: number
-  ctrlKey?: boolean
-  metaKey?: boolean
-  shiftKey?: boolean
-}): boolean {
-  if (event.button === 1) {
-    return true
-  }
-
-  // ⌘ on macOS, Ctrl elsewhere — the same modifier that opens a new tab in
-  // every browser. Shift is a new WINDOW, which is equally "not here".
-  return !!(event.metaKey || event.ctrlKey || event.shiftKey)
-}
-
-/**
- * THE link funnel. Every `<ExternalLink>` in the app goes through it.
- *
- * http(s) opens in the in-app browser when the user has left that on and the
- * platform has a guest host; everything else — `mailto:`, `tel:`, an installed
- * app's scheme, a ⌘-click, a middle-click — goes to the OS. The pane exists so
- * that reading a doc does not cost a context switch out of Hermes, AND so that
- * the surface is one the agent can read; a per-call-site opt-in would leave
- * most links outside both.
- *
- * The browser store is imported LAZILY: this module is a leaf that every
- * surface pulls in, and the store reaches the whole Tauri command layer.
- */
-export async function openLink(href: string, options: { native?: boolean } = {}): Promise<void> {
-  const target = normalizeExternalUrl(href)
-
-  if (options.native || !/^https?:\/\//i.test(target)) {
-    await openExternalLink(target)
-
-    return
-  }
-
-  try {
-    const { $openLinksInApp, openInAppBrowser } = await import('@/store/browser')
-
-    if ($openLinksInApp.get() && (await openInAppBrowser(target))) {
-      return
-    }
-  } catch {
-    // A browser store that cannot load is not a reason to swallow the click.
-  }
-
-  await openExternalLink(target)
-}
 
 export function normalizeExternalUrl(value: string): string {
   const trimmed = value.trim()
@@ -218,8 +113,18 @@ export function urlSlugTitleLabel(value: string): string {
   return hostPathLabel(value)
 }
 
+/** Authorization URLs must never be consumed by link-title previews. */
+export function isConnectorAuthorizationLink(value: string): boolean {
+  const url = parseUrl(value)
+
+  // Composio links are single-use; keep previews away until the gateway exposes authorization URL metadata.
+  return (
+    !!url && url.protocol === 'https:' && url.hostname === 'connect.composio.dev' && url.pathname.startsWith('/link/')
+  )
+}
+
 export function isTitleFetchable(value: string): boolean {
-  if (!value || SKIP_PROTO_RE.test(value)) {
+  if (!value || SKIP_PROTO_RE.test(value) || isConnectorAuthorizationLink(value)) {
     return false
   }
 
@@ -228,12 +133,6 @@ export function isTitleFetchable(value: string): boolean {
   return Boolean(url && /^https?:$/.test(url.protocol) && !LOCAL_HOST_RE.test(url.host))
 }
 
-// Resolve an external link's page title via the native `fetch_link_title`
-// command (reqwest GET + <title>/og:title parse in Rust — the webview can't
-// fetch cross-origin). Results are cached and in-flight requests deduped;
-// subscribers (useLinkTitle) are notified when the title lands. Off Tauri
-// (plain-web dev / vitest) resolves to '' — PrettyLink then falls back to its
-// label / URL slug, preserving rendering parity.
 export function fetchLinkTitle(url: string): Promise<string> {
   const normalizedUrl = normalizeExternalUrl(url)
   const key = titleCacheKey(normalizedUrl)
@@ -252,29 +151,25 @@ export function fetchLinkTitle(url: string): Promise<string> {
     return pending
   }
 
-  if (!IS_TAURI) {
+  const bridge = typeof window === 'undefined' ? undefined : window.hermesDesktop?.fetchLinkTitle
+
+  if (!bridge) {
     titleCache.set(key, '')
 
     return Promise.resolve('')
   }
 
-  const promise = (async () => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const raw = await invoke<string>('fetch_link_title', { url: normalizedUrl })
-      const clean = (raw || '').replace(/\s+/g, ' ').trim()
+  const promise = bridge(normalizedUrl)
+    .then(value => (value || '').replace(/\s+/g, ' ').trim())
+    .then(clean => (clean && !ERROR_TITLE_RE.test(clean) ? clean : ''))
+    .catch(() => '')
+    .then(safe => {
+      titleCache.set(key, safe)
+      titleInflight.delete(key)
+      titleSubs.get(key)?.forEach(sub => sub(safe))
 
-      return clean && !ERROR_TITLE_RE.test(clean) ? clean : ''
-    } catch {
-      return ''
-    }
-  })().then(safe => {
-    titleCache.set(key, safe)
-    titleInflight.delete(key)
-    titleSubs.get(key)?.forEach(sub => sub(safe))
-
-    return safe
-  })
+      return safe
+    })
 
   titleInflight.set(key, promise)
 
@@ -311,14 +206,84 @@ export function useLinkTitle(url?: null | string): string {
   return title
 }
 
+export function openExternalLink(href: string): void {
+  if (href) {
+    void window.hermesDesktop?.openExternal?.(href)
+  }
+}
+
+/**
+ * True when a click asked for the SYSTEM browser — ⌘ on macOS, Ctrl elsewhere,
+ * the modifier every app uses for "open this somewhere else". Middle-click
+ * counts too: it is the other half of the same convention.
+ */
+export function wantsNativeBrowser(event: Pick<MouseEvent, 'button' | 'ctrlKey' | 'metaKey'>): boolean {
+  return event.button === 1 || (IS_MAC ? event.metaKey : event.ctrlKey)
+}
+
+/**
+ * The HUD is a chrome-free bar with no in-app browser. A preview tile there
+ * either no-ops or tries to paint a webview into the transparent overlay —
+ * the OAuth-in-the-HUD case. Always hand off to the OS browser.
+ */
+export function hudForcesNativeLinks(search = typeof window === 'undefined' ? '' : window.location.search): boolean {
+  try {
+    return new URLSearchParams(search).get('win') === 'hud'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Where a link the user clicked should open.
+ *
+ * A web page opens in the in-app browser — that pane exists so reading a doc
+ * doesn't cost a context switch out of Hermes, and it is the surface the agent
+ * can see. ⌘/Ctrl-click (or middle-click) escapes to the real browser, which is
+ * where you go for anything needing your logged-in session or a password.
+ *
+ * Everything that ISN'T a web page — `mailto:`, `file:`, a custom scheme — has
+ * no business in the webview and always hands off to the OS. The HUD has no
+ * browser pane, so it always takes the OS path.
+ */
+export function openLink(href: string, options: { native?: boolean } = {}): void {
+  const target = normalizeExternalUrl(href)
+
+  if (!target) {
+    return
+  }
+
+  if (
+    options.native ||
+    isConnectorAuthorizationLink(target) ||
+    hudForcesNativeLinks() ||
+    !/^https?:$/i.test(parseUrl(target)?.protocol ?? '')
+  ) {
+    openExternalLink(target)
+
+    return
+  }
+
+  // Lazy: this module is a leaf every surface imports, and the preview store
+  // pulls the layout/session graph behind it. A static edge would make one
+  // link helper drag that whole tree into anything that renders a link. The
+  // tab lands a microtask later, which is invisible.
+  void import('@/store/preview').then(({ openPreview }) =>
+    openPreview({ kind: 'url', label: hostPathLabel(target), source: target, url: target })
+  )
+}
+
 interface ExternalLinkProps extends Omit<ComponentProps<'a'>, 'href' | 'target'> {
   href: string
   children?: ReactNode
+  /** Skip the in-app pane. For links whose whole point is the session you are
+   *  signed into over there — a cloud console, an account page. */
+  native?: boolean
   showExternalIcon?: boolean
 }
 
 export function ExternalLinkIcon({ className }: { className?: string }) {
-  return <ArrowUpRight aria-hidden className={cn('ms-1 inline size-[0.78em] align-[-0.08em] opacity-70 rtl:-scale-x-100', className)} />
+  return <ArrowUpRight aria-hidden className={cn('ms-1 inline size-[0.78em] align-[-0.08em] opacity-70', className)} />
 }
 
 // Brand mark for a known host, sized in `em` so it tracks the surrounding text
@@ -341,27 +306,30 @@ export function ExternalLink({
   children,
   className,
   href,
+  native = false,
   onClick,
   showExternalIcon = false,
   ...rest
 }: ExternalLinkProps) {
   const target = normalizeExternalUrl(href)
 
+  // No menu wiring here: the app context-menu coordinator resolves a
+  // right-click on any `a[href]` to the link menu (open in-app / open
+  // external / copy URL / copy resolved URL).
   return (
     <a
       className={cn('ref', className)}
       href={target}
+      // Middle-click never fires `click`; it's the other half of the
+      // open-elsewhere convention, so it has to be caught on its own.
       onAuxClick={event => {
-        // Middle-click never fires `click`, so without this the escape hatch
-        // simply does not exist — and the browser's own default would navigate
-        // the APP document away.
         if (event.button !== 1) {
           return
         }
 
-        event.stopPropagation()
         event.preventDefault()
-        void openLink(target, { native: true })
+        event.stopPropagation()
+        openExternalLink(target)
       }}
       onClick={event => {
         event.stopPropagation()
@@ -372,7 +340,7 @@ export function ExternalLink({
         }
 
         event.preventDefault()
-        void openLink(target, { native: wantsNativeBrowser(event) })
+        openLink(target, { native: native || wantsNativeBrowser(event.nativeEvent) })
       }}
       rel="noopener noreferrer"
       target="_blank"
@@ -434,6 +402,49 @@ export function LinkifiedText({ className, explicitOnly = false, pretty = true, 
           {raw}
         </ExternalLink>
       )
+    )
+
+    cursor = index + raw.length
+  }
+
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor))
+  }
+
+  return <span className={className}>{nodes.length ? nodes : text}</span>
+}
+
+const MD_LINK_RE = /\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/g
+
+/**
+ * Inline `[label](url)` and nothing else.
+ *
+ * For short authored strings — a catalog entry's setup steps — where the
+ * label carries the meaning ("enable the Docs API") and the URL is a console
+ * page whose own title is useless or, behind a login wall, actively wrong.
+ * `LinkifiedText` can't serve this: it finds bare URLs and guesses a label.
+ * Full markdown is the other extreme, a block renderer inside a card row.
+ *
+ * These open in the real browser. The destination is a console the user is
+ * already signed into there, and the work is a form to fill in and a secret to
+ * copy back — none of which the in-app pane is for.
+ */
+export function MarkdownLinkText({ className, text }: { className?: string; text: string }) {
+  const nodes: ReactNode[] = []
+  let cursor = 0
+
+  for (const match of text.matchAll(MD_LINK_RE)) {
+    const [raw, label, href] = match
+    const index = match.index ?? 0
+
+    if (index > cursor) {
+      nodes.push(text.slice(cursor, index))
+    }
+
+    nodes.push(
+      <ExternalLink href={href} key={`${href}-${index}`} native title={href}>
+        {label}
+      </ExternalLink>
     )
 
     cursor = index + raw.length

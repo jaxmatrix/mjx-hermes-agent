@@ -5,7 +5,7 @@ import { translateNow } from '@/i18n'
 import { runAction } from '@/lib/action-poll'
 import { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { atom, onMount } from '@/store/atom'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import { notify } from '@/store/notifications'
 import type { StatusResponse } from '@/types/hermes'
 

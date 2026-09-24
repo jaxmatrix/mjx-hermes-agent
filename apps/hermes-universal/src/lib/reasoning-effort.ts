@@ -1,44 +1,56 @@
+import { DEFAULT_REASONING_EFFORT, isReasoningEffort, type ReasoningEffort } from '@hermes/shared'
+
+export { DEFAULT_REASONING_EFFORT }
+
 import { normalize } from '@/lib/text'
 
+/** Compact labels for chrome where space is tight (pill, picker rows). Menus
+ *  and settings use the translated `shell.modelOptions` strings instead. */
+const SHORT_LABELS: Record<string, string> = {
+  none: 'Off',
+  minimal: 'Min',
+  low: 'Low',
+  medium: 'Med',
+  high: 'High',
+  xhigh: 'XHigh',
+  max: 'Max',
+  ultra: 'Ultra'
+}
+
 /**
- * The one reasoning-effort vocabulary this client knows.
- *
- * It mirrors the backend's canonical ladder — `hermes_constants.py`
- * `VALID_REASONING_EFFORTS`, which `agent/reasoning_effort.py` `EFFORT_LADDER`
- * and `gateway/platforms/api_server.py` `_REASONING_EFFORTS` both agree with
- * (`none` + these seven). Everything above `high` is real: the API server was
- * widened to accept `max`/`ultra` precisely so browser and desktop clients
- * stopped being second-class citizens of the ladder.
- *
- * A model that cannot take the level asked for is the SERVER's problem, not the
- * picker's: `clamp_effort` takes the nearest weaker level each provider wire
- * actually supports. The catalog's own `supported_efforts` is deliberately not
- * forwarded to clients (`hermes_cli/inventory.py`) because it under-reports —
- * filtering the picker by it would hide levels that demonstrably work. So the
- * picker offers the whole ladder and lets the clamp do its job.
- *
- * It lives here rather than beside one of the three surfaces that need it
- * (the model submenu, the Model settings page, the delegation config row)
- * because that is exactly how it drifted: the delegation row's copy stopped at
- * `xhigh`, so a subagent could never be asked for `max` from the UI even though
- * the gateway accepts it. Desktop keeps the same module at the same path.
- *
- * `none` is not a level — it is thinking disabled, owned by the Thinking
- * toggle rather than the scale.
+ * A pick the route does not send verbatim: `ultra` is a Hermes-internal step
+ * that every route clamps to its strongest level (`max` on OpenAI-compatible wires), and the
+ * CLI's `/reasoning` says so ("ultra (sends max on this route)"). The wire
+ * level comes from the gateway's `session.info.reasoning_effort_wire`; nothing
+ * is inferred client-side, so an unknown ('' — not yet stamped, or an
+ * optimistic pick) or verbatim wire reads as "no clamp".
  */
-export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+export function reasoningEffortClamp(
+  effort: string,
+  wire: string | undefined
+): { effort: ReasoningEffort; wire: ReasoningEffort } | null {
+  const picked = normalize(effort)
+  const sent = normalize(wire ?? '')
 
-export type ReasoningEffort = (typeof REASONING_EFFORTS)[number]
+  if (!sent || sent === picked || !isReasoningEffort(picked) || !isReasoningEffort(sent)) {
+    return null
+  }
 
-/** The scale plus the off state — the full set a config value may hold. */
-export const REASONING_EFFORT_VALUES = ['none', ...REASONING_EFFORTS] as const
+  return { effort: picked, wire: sent }
+}
 
-/** Hermes' built-in level when neither the surface nor the profile config
- *  specifies one (mirrors the backend's own fallback). */
-export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'medium'
+/** Compact label; a clamped pick shows both ends ("Ultra→Max") so the pill
+ *  never presents a Hermes step as a wire level the route does not have. */
+export function reasoningEffortLabel(effort: string, wire?: string): string {
+  const key = normalize(effort)
+  const clamp = reasoningEffortClamp(effort, wire)
 
-export const isReasoningEffort = (value: string): value is ReasoningEffort =>
-  REASONING_EFFORTS.includes(normalize(value) as ReasoningEffort)
+  if (clamp) {
+    return `${SHORT_LABELS[clamp.effort]}→${SHORT_LABELS[clamp.wire]}`
+  }
+
+  return key ? (SHORT_LABELS[key] ?? effort) : ''
+}
 
 /** Thinking is on unless a level explicitly says otherwise; an empty value
  *  means "inherit", so it resolves through `fallback` first. */

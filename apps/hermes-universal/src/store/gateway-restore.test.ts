@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(async (): Promise<unknown> => undefined) }))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+
 // Observe which connect path the boot restore dials, without real networking.
 vi.mock('@/store/connection', () => ({
   connect: vi.fn().mockResolvedValue(undefined),
@@ -14,15 +18,14 @@ vi.mock('@/lib/auth', () => ({
   oauthStatus: vi.fn().mockResolvedValue({ signedIn: false, reachable: true }),
   oauthStatusIsUnknown: (s: { reachable?: boolean }) => s?.reachable === false
 }))
-vi.mock('@/store/gateway-switch-broadcast', () => ({ broadcastGatewaySwitch: vi.fn() }))
 
 import { oauthStatus } from '@/lib/auth'
 import { connect, connectCloud, connectLocal, connectSsh } from '@/store/connection'
-import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 
 import {
   $restoring,
   autoRestoreConnection,
+  claimPendingOAuth,
   clearGatewayTarget,
   loadGatewayTarget,
   saveGatewayTarget,
@@ -51,6 +54,68 @@ describe('gateway target persistence', () => {
     expect(loadGatewayTarget()).toBeNull()
     localStorage.setItem('hermes.connection.last', JSON.stringify({ mode: 'bogus' }))
     expect(loadGatewayTarget()).toBeNull()
+  })
+})
+
+// Every booting window reads the one marker; a read-then-remove in shared
+// storage is two steps, so Rust says which window has it.
+describe('claimPendingOAuth', () => {
+  const KEY = 'hermes.oauth.pending'
+
+  it('hands the marker to the ONE window Rust names, and only that window clears it', async () => {
+    savePendingOAuth({ base: 'https://gw.b', connectionId: 'studio' })
+
+    const nonce = (JSON.parse(localStorage.getItem(KEY) ?? '{}') as { nonce?: string }).nonce
+
+    expect(nonce).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
+
+    // Two windows, both past the read before either is answered.
+    invoke.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+
+    const [loser, winner] = await Promise.all([claimPendingOAuth(), claimPendingOAuth()])
+
+    expect(invoke.mock.calls).toEqual([
+      ['connections_claim_resume', { marker: nonce }],
+      ['connections_claim_resume', { marker: nonce }]
+    ])
+    expect(loser).toBeNull()
+    expect(winner).toMatchObject({ base: 'https://gw.b', connectionId: 'studio' })
+    expect(localStorage.getItem(KEY)).toBeNull()
+  })
+
+  it('leaves the marker for its owner when another window has it', async () => {
+    savePendingOAuth({ base: 'https://gw.b' })
+    invoke.mockResolvedValueOnce(false)
+
+    await expect(claimPendingOAuth()).resolves.toBeNull()
+    expect(localStorage.getItem(KEY)).not.toBeNull()
+  })
+
+  it('names a sign-in by its nonce alone: two to one gateway are two markers', () => {
+    savePendingOAuth({ base: 'https://gw.b' })
+
+    const first = localStorage.getItem(KEY)
+
+    savePendingOAuth({ base: 'https://gw.b' })
+
+    expect(localStorage.getItem(KEY)).not.toBe(first)
+  })
+
+  it("takes an older build's marker, which has no nonce, without asking", async () => {
+    localStorage.setItem(KEY, JSON.stringify({ base: 'https://gw.b' }))
+
+    await expect(claimPendingOAuth()).resolves.toEqual({ base: 'https://gw.b' })
+    expect(invoke).not.toHaveBeenCalled()
+    expect(localStorage.getItem(KEY)).toBeNull()
+  })
+
+  it('has it outright where there is no Rust to ask, and nothing when there is no marker', async () => {
+    await expect(claimPendingOAuth()).resolves.toBeNull()
+
+    savePendingOAuth({ base: 'https://gw.b' })
+    invoke.mockRejectedValueOnce(new Error('no tauri'))
+
+    await expect(claimPendingOAuth()).resolves.toMatchObject({ base: 'https://gw.b' })
   })
 })
 
@@ -92,11 +157,10 @@ describe('autoRestoreConnection', () => {
   })
 })
 
-// On Android the sign-in navigates ONE webview away and back, which reloads the SPA —
-// and that webview need not be the shell (Settings runs in its own activity). So the
-// resume has to re-home the others, or they keep serving the gateway we just left.
+// On Android the sign-in navigates ONE webview away and back, which reloads the SPA.
+// (The other WebViews follow a REGISTERED source through Rust's commit — store/connections.)
 describe('mobile oauth resume', () => {
-  it('finishes the connect and tells every other WebView', async () => {
+  it('finishes the connect', async () => {
     savePendingOAuth({ base: 'https://gw.b', username: 'admin' })
     vi.mocked(oauthStatus).mockResolvedValueOnce({ signedIn: true })
     // connect() is mocked here, so stand in for the target it persists on success.
@@ -105,11 +169,10 @@ describe('mobile oauth resume', () => {
     await autoRestoreConnection()
 
     expect(connect).toHaveBeenCalledWith({ url: 'https://gw.b', username: 'admin' })
-    expect(broadcastGatewaySwitch).toHaveBeenCalledWith('remote', expect.objectContaining({ url: 'https://gw.b' }))
     expect($restoring.get()).toBe(false)
   })
 
-  it('does not broadcast a connect that failed', async () => {
+  it('settles when that connect fails', async () => {
     savePendingOAuth({ base: 'https://gw.b' })
     vi.mocked(oauthStatus).mockResolvedValueOnce({ signedIn: true })
     vi.mocked(connect).mockRejectedValueOnce(new Error('unreachable'))
@@ -117,7 +180,6 @@ describe('mobile oauth resume', () => {
 
     await autoRestoreConnection()
 
-    expect(broadcastGatewaySwitch).not.toHaveBeenCalled()
     expect($restoring.get()).toBe(false)
   })
 
@@ -134,7 +196,6 @@ describe('mobile oauth resume', () => {
     await autoRestoreConnection()
 
     expect(connect).toHaveBeenCalledWith({ url: 'https://gw.b', username: 'admin' })
-    expect(broadcastGatewaySwitch).toHaveBeenCalledWith('remote', expect.objectContaining({ url: 'https://gw.b' }))
     expect($restoring.get()).toBe(false)
   })
 
@@ -146,7 +207,6 @@ describe('mobile oauth resume', () => {
     await autoRestoreConnection()
 
     expect(connect).not.toHaveBeenCalled()
-    expect(broadcastGatewaySwitch).not.toHaveBeenCalled()
   })
 })
 

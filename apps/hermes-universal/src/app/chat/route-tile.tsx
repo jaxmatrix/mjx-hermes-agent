@@ -1,22 +1,39 @@
 /**
  * ROUTE (PAGE) TILES — a full-page view rendered as a layout-tree pane BESIDE
- * the main thread, the page analog of session tiles. Lifecycle mirrors session
- * tiles: `openRouteTile(path)` -> `watchRouteTiles` registers a pane docked
- * beside main -> tree adoption lands it on the chosen edge; closing removes it.
- *
- * Universal difference from desktop's `app/chat/route-tile.tsx`: desktop keeps a
- * `BUILTIN_PAGES` map beside the contributed ones because its built-in pages
- * aren't contributions. Here every page IS a `routes` contribution (MJX-52), so
- * a tile resolves Capabilities and a plugin page through the same lookup.
+ * the main thread, the page analog of session tiles. Built-in pages
+ * (Capabilities / Messaging / Artifacts) render their view; plugin pages render
+ * their `ROUTES_AREA` contribution. Lifecycle mirrors session tiles:
+ * `openRouteTile(path)` -> `watchRouteTiles` registers a pane docked beside
+ * main -> tree adoption lands it on the chosen edge; closing removes it.
  */
+
+import { lazy, type ReactNode, Suspense } from 'react'
 
 import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { $routeTiles, closeRouteTile, type RouteTile } from '@/store/route-tiles'
 
-import { contributedRoutes, ROUTES_AREA } from '../routes'
+import {
+  $routesVersion,
+  ARTIFACTS_ROUTE,
+  CAPABILITIES_ROUTE,
+  contributedRoutes,
+  MESSAGING_ROUTE,
+  ROUTES_AREA
+} from '../routes'
 
 import { paneMirror } from './pane-mirror'
+
+const CapabilitiesView = lazy(async () => ({ default: (await import('../capabilities')).CapabilitiesView }))
+const MessagingView = lazy(async () => ({ default: (await import('../messaging')).MessagingView }))
+const ArtifactsView = lazy(async () => ({ default: (await import('../artifacts')).ArtifactsView }))
+
+// Built-in page views + their pane titles, keyed by route.
+const BUILTIN_PAGES: Record<string, { render: () => ReactNode; title: string }> = {
+  [ARTIFACTS_ROUTE]: { render: () => <ArtifactsView />, title: 'Artifacts' },
+  [MESSAGING_ROUTE]: { render: () => <MessagingView />, title: 'Messaging' },
+  [CAPABILITIES_ROUTE]: { render: () => <CapabilitiesView />, title: 'Capabilities' }
+}
 
 /** Humanize a route path into a tab title: `/my-atlas` → `My Atlas`. */
 const humanizePath = (path: string): string =>
@@ -27,29 +44,47 @@ const humanizePath = (path: string): string =>
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ') || path
 
-/** Title for a route tile: the page's own `title`, else a humanized path —
- *  never the internal `${source}:${id}` key. */
+/** Title for a route tile: the built-in name, the contribution's own `title`,
+ *  else a humanized path — never the internal `${source}:${id}` key. */
 function routeTitle(path: string): string {
-  return contributedRoutes().find(route => route.path === path)?.title ?? humanizePath(path)
+  if (BUILTIN_PAGES[path]) {
+    return BUILTIN_PAGES[path].title
+  }
+
+  return contributedRoutes().find(r => r.path === path)?.title ?? humanizePath(path)
 }
 
-function RouteTilePane({ path }: { path: string }) {
-  // Subscribe so a plugin page tile appears the moment its route registers.
-  const contributions = useContributions(ROUTES_AREA)
-  const page = contributedRoutes(contributions).find(route => route.path === path)
+export function RouteTilePane({ path }: { path: string }) {
+  const builtin = BUILTIN_PAGES[path]
 
-  if (!page) {
+  // Subscribe so a plugin page tile appears the moment its route registers.
+  // The snapshot feeds the lookup: under React Compiler an independently
+  // called contributedRoutes() can stay memoized across that registration.
+  const contributions = useContributions(ROUTES_AREA)
+  const contrib = builtin ? null : contributedRoutes(contributions).find(r => r.path === path)
+
+  if (builtin) {
     return (
-      <div className="grid h-full place-items-center font-mono text-[11px] text-(--ui-text-quaternary)">
-        no page at {path}
-      </div>
+      <ContribBoundary id={path}>
+        <Suspense fallback={null}>
+          <ContribRender render={builtin.render} />
+        </Suspense>
+      </ContribBoundary>
+    )
+  }
+
+  if (contrib) {
+    return (
+      <ContribBoundary id={path}>
+        <ContribRender render={contrib.render} />
+      </ContribBoundary>
     )
   }
 
   return (
-    <ContribBoundary id={path}>
-      <ContribRender render={page.render} />
-    </ContribBoundary>
+    <div className="grid h-full place-items-center font-mono text-[11px] text-(--ui-text-quaternary)">
+      no page at {path}
+    </div>
   )
 }
 
@@ -59,13 +94,15 @@ function RouteTilePane({ path }: { path: string }) {
 
 /** Keep pane contributions mirroring `$routeTiles`. Call once from the root. */
 export const watchRouteTiles = paneMirror<RouteTile>({
-  close: closeRouteTile,
-  dir: tile => tile.dir,
-  key: tile => tile.path,
-  minWidth: '22rem',
-  kind: 'page',
-  prefix: 'route-tile',
-  render: path => <RouteTilePane path={path} />,
   source: $routeTiles,
-  title: routeTitle
+  // A tile restored before its plugin route registers must pick up the
+  // contribution's title once it lands, not keep the humanized-path fallback.
+  also: [$routesVersion],
+  key: t => t.path,
+  prefix: 'route-tile',
+  dir: t => t.dir,
+  minWidth: '22rem',
+  title: routeTitle,
+  render: path => <RouteTilePane path={path} />,
+  close: closeRouteTile
 })

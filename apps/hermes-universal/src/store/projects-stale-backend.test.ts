@@ -13,16 +13,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GatewayRpcError } from '@/gateway/rpc-error'
-import type * as GatewayModule from '@/store/gateway'
+import type * as GatewayModule from '@/store/gateway-client'
 
-const { requestGateway } = vi.hoisted(() => ({ requestGateway: vi.fn() }))
+const { gateway, requestGateway } = vi.hoisted(() => {
+  const requestGateway = vi.fn()
+
+  return {
+    gateway: { connectionState: 'open' as const, request: requestGateway },
+    requestGateway
+  }
+})
+
+vi.mock('@/store/gateway', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $gateway: atom(null),
+    activeGateway: () => gateway,
+    ensureActiveGatewayOpen: async () => gateway
+  }
+})
 
 // Partial mock: store/connection subscribes to `$gatewayState` at import time,
 // so the real module has to stay underneath.
-vi.mock('@/store/gateway', async importOriginal => ({
+vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),
   requestGateway
 }))
+
+import { $activeGatewayProfile } from '@/store/profile'
 
 import { $projects, $projectsRpcAvailable, createProject, refreshProjects } from './projects'
 
@@ -30,6 +49,7 @@ beforeEach(() => {
   requestGateway.mockReset()
   $projects.set([])
   $projectsRpcAvailable.set(null)
+  $activeGatewayProfile.set('default')
 })
 
 describe('projects on an older gateway', () => {

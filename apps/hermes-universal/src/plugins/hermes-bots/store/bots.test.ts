@@ -42,7 +42,7 @@ const {
 // `atom` too and every store in the tree would hold a different nanostore.
 vi.mock('@hermes/plugin-sdk', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  host: {
+  universalHost: {
     activeConnectionId,
     agents,
     connections,

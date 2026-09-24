@@ -1,19 +1,9 @@
+import { cva, type VariantProps } from 'class-variance-authority'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import * as React from 'react'
 
+import { usePopoverPortalContainer } from '@/components/ui/dialog-portal-context'
 import { cn } from '@/lib/utils'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
-
-// Ported from apps/desktop/src/components/ui/popover.tsx for the plugin SDK —
-// anchored non-menu content, the one primitive universal's kit was missing (core
-// screens reach for DropdownMenu / Sheet instead).
-//
-// One drop vs desktop: desktop portals into the enclosing dialog when nested in
-// one (via `usePopoverPortalContainer`) so dismissing the popover doesn't count
-// as an interaction outside the dialog. Universal has no dialog-portal context,
-// and its DropdownMenu portals to body, so this matches that convention — a
-// popover opened INSIDE a Dialog may therefore dismiss the dialog too. Prefer
-// DropdownMenu with `menuContent` inside dialogs.
 
 function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
@@ -27,6 +17,35 @@ function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitiv
   return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />
 }
 
+// Both variants are the same box, and `--popover-surface` is what the arrow
+// fills itself with — so a variant only ever has to restate the surface.
+const popoverContentVariants = cva(
+  'z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-lg p-2 outline-hidden data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+  {
+    variants: {
+      variant: {
+        // Themed glass surface, viewport-aware (Radix flips/shifts off edges).
+        // Border-only (no shadow).
+        default:
+          'border border-(--ui-stroke-secondary) bg-(--popover-surface) text-popover-foreground backdrop-blur-md [--popover-surface:color-mix(in_srgb,var(--ui-bg-elevated)_92%,transparent)]',
+        // Solid accent. For a surface that has to read as the app SPEAKING
+        // rather than as chrome the user opened — it is loud on purpose, so
+        // it earns its place by being rare. No border: at full-strength fill
+        // an edge only muddies the silhouette, and the arrow reads as a point
+        // on the shape instead of a shape stuck to it. `primary-solid`, not
+        // `primary`: a pale accent would otherwise fill this with a pastel and
+        // pair it with near-black text (themes/context.tsx).
+        accent:
+          'bg-(--popover-surface) text-(--dt-primary-solid-foreground) [--popover-surface:var(--dt-primary-solid)]'
+      }
+    },
+    defaultVariants: { variant: 'default' }
+  }
+)
+
+interface PopoverContentProps
+  extends React.ComponentProps<typeof PopoverPrimitive.Content>, VariantProps<typeof popoverContentVariants> {}
+
 function PopoverContent({
   align = 'center',
   // Keeps the arrow clear of the rounded corners (rounded-lg = 8px): Radix
@@ -37,28 +56,19 @@ function PopoverContent({
   className,
   collisionPadding = 8,
   sideOffset = 6,
+  variant,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
-  // The in-app browser's guest is a NATIVE view the compositor paints above the
-  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
-  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
-  useGuestOcclusion('popover')
+}: PopoverContentProps) {
+  // Portal into the enclosing dialog when nested in one (keeps focus inside so
+  // the dialog doesn't close on dismiss); document.body otherwise.
+  const container = usePopoverPortalContainer()
 
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Content
         align={align}
         arrowPadding={arrowPadding}
-        // Themed glass surface, viewport-aware (Radix flips/shifts off edges),
-        // standard open/close motion. Border-only (no shadow).
-        //
-        // `--z-modal-popover`, not a bare `z-50` (MJXHRM-365): portaled to
-        // document.body, so this stacks against the dialog rung (130), not
-        // against its trigger. See dropdown-menu.tsx for the full reasoning.
-        className={cn(
-          'z-(--z-modal-popover) w-72 origin-(--radix-popover-content-transform-origin) rounded-lg border border-(--ui-stroke-secondary) bg-[var(--popover-surface)] p-2 text-popover-foreground backdrop-blur-md outline-hidden data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 [--popover-surface:color-mix(in_srgb,var(--ui-bg-elevated)_92%,transparent)]',
-          className
-        )}
+        className={cn(popoverContentVariants({ variant }), className)}
         collisionPadding={collisionPadding}
         data-slot="popover-content"
         sideOffset={sideOffset}
@@ -69,14 +79,18 @@ function PopoverContent({
             body's exact bg + backdrop-blur (so it matches even through glass), with
             the border on its two outer edges only. Radix authors the child pointing
             "down" and rotates the wrapper per side, so the V always faces outward.
-            The square's inner half tucks under the body, opening the border seam.
-            WebKitGTK note: a rotated backdrop-filter element can seam against the
-            body on WebKit's compositor — if it ever looks wrong, drop the blur on
-            the inner span and keep the solid --popover-surface. */}
+            The square's inner half tucks under the body, opening the border seam. */}
         <PopoverPrimitive.Arrow asChild height={7} width={16}>
           <span className="relative block h-[7px] w-4 overflow-visible">
-            {/* eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left; and rotate-45 arrow geometry — two adjacent edges of a square, not an edge treatment */}
-            <span className="absolute top-0 left-1/2 size-[11px] -translate-x-1/2 -translate-y-1/2 rotate-45 border-r border-b border-(--ui-stroke-secondary) bg-[var(--popover-surface)] backdrop-blur-md" />
+            <span
+              className={cn(
+                'absolute top-0 start-1/2 size-[11px] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-(--popover-surface)',
+                variant === 'accent'
+                  ? // Borderless and opaque: nothing to seam, nothing to blur.
+                    'rounded-[1px]'
+                  : 'border-e border-b border-(--ui-stroke-secondary) backdrop-blur-md'
+              )}
+            />
           </span>
         </PopoverPrimitive.Arrow>
       </PopoverPrimitive.Content>

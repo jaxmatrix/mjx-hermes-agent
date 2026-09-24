@@ -1,10 +1,6 @@
-import { capitalize } from '@/lib/text'
-import { atom } from '@/store/atom'
-import { addSessionKeyHooks } from '@/store/session-state-types'
+import { atom } from 'nanostores'
 
-// Ported verbatim from apps/desktop/src/store/subagents.ts (imports swapped to
-// the mobile seams). Pure reducer over subagent.* gateway events — no native or
-// REST deps. The desktop-only delegate-tool fallback pruning is omitted.
+import { capitalize } from '@/lib/text'
 
 export type SubagentStatus = 'completed' | 'failed' | 'interrupted' | 'queued' | 'running'
 export type SubagentStreamKind = 'progress' | 'summary' | 'thinking' | 'tool'
@@ -16,31 +12,15 @@ export interface SubagentStreamEntry {
   text: string
 }
 
-/**
- * The finalize report for a child run under `delegation.worktree_isolation`:
- * its own checkout on its own branch, inspected once the child exits.
- *
- * `commits`/`dirty` are MEASUREMENTS, not defaults — unless `inspectionFailed`
- * is set, in which case both are placeholders and the only honest thing to say
- * is "look at the path yourself" (the gateway's `note` carries the reason).
- * `pruned` means the checkout is gone because it held nothing; anything with
- * work in it is always kept for review.
- */
-export interface SubagentWorktree {
-  branch: string
-  commits: number
-  dirty: boolean
-  inspectionFailed?: boolean
-  note?: string
-  path: string
-  pruned: boolean
-}
-
 export interface SubagentProgress {
   id: string
   parentId: null | string
   goal: string
+  /** The child's own stored session id — lets UIs open its session window. */
   sessionId?: string
+  /** Batch (delegation) id — exact grouping key for one fan-out's workers,
+   *  so concurrent/nested batches never merge into one group. */
+  delegationId?: string
   model?: string
   status: SubagentStatus
   taskCount: number
@@ -56,34 +36,8 @@ export interface SubagentProgress {
   filesWritten: string[]
   stream: SubagentStreamEntry[]
   summary?: string
+  /** Active tool while running — cleared on terminal status. */
   currentTool?: string
-  /**
-   * A steer this child ACCEPTED and then never delivered: it finished before
-   * another tool result could carry the text, so the gateway names it on
-   * `subagent.complete` as `missed_steer`.
-   *
-   * `subagent.steer` answering `queued` is not a delivery receipt, and this is
-   * the only signal that the difference mattered — without it the overlay's
-   * "Queued for the next step" was the last thing the user ever heard about a
-   * correction the subagent never saw.
-   */
-  missedSteer?: string
-  /**
-   * The child exhausted its per-child iteration budget. It still returned a
-   * summary and still reports `completed`, so without this flag the row calls a
-   * half-finished run finished (`tools/delegate_tool.py` `exit_reason ==
-   * "max_iterations"`).
-   */
-  truncated?: boolean
-  /**
-   * The child passed 80% of `agent.run_budget_seconds` and was told to wrap up
-   * (`agent/conversation_loop._maybe_inject_run_budget_wrapup`). It did not
-   * simply finish — it was hurried, and its result reflects that. Absent unless
-   * a run budget is configured.
-   */
-  budgetWrapup?: boolean
-  /** Set only when `delegation.worktree_isolation` engaged for this child. */
-  worktree?: SubagentWorktree
 }
 
 export interface SubagentNode extends SubagentProgress {
@@ -99,42 +53,55 @@ const TOOL_PREVIEW_MAX = 96
 
 export const $subagentsBySession = atom<Record<string, SubagentProgress[]>>({})
 
+// A turn prunes display rows, not child identities. Keep retired IDs with the
+// session's current list so late starts/rosters cannot recreate completed work.
+// Clearing the session (or resetting the store) releases this history too.
+const retiredSubagents = new WeakMap<SubagentProgress[], Set<string>>()
+
+function setSessionSubagents(sid: string, previous: SubagentProgress[], next: SubagentProgress[]) {
+  const retired = retiredSubagents.get(previous) ?? new Set<string>()
+
+  for (const item of previous) {
+    if (TERMINAL.has(item.status)) {
+      retired.add(item.id)
+    }
+  }
+
+  if (retired.size) {
+    retiredSubagents.set(next, retired)
+  }
+
+  $subagentsBySession.set({ ...$subagentsBySession.get(), [sid]: next })
+}
+
 const isStr = (v: unknown): v is string => typeof v === 'string'
 const str = (v: unknown) => (isStr(v) ? v : '')
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 const strList = (v: unknown) => (Array.isArray(v) ? v.filter(isStr) : [])
 
-/**
- * The gateway's status vocabulary is WIDER than this store's.
- *
- * `tools/delegate_tool.py` relays five terminal values on `subagent.complete`:
- * `completed` / `failed` / `interrupted` (the normal exits, line 2559-2566) and
- * `timeout` / `error` (the future-timeout and orchestrator-exception exits, line
- * 2402). `tui_gateway/server.py` forwards whatever it is given verbatim
- * (`payload["status"] = str(_kwargs["status"])`), and the TUI declares all seven
- * as first-class (`ui-tui/src/types.ts:21`).
- *
- * Anything unrecognised used to fall through to `running`, which made a
- * timed-out or crashed child PERMANENTLY live to this client: never terminal, so
- * `pruneFinishedSessionSubagents` kept it forever; never counted by
- * `failedSubagentCount`, so the status bar reported it as work in flight; and
- * still spinning in the Agents overlay with an elapsed timer that never stopped.
- * A configured subagent timeout (Settings → "Subagent Timeout") is enough to
- * reach it, so the accumulation this store exists to prevent survived the prune.
- *
- * Both extra values are failures, so they collapse onto `failed` rather than
- * widening the union: every surface here has one failure tone, and the detail
- * ("Timed out after 300s") still arrives as the summary stream line.
- */
-export const normalizeSubagentStatus = (v: unknown): SubagentStatus => {
-  if (v === 'completed' || v === 'failed' || v === 'interrupted' || v === 'queued') {
+const asStatus = (v: unknown, terminalEvent = false): SubagentStatus => {
+  if (v === 'completed' || v === 'failed' || v === 'interrupted') {
     return v
   }
 
-  return v === 'timeout' || v === 'error' ? 'failed' : 'running'
-}
+  if (v === 'timeout' || v === 'error') {
+    return 'failed'
+  }
 
-const asStatus = normalizeSubagentStatus
+  if (v === 'cancelled' || v === 'canceled') {
+    return 'interrupted'
+  }
+
+  // Fail closed on completion: a subagent.complete event is terminal by
+  // definition, so an unrecognized (or still-active 'queued'/'running')
+  // status must render as a failure rather than leave a dead row spinning
+  // as 'running' forever. Live events keep the lenient fallback.
+  if (terminalEvent) {
+    return 'failed'
+  }
+
+  return v === 'queued' ? v : 'running'
+}
 
 const compact = (text: string, max = PREVIEW_MAX) => {
   const line = text.replace(/\s+/g, ' ').trim()
@@ -171,34 +138,6 @@ const asTail = (v: unknown): TailEntry[] =>
         }))
     : []
 
-const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined)
-
-const asWorktree = (v: unknown): SubagentWorktree | undefined => {
-  if (!v || typeof v !== 'object') {
-    return undefined
-  }
-
-  const raw = v as Record<string, unknown>
-  const path = str(raw.path)
-  const branch = str(raw.branch)
-
-  // A report that names neither the checkout nor the branch says nothing a user
-  // could act on, and rendering an empty chip is worse than rendering none.
-  if (!path && !branch) {
-    return undefined
-  }
-
-  return {
-    branch,
-    commits: num(raw.commits) ?? 0,
-    dirty: raw.dirty === true,
-    inspectionFailed: raw.inspection_failed === true || undefined,
-    note: str(raw.note) || undefined,
-    path,
-    pruned: raw.pruned === true
-  }
-}
-
 const idOf = (p: SubagentPayload) =>
   str(p.subagent_id) || `${str(p.parent_id) || 'root'}:${num(p.task_index) ?? 0}:${str(p.goal)}`
 
@@ -210,6 +149,15 @@ const appendStream = (stream: SubagentStreamEntry[], entry: SubagentStreamEntry)
   }
 
   return [...stream, entry].slice(-MAX_STREAM)
+}
+
+// The backend sends no summary on a hard child timeout (only a preview like
+// "Timed out after 612.3s" + duration_seconds). Synthesize it so the terminal
+// row explains why it failed instead of rendering as a bare failure.
+const timeoutSummary = (payload: SubagentPayload): string => {
+  const seconds = num(payload.duration_seconds)
+
+  return str(payload.status) === 'timeout' ? `Timed out after ${seconds ?? '?'}s` : ''
 }
 
 function streamFromPayload(
@@ -243,7 +191,7 @@ function streamFromPayload(
     out.push({ at, kind: 'thinking', text })
   }
 
-  const summary = compact(str(payload.summary) || str(payload.text))
+  const summary = compact(str(payload.summary) || str(payload.text) || timeoutSummary(payload))
 
   if (TERMINAL.has(status) && summary) {
     out.push({ at, isError: status === 'failed', kind: 'summary', text: summary })
@@ -254,7 +202,7 @@ function streamFromPayload(
 
 function toProgress(payload: SubagentPayload, prev: SubagentProgress | undefined, eventType = ''): SubagentProgress {
   const at = Date.now()
-  const status = asStatus(payload.status)
+  const status = asStatus(payload.status, eventType === 'subagent.complete')
   const tool = str(payload.tool_name)
   const stream = streamFromPayload(payload, status, eventType, at).reduce(appendStream, prev?.stream ?? [])
   const filesRead = strList(payload.files_read)
@@ -265,6 +213,7 @@ function toProgress(payload: SubagentPayload, prev: SubagentProgress | undefined
     parentId: str(payload.parent_id) || prev?.parentId || null,
     goal: str(payload.goal) || prev?.goal || 'Subagent',
     sessionId: str(payload.child_session_id) || prev?.sessionId,
+    delegationId: str(payload.delegation_id) || prev?.delegationId,
     model: str(payload.model) || prev?.model,
     status,
     taskCount: num(payload.task_count) ?? prev?.taskCount ?? 1,
@@ -279,12 +228,51 @@ function toProgress(payload: SubagentPayload, prev: SubagentProgress | undefined
     filesRead: filesRead.length ? filesRead : (prev?.filesRead ?? []),
     filesWritten: filesWritten.length ? filesWritten : (prev?.filesWritten ?? []),
     stream,
-    summary: str(payload.summary) || prev?.summary,
-    currentTool: TERMINAL.has(status) ? undefined : tool || prev?.currentTool,
-    missedSteer: str(payload.missed_steer) || prev?.missedSteer,
-    truncated: bool(payload.truncated) ?? prev?.truncated,
-    budgetWrapup: bool(payload.budget_wrapup) ?? prev?.budgetWrapup,
-    worktree: asWorktree(payload.worktree) ?? prev?.worktree
+    summary: str(payload.summary) || timeoutSummary(payload) || prev?.summary || undefined,
+    currentTool: TERMINAL.has(status) ? undefined : tool || prev?.currentTool
+  }
+}
+
+/** Reconcile a scoped, race-checked snapshot without replacing stream history. */
+export function reconcileSubagentSnapshot(sid: string, children: SubagentPayload[]) {
+  const map = $subagentsBySession.get()
+  const previous = map[sid] ?? []
+  const ids = new Set(children.map(p => str(p.subagent_id)).filter(Boolean))
+  const next = previous.filter(item => TERMINAL.has(item.status) || ids.has(item.id))
+
+  for (const payload of children) {
+    const id = str(payload.subagent_id)
+
+    if (!id || retiredSubagents.get(previous)?.has(id)) {
+      continue
+    }
+
+    const index = next.findIndex(item => item.id === id)
+    const prev = next[index]
+
+    if (prev && TERMINAL.has(prev.status)) {
+      continue
+    }
+
+    const projected = toProgress(payload, prev)
+    projected.startedAt = (num(payload.started_at) ?? 0) * 1000 || prev?.startedAt || projected.startedAt
+    projected.updatedAt = prev?.updatedAt ?? projected.startedAt
+
+    // A roster records the last tool, not a currently executing call. Seed cold
+    // activity only; a repeated snapshot must not append over newer live text.
+    if (!projected.stream.length && str(payload.last_tool)) {
+      projected.stream = [{ at: projected.updatedAt, kind: 'tool', text: formatTool(str(payload.last_tool)) }]
+    }
+
+    if (index < 0) {
+      next.push(projected)
+    } else {
+      next[index] = JSON.stringify(prev) === JSON.stringify(projected) ? prev : projected
+    }
+  }
+
+  if (next.length !== previous.length || next.some((item, index) => item !== previous[index])) {
+    setSessionSubagents(sid, previous, next)
   }
 }
 
@@ -300,98 +288,16 @@ export function clearSessionSubagents(sid: string) {
 }
 
 /**
- * Drop every session's rows at once — the profile switch and the soft gateway
- * switch, where every runtime id this map is keyed by belongs to a backend we
- * are leaving.
+ * Prune terminal-status subagent rows for a session, leaving running/queued
+ * entries untouched. Used at the `message.start` boundary in the desktop
+ * message-stream hook so that the *previous* turn's finished rows get flushed
+ * from the display while background subagents that outlived the spawning turn
+ * remain visible (and still accept late progress/complete events).
  *
- * `clearAllSessionStates` wipes the slices, the prompts, the turns and the
- * compactions keyed the same way, and forgot this map (the same shape as
- * MJXHRM-357's compaction leak). Nothing else could reach the leftovers: a
- * per-session clear needs a live slice to hang off, and the prune only runs at a
- * `message.start` on a key the new backend will never issue. So the Agents
- * overlay — which flattens EVERY session (`allSubagents`) — and the status bar
- * counter kept reporting the previous profile's subagents, spinning, forever.
- */
-export function clearAllSubagents() {
-  if (Object.keys($subagentsBySession.get()).length > 0) {
-    $subagentsBySession.set({})
-  }
-}
-
-/**
- * Follow the session key.
- *
- * `drop`: a session's slice being evicted (closing a tile, closing a bubble,
- * deleting/archiving a chat, abandoning a draft) leaves its rows orphaned in a
- * map nothing else indexes by that key — permanently visible in the overlay and
- * permanently counted by the status bar.
- *
- * `rekey`: draft→runtime at submit, hydrating→runtime on a cold open, and the
- * fresh runtime id a stale-session recovery mints mid-verb (`interruptSession`
- * rekeys from inside `onRecovered`) all move the slice. Rows left under the old
- * key vanish from the session-scoped surfaces — the composer status stack and
- * the delegate card both read `$subagentsBySession[runtimeKey]` — while still
- * being counted by the flattened ones. Merging rather than replacing keeps
- * whichever rows the destination key already collected.
- */
-addSessionKeyHooks({
-  drop(key) {
-    clearSessionSubagents(key)
-  },
-  rekey(fromKey, toKey) {
-    const map = $subagentsBySession.get()
-    const moving = map[fromKey]
-
-    if (!moving?.length || fromKey === toKey) {
-      return
-    }
-
-    const { [fromKey]: _moved, ...rest } = map
-    const existing = map[toKey] ?? []
-    const seen = new Set(existing.map(item => item.id))
-
-    $subagentsBySession.set({ ...rest, [toKey]: [...existing, ...moving.filter(item => !seen.has(item.id))] })
-  }
-})
-
-/**
- * Which session owns a subagent, by its id.
- *
- * The Agents overlay flattens every session's rows into one tree so a
- * background session's work is still visible, which loses the owning session —
- * yet `subagent.steer` needs it, because the gateway checks that the invoking
- * session actually owns the child before queueing anything.
- */
-export function sessionOfSubagent(id: string): string | undefined {
-  for (const [sid, list] of Object.entries($subagentsBySession.get())) {
-    if (list.some(item => item.id === id)) {
-      return sid
-    }
-  }
-
-  return undefined
-}
-
-/**
- * Drop a session's settled subagent rows, keeping only the ones still working.
- *
- * Called at the `message.start` boundary, so the *previous* turn's finished
- * rows leave the spawn tree while a background subagent that outlived its
- * spawning turn stays visible and still accepts late progress/complete events.
- * Without it the tree only ever grew: nothing removed a row until
- * `clearSessionSubagents` wiped the whole session on switch, so a long-lived
- * session accumulated every subagent it had ever run.
- *
- * Distinct from `clearSessionSubagents`, which drops the running rows too. On
- * desktop that is what Stop calls; universal deliberately does NOT, because a
- * `delegate_task` here can dispatch in BACKGROUND mode
- * (`tools/delegate_tool.py` `dispatch_async_delegation_batch`) and those
- * children keep running after the turn the user stopped. Dropping their rows
- * would also deafen them: `upsertSubagent` refuses to recreate a row from
- * `subagent.progress`/`subagent.complete` (`createIfMissing` is false for
- * everything but spawn/start), so they could never come back. The gateway
- * relays `status: "interrupted"` for the children an interrupt really kills,
- * and this prune retires those on the next turn.
+ * Distinct from `clearSessionSubagents` (used by the Stop action, which
+ * genuinely cancels running subagents and so should drop them all) and from
+ * `pruneDelegateFallbackSubagents` (which filters by id prefix to remove
+ * placeholder rows once the real native event arrives).
  */
 export function pruneFinishedSessionSubagents(sid: string) {
   const map = $subagentsBySession.get()
@@ -407,7 +313,24 @@ export function pruneFinishedSessionSubagents(sid: string) {
     return
   }
 
-  $subagentsBySession.set({ ...map, [sid]: next })
+  setSessionSubagents(sid, list, next)
+}
+
+export function pruneDelegateFallbackSubagents(sid: string) {
+  const map = $subagentsBySession.get()
+  const list = map[sid]
+
+  if (!list?.length) {
+    return
+  }
+
+  const next = list.filter(item => !item.id.startsWith('delegate-tool:'))
+
+  if (next.length === list.length) {
+    return
+  }
+
+  setSessionSubagents(sid, list, next)
 }
 
 export function upsertSubagent(sid: string, payload: SubagentPayload, createIfMissing = true, eventType?: string) {
@@ -416,7 +339,7 @@ export function upsertSubagent(sid: string, payload: SubagentPayload, createIfMi
   const id = idOf(payload)
   const idx = list.findIndex(item => item.id === id)
 
-  if (idx < 0 && !createIfMissing) {
+  if (retiredSubagents.get(list)?.has(id) || (idx < 0 && !createIfMissing)) {
     return
   }
 
@@ -428,7 +351,8 @@ export function upsertSubagent(sid: string, payload: SubagentPayload, createIfMi
 
   const next = toProgress(payload, prev, eventType)
   const nextList = idx >= 0 ? list.map(item => (item.id === id ? next : item)) : [...list, next]
-  $subagentsBySession.set({ ...map, [sid]: nextList })
+
+  setSessionSubagents(sid, list, nextList)
 }
 
 export function buildSubagentTree(items: readonly SubagentProgress[]): SubagentNode[] {
@@ -465,4 +389,6 @@ export const activeSubagentCount = (items: readonly SubagentProgress[]) =>
 export const failedSubagentCount = (items: readonly SubagentProgress[]) =>
   items.filter(item => item.status === 'failed' || item.status === 'interrupted').length
 
+/** Flatten every session's subagents — the scope the Spawn-tree panel and the
+ *  status-bar indicator must agree on. */
 export const allSubagents = (bySession: Record<string, SubagentProgress[]>) => Object.values(bySession).flat()

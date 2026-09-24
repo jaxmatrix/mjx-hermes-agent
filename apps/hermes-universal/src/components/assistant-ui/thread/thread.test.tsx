@@ -28,7 +28,11 @@ const view = await vi.hoisted(async () => {
     // counts as a transcript. With no paint lane in play here it is the same
     // derivation.
     $paintedMessagesEmpty: computed($messages, messages => messages.length === 0),
-    $runtimeId: atom<null | string>(null)
+    $runtimeId: atom<null | string>(null),
+    // Splash gate reads stored vs runtime id (intro-visibility); without this
+    // `useStore(view.$storedId)` throws on mount.
+    $storedId: atom<null | string>(null),
+    kind: 'primary' as const
   }
 })
 
@@ -109,7 +113,12 @@ vi.mock('@assistant-ui/react', () => {
     },
     useAuiState: (selector: (value: unknown) => unknown) =>
       selector({
-        message: { id: 'h6-user', content: [{ type: 'text', text: 'the fourth ask' }] },
+        message: {
+          id: 'h6-user',
+          content: [{ type: 'text', text: 'the fourth ask' }],
+          // timeline-timestamp reads parts (not content) to dedupe stamps.
+          parts: [{ type: 'text', text: 'the fourth ask' }]
+        },
         // The thread renders a WINDOWED tail: this is the only list the bubble
         // can see, and it is three user turns short of the session's own.
         thread: { isRunning: false, messages: [{ id: 'h6-user', role: 'user' }] }
@@ -121,7 +130,8 @@ vi.mock('@/hooks/use-resize-observer', () => ({ useResizeObserver: () => {} }))
 
 import { restoreToMessage } from '@/store/chat'
 import { setIntroSplash } from '@/store/intro-splash'
-import { hydratingKey, newDraftKey } from '@/store/session-state-types'
+import { setFreshDraftReady } from '@/store/session'
+import { hydratingKey } from '@/store/session-state-types'
 
 import { Thread } from './thread'
 
@@ -235,7 +245,7 @@ describe('Thread restore-checkpoint wiring', () => {
     await confirm()
 
     expect(restoreToMessage).not.toHaveBeenCalled()
-    expect(screen.getByText('No active session to restore.')).toBeTruthy()
+    expect(screen.getByText('Session unavailable')).toBeTruthy()
   })
 })
 
@@ -298,7 +308,12 @@ describe('Thread → intro splash gating', () => {
   const asDraft = async () => {
     await act(async () => {
       view.$messages.set([])
-      view.$runtimeId.set(newDraftKey())
+      // A fresh draft has no runtime and no stored id — `setActiveSessionId(null)`
+      // + `setFreshDraftReady(true)` is how gateway-switch / new-chat mint one.
+      // A draft KEY is not an active session for the splash predicate.
+      view.$runtimeId.set(null)
+      view.$storedId.set(null)
+      setFreshDraftReady(true)
     })
   }
 

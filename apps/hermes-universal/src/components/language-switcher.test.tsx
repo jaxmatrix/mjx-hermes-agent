@@ -1,44 +1,43 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { I18nProvider } from '@/i18n'
+import type { HermesConfigRecord } from '@/hermes'
+import { type I18nConfigClient, I18nProvider } from '@/i18n'
+import { stubMenuDomApis, stubResizeObserver } from '@/test/jsdom'
 
 import { LanguageSwitcher } from './language-switcher'
 
-function renderSwitcher() {
-  return render(
-    <I18nProvider>
-      <LanguageSwitcher />
-    </I18nProvider>
-  )
-}
-
+stubResizeObserver()
+stubMenuDomApis()
 describe('LanguageSwitcher', () => {
-  beforeEach(() => localStorage.clear())
-  afterEach(() => localStorage.clear())
-
-  it('shows the active locale on the trigger (English by default)', () => {
-    renderSwitcher()
-    expect(screen.getByRole('button', { name: 'Switch language' })).toHaveTextContent('English')
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
   })
 
-  it('opens the menu, lists all four locales, and switches on select', () => {
-    renderSwitcher()
-    const trigger = screen.getByRole('button', { name: 'Switch language' })
+  it('persists language changes through display.language config', async () => {
+    const saveConfig = vi.fn().mockResolvedValue({ ok: true })
+    const latestConfig: HermesConfigRecord = { display: { language: 'en', skin: 'slate' } }
 
-    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
-    fireEvent.click(trigger)
+    const configClient: I18nConfigClient = {
+      getConfig: vi.fn().mockResolvedValue(latestConfig),
+      saveConfig
+    }
 
-    const menu = screen.getByRole('menu')
-    expect(within(menu).getByText('English')).toBeInTheDocument()
-    expect(within(menu).getByText('简体中文')).toBeInTheDocument()
-    expect(within(menu).getByText('繁體中文')).toBeInTheDocument()
-    expect(within(menu).getByText('日本語')).toBeInTheDocument()
+    render(
+      <I18nProvider configClient={configClient}>
+        <LanguageSwitcher />
+      </I18nProvider>
+    )
 
-    fireEvent.click(within(menu).getByText('日本語'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Switch language' }).hasAttribute('disabled')).toBe(false)
+    })
 
-    // Locale persisted + trigger reflects the new selection.
-    expect(localStorage.getItem('hermes.locale')).toBe('ja')
-    expect(screen.getByRole('button', { name: '言語を切り替え' })).toHaveTextContent('日本語')
+    fireEvent.click(screen.getByRole('button', { name: 'Switch language' }))
+    fireEvent.click(screen.getByRole('option', { name: /日本語/i }))
+
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    expect(saveConfig).toHaveBeenCalledWith({ display: { language: 'ja', skin: 'slate' } })
   })
 })

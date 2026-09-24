@@ -1,7 +1,7 @@
 import { newSessionInProfile, startNewSession } from '@/store/new-session'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { announceProfileChatScope } from '@/store/profile-chat-scope'
-import type { WakeDetection } from '@/store/wake-word'
+import type { WakeDetection } from '@/store/wake-word-universal'
 
 /**
  * Where a wake phrase LANDS — the half of `wake.detected` universal used to drop

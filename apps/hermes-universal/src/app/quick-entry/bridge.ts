@@ -28,7 +28,8 @@
  * the identical shape with `isAuxiliaryWindow`.
  */
 
-import { SLASH_COMMAND_RE } from '@/lib/chat-runtime'
+import { SLASH_COMMAND_RE } from '@hermes/shared'
+
 import { IS_TAURI } from '@/lib/platform'
 import { $connectionPhase } from '@/store/connection'
 import {
@@ -162,7 +163,7 @@ async function routeQuickEntrySubmit({ target, text }: QuickEntrySubmitPayload):
   }
 
   if (target !== QUICK_TARGET_CURRENT) {
-    const { sessionTileDelegate } = await import('@/store/session-states')
+    const { sessionTileDelegate } = await import('@/store/session-key-states')
     const delegate = sessionTileDelegate()
 
     if (delegate) {

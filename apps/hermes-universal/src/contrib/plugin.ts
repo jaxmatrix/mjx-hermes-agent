@@ -6,55 +6,28 @@
  * (`<id>:<localId>`), so authors write plain contributions and collisions
  * between plugins are impossible.
  *
- * Bundled plugins live in `src/plugins/<name>/plugin.tsx` and are discovered by
- * `discoverBundledPlugins()` (contrib/plugins.ts) — no import, no registry edit.
- * Runtime-loaded plugins (disk / gateway) drive the SAME contract through
- * contrib/runtime-loader.ts.
- *
- * SECURITY: this is error isolation, not a capability boundary. A plugin runs in
- * the webview realm with the app's full authority; the id scoping below prevents
- * ACCIDENTAL collisions, not deliberate reach.
+ * Bundled plugins live in `src/plugins/<name>/plugin.tsx` and are discovered
+ * by `discoverBundledPlugins()` (contrib/plugins.ts) — no import, no registry
+ * edit. Runtime-fetched third-party plugins will drive the SAME contract
+ * through the plugin host loader (next phase); this is that seam.
  */
 
-import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
-
-import { toTileContribution } from '@/components/pane-shell/tile/registry'
-import type { Tile } from '@/components/pane-shell/tile/types'
-import { pluginRest, type PluginRestOptions } from '@/hermes'
+import { pluginRest, type PluginRestOptions, pluginSocket } from '@/hermes'
 import { createPluginI18n, type PluginI18n } from '@/i18n'
-import { writeClipboardText } from '@/lib/clipboard'
-import { gatewayOwnsLocalFs, selectRemotePaths } from '@/lib/desktop-fs'
-import { tryOpenExternalLink } from '@/lib/external-link'
-import {
-  nativeNotificationCapabilities,
-  type NativeNotificationCapabilities
-} from '@/lib/native-notification-capabilities'
-import { pluginSocket } from '@/lib/plugin-transport'
-import { tryRevealPathInFileManager } from '@/lib/reveal-path'
 import { readKey, writeKey } from '@/lib/storage'
-import {
-  dispatchPluginNativeNotification,
-  type NativeNotifyOutcome,
-  type PluginNativeNotificationInput
-} from '@/store/native-notifications'
+import { dispatchPluginNativeNotification, type PluginNativeNotificationInput } from '@/store/native-notifications'
 
+import { type GatewayEventListener, onGatewayEvent } from './events'
 import { registry } from './registry'
 import type { Contribution } from './types'
 
 export type { PluginRestOptions } from '@/hermes'
-export type {
-  NativeNotifyOutcome,
-  PluginNativeNotificationInput,
-  PluginNotificationAction
-} from '@/store/native-notifications'
+export type { HermesOpenTarget } from '@/lib/hermes-open-target'
+export type { PluginNativeNotificationInput, PluginNotificationAction } from '@/store/native-notifications'
 
 /** A contribution as a plugin author writes it — provenance + id scoping are
  *  the host's job, so those fields are off-limits here. */
 export type PluginContribution = Omit<Contribution, 'source' | 'id'> & { id: string }
-
-/** A tile as a plugin declares it: `source` is stamped by the context and `id`
- *  is namespaced, so neither is the author's to set. */
-export type PluginTile = Omit<Tile, 'source'>
 
 /** Namespaced JSON persistence (the VS Code `globalState` analog). Keys live
  *  under `hermes.plugin.<id>.` — plugins can't read or clobber each other. */
@@ -64,50 +37,31 @@ export interface PluginStorage {
   remove(key: string): void
 }
 
-/** The curated OS door — every way a plugin reaches outside the app window, in
- *  one attributed namespace. The desktop app's identical contract sits over the
- *  Electron preload bridge; here each member sits over the Tauri capability that
- *  matches it. Every member resolves a result instead of throwing when the
- *  capability can't apply (plain-web dev, Android, an older shell), so callers
- *  branch on the return value rather than sniffing the platform. */
+/** The curated OS door — every way a plugin reaches outside the app window,
+ *  in one attributed namespace instead of the raw `window.hermesDesktop`
+ *  bridge. Every member resolves a result instead of throwing when the
+ *  capability can't apply (no Electron shell, older desktop build), so
+ *  callers branch on the return value rather than sniffing the bridge. */
 export interface PluginOs {
-  /** Native OS notification, attributed to this plugin. Gated by Settings ▸
-   *  Notifications ▸ "Plugin notifications" and fires only while the user is
-   *  away from Hermes — use `host.notify` for the in-app toast. Throttled per
-   *  plugin; reserve it for genuinely notable events.
-   *
-   *  Resolves an OUTCOME rather than nothing: `delivered` says whether it
-   *  reached the OS bridge and `refusal` names which guard stopped it, so a
-   *  plugin can fall back instead of assuming silence meant success. Widening
-   *  the return from `void` is source-compatible — every existing caller ignores
-   *  it. Ask `notificationCapabilities()` BEFORE offering buttons. */
-  notify: (input: PluginNativeNotificationInput) => Promise<NativeNotifyOutcome>
-  /** What OS notifications can do on THIS platform. Action buttons and tap
-   *  activation are mobile-only — the desktop notification plugin registers no
-   *  action commands and no click hook at all — so a plugin that offers them
-   *  must ask rather than infer (rule 10). */
-  notificationCapabilities: () => NativeNotificationCapabilities
+  /** Native OS notification (Electron), attributed to this plugin. Gated by
+   *  Settings ▸ Notifications ▸ "Plugin notifications" and fires only while
+   *  the user is away from Hermes — use `host.notify` for the in-app toast.
+   *  Throttled per plugin; reserve it for genuinely notable events.
+   *  Supports `icon`, `activate` (e.g. `hermes://index-network/intent/1`),
+   *  action buttons, and renderer `onActivate` / `onAction` callbacks. */
+  notify: (input: PluginNativeNotificationInput) => void
   /** Open a URL with the OS default handler (browser, mail client, custom
    *  schemes like `spotify:`). Resolves false when the shell can't. */
   openExternal: (url: string) => Promise<boolean>
-  /** Reveal a path in the OS file manager (Finder / Explorer). Resolves false
-   *  when unavailable — including on mobile, which has no file manager to
-   *  reveal into. */
+  /** Reveal a path in the OS file manager (Finder / Explorer). Resolves
+   *  false when unavailable. */
   revealPath: (path: string) => Promise<boolean>
-  /** Save dialog. Resolves the chosen path, or null on cancel / when
-   *  unavailable. The path is on the BACKEND's filesystem, so hand it to a
-   *  `rest` call rather than trying to write it from the webview.
-   *
-   *  Desktop can always use the native dialog because its backend shares its
-   *  disk. Here the native dialog is only honest when this window spawned the
-   *  gateway itself (`gatewayOwnsLocalFs`); on a remote / ssh / cloud gateway
-   *  and on every phone there is no way to name a new file on the backend, so
-   *  this resolves null there. */
+  /** Native save dialog. Resolves the chosen path, or null on cancel /
+   *  when unavailable. The path is on the BACKEND's filesystem, so hand it
+   *  to a `rest` call rather than trying to write it from the renderer. */
   pickSavePath: (options?: PluginFileDialogOptions) => Promise<null | string>
-  /** Open dialog, single file. Resolves the chosen path, or null on cancel /
-   *  when unavailable. Same BACKEND-path rule as `pickSavePath`: the native
-   *  dialog when the gateway owns this machine's disk, otherwise the in-app
-   *  picker that browses the gateway's filesystem. */
+  /** Native open dialog, single file. Resolves the chosen path, or null on
+   *  cancel / when unavailable. */
   pickOpenPath: (options?: PluginFileDialogOptions) => Promise<null | string>
   /** Write text to the system clipboard. Resolves false when unavailable. */
   writeClipboard: (text: string) => Promise<boolean>
@@ -124,17 +78,32 @@ export interface PluginContext {
   readonly source: string
   /** Register one contribution (id namespaced, source stamped). */
   register: (c: PluginContribution) => () => void
-  /** Contribute a layout TILE — the typed door for `area: 'panes'`. Prefer it
-   *  over `register({ area: PANES_AREA, … })`: a tile's chrome and sizing are
-   *  declared fields here instead of an untyped `data` blob, and only this path
-   *  can express fields added later (the mount lifecycle). */
-  registerTile: (tile: PluginTile) => () => void
   /** Register several at once; the returned disposer removes all of them. */
   registerMany: (cs: PluginContribution[]) => () => void
   /** Register an arbitrary cleanup to run on unload/disable — for side effects
    *  that aren't contributions or sockets (store subscriptions, timers). Runs
    *  alongside every other disposer when the plugin deactivates. */
   onDispose: (fn: () => void) => void
+  /** Hear the gateway stream by event type (`'*'` = everything). Tracked like
+   *  every other registration: unload/reload/disable removes the listener, so
+   *  a subscription made after `register()` returns (a timer, a socket
+   *  callback) can never outlive the plugin the way a bare `host.onEvent`
+   *  there would. */
+  onEvent: (type: string, listener: GatewayEventListener) => () => void
+  /** Scoped timers: cleared when the plugin unloads/reloads/disables, so a
+   *  poller cannot outlive the plugin the way a bare `setInterval` does (the
+   *  host never sees a bare global — it is the author's leak). Each returns
+   *  a disposer that cancels early. */
+  setTimeout: (fn: () => void, ms: number) => () => void
+  setInterval: (fn: () => void, ms: number) => () => void
+  /** Scoped `addEventListener` on any target (window, document, a node):
+   *  removed on unload/reload/disable. Returns a disposer. */
+  addEventListener: (
+    target: EventTarget,
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: AddEventListenerOptions | boolean
+  ) => () => void
   /** REST to this plugin's own backend namespace (`/api/plugins/<id>`); `path`
    *  is relative ('/board'). The sanctioned door for a plugin that ships a
    *  `plugin_api.py` — profile-aware, namespace-scoped by construction. Use
@@ -142,17 +111,12 @@ export interface PluginContext {
   rest: <T>(path: string, opts?: PluginRestOptions) => Promise<T>
   /** Live twin of `rest`: a WebSocket to this plugin's own namespace
    *  ('/events'), JSON frames to `onMessage`, auto-reconnect, disposer
-   *  returned. Authenticates on EVERY gateway mode (a ws-ticket where there is
-   *  no `token` — see lib/plugin-transport), and FOLLOWS the connection like
-   *  `rest` does: call it whenever you like — before the app has dialled is
-   *  normal, since plugins register first — and it re-homes itself onto the
-   *  gateway the user switches to. Still treat it as an accelerator over your
-   *  polling and never a replacement: a socket can always drop, a ticket mint
-   *  can fail on an expired session, and neither is reported back to you. */
+   *  returned. Resolves to a no-op on OAuth remotes — treat it as an
+   *  accelerator over your polling, never a replacement. */
   socket: (path: string, onMessage: (data: unknown) => void) => () => void
   /** The curated OS door: native notification, open-external, reveal-in-file-
-   *  manager, save/open pickers, clipboard — attributed to this plugin,
-   *  result-shaped (never throws for a missing capability). */
+   *  manager, clipboard — attributed to this plugin, result-shaped (never
+   *  throws for a missing capability). */
   os: PluginOs
   /** Plugin-scoped persistence. */
   storage: PluginStorage
@@ -166,11 +130,10 @@ export interface HermesPlugin {
   id: string
   /** Human name for settings / about UI. */
   name?: string
-  /** One line on what the plugin does, shown under its name in Settings ▸
-   *  Plugins. Write it for a user deciding whether to switch this on. */
+  /** One-liner for the settings inventory (what the plugin adds). */
   description?: string
   /** Registers on load when the user hasn't chosen (default true). Set false
-   *  for opt-in plugins: they inventory in Settings ▸ Plugins, off until the
+   *  for opt-in plugins: they inventory in Capabilities ▸ Plugins, off until the
    *  user flips the switch. */
   defaultEnabled?: boolean
   /** Called once at load; wire contributions through `ctx`. */
@@ -199,79 +162,111 @@ function createPluginStorage(pluginId: string): PluginStorage {
   }
 }
 
-// Never throws for a missing capability: this SDK runs in the Tauri webview on
-// desktop, in the Android WebView, and in a plain browser during dev — three
-// hosts with three different answers for each door. So every door degrades to a
-// false result the plugin branches on, and a plugin written against the desktop
-// app's `ctx.os` runs here unmodified.
+// Never throws for a missing capability: the renderer can outlive an older
+// Electron shell (or run in a plain browser), so every door degrades to a
+// false result the plugin can branch on.
 function createPluginOs(pluginId: string): PluginOs {
-  const attempt = async (run: () => Promise<unknown>): Promise<boolean> => {
-    try {
-      await run()
+  const attempt = async (run: (bridge: NonNullable<typeof window.hermesDesktop>) => Promise<boolean>) => {
+    const bridge = typeof window === 'undefined' ? undefined : window.hermesDesktop
 
-      return true
+    if (!bridge) {
+      return false
+    }
+
+    try {
+      return await run(bridge)
     } catch {
       return false
     }
   }
 
   // Same shape as `attempt`, for the pickers that answer with a path.
-  const attemptPath = async (run: () => Promise<null | string | undefined>): Promise<null | string> => {
+  const attemptPath = async (run: (bridge: NonNullable<typeof window.hermesDesktop>) => Promise<null | string>) => {
+    const bridge = typeof window === 'undefined' ? undefined : window.hermesDesktop
+
+    if (!bridge) {
+      return null
+    }
+
     try {
-      return (await run()) || null
+      return await run(bridge)
     } catch {
       return null
     }
   }
 
   return {
-    notify: async input => {
-      try {
-        return await dispatchPluginNativeNotification(pluginId, input)
-      } catch {
-        // A notification the OS won't take must not break the plugin's caller —
-        // and it must not look like a success either.
-        return { actionsDelivered: false, delivered: false, refusal: 'send-failed' }
-      }
-    },
-    notificationCapabilities: nativeNotificationCapabilities,
-    // The app's own native door (`open_external`), in its result-shaped form.
-    //
-    // NOT the opener plugin's JS `openUrl`: `opener:allow-open-url` enables that
-    // command "without any pre-configured scope", and the plugin refuses every
-    // url that no scope entry matches — with an empty allow-list that is ALL of
-    // them, on every platform. Routing a plugin through it made `openExternal`
-    // resolve `false` always, which this contract renders as "the platform can't
-    // do this" rather than as the bug it was. `lib/external-link` explains the
-    // ACL in full.
-    openExternal: url => tryOpenExternalLink(url),
-    // The picked path is handed to the BACKEND, so it must name a file on the
-    // backend's disk — `lib/desktop-fs` explains why a locally-picked path on a
-    // remote gateway is worse than no path. `profile-share` makes the same call.
-    pickOpenPath: options =>
-      attemptPath(async () => {
-        if (gatewayOwnsLocalFs()) {
-          const picked = await openDialog({ ...options, directory: false, multiple: false })
+    notify: input => dispatchPluginNativeNotification(pluginId, input),
+    openExternal: url =>
+      attempt(async bridge => {
+        await bridge.openExternal(url)
 
-          return typeof picked === 'string' ? picked : null
-        }
-
-        const picked = await selectRemotePaths({ ...options, directories: false, multiple: false })
-
-        return picked[0]
+        return true
       }),
-    pickSavePath: options =>
-      attemptPath(async () =>
-        gatewayOwnsLocalFs()
-          ? saveDialog({ defaultPath: options?.defaultPath, filters: options?.filters, title: options?.title })
-          : null
-      ),
-    revealPath: path => tryRevealPathInFileManager(path),
-    // The app's single clipboard write seam (@/lib/clipboard), which throws only
-    // when BOTH the OS plugin and the engine refuse — WebKitGTK gates the async
-    // Clipboard API more tightly than Chromium does, and that refusal is what
-    // `false` means here.
-    writeClipboard: text => attempt(() => writeClipboardText(text))
+    pickOpenPath: options =>
+      attemptPath(async bridge => {
+        const picked = await bridge.selectPaths?.({ ...options, multiple: false })
+
+        return picked?.[0] ?? null
+      }),
+    pickSavePath: options => attemptPath(async bridge => (await bridge.selectSavePath?.(options)) ?? null),
+    revealPath: path => attempt(async bridge => (bridge.revealPath ? bridge.revealPath(path) : false)),
+    writeClipboard: text => attempt(bridge => bridge.writeClipboard(text))
+  }
+}
+
+/** Timers and DOM listeners a plugin takes out through `ctx`, retired as ONE
+ *  tracked disposer. A fired timeout drops out of the set on its own, so a
+ *  long-lived plugin firing many one-shots does not accumulate cleanups. */
+function createPluginLifetime(track: (dispose: () => void) => () => void) {
+  const cleanups = new Set<() => void>()
+  let tracked = false
+
+  const scoped = (cleanup: () => void) => {
+    // Registered with the host on first use, so a plugin that never takes a
+    // timer or listener out adds nothing to its disposer list.
+    if (!tracked) {
+      tracked = true
+      track(() => {
+        cleanups.forEach(pending => pending())
+        cleanups.clear()
+      })
+    }
+
+    cleanups.add(cleanup)
+
+    return () => {
+      cleanups.delete(cleanup)
+      cleanup()
+    }
+  }
+
+  return {
+    setTimeout: (fn: () => void, ms: number) => {
+      const clear = () => globalThis.clearTimeout(id)
+
+      const id = globalThis.setTimeout(() => {
+        cleanups.delete(clear)
+        fn()
+      }, ms)
+
+      return scoped(clear)
+    },
+    setInterval: (fn: () => void, ms: number) => {
+      const id = globalThis.setInterval(fn, ms)
+
+      return scoped(() => globalThis.clearInterval(id))
+    },
+    addEventListener: (
+      target: EventTarget,
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: AddEventListenerOptions | boolean
+    ) => {
+      target.addEventListener(type, listener, options)
+
+      return scoped(() => target.removeEventListener(type, listener, options))
+    }
   }
 }
 
@@ -280,11 +275,6 @@ function createPluginOs(pluginId: string): PluginOs {
 export function createPluginContext(pluginId: string, onDispose?: (dispose: () => void) => void): PluginContext {
   const source = `plugin:${pluginId}`
   const scope = (c: PluginContribution): Contribution => ({ ...c, id: `${pluginId}:${c.id}`, source })
-
-  const scopeTile = (tile: PluginTile): Contribution => ({
-    ...toTileContribution({ ...tile, source }),
-    id: `${pluginId}:${tile.id}`
-  })
 
   const track = (dispose: () => void) => {
     onDispose?.(dispose)
@@ -295,9 +285,10 @@ export function createPluginContext(pluginId: string, onDispose?: (dispose: () =
   return {
     source,
     register: c => track(registry.register(scope(c))),
-    registerTile: tile => track(registry.register(scopeTile(tile))),
     registerMany: cs => track(registry.registerMany(cs.map(scope))),
     onDispose: fn => void track(fn),
+    onEvent: (type, listener) => track(onGatewayEvent(type, listener)),
+    ...createPluginLifetime(track),
     rest: <T>(path: string, opts?: PluginRestOptions) => pluginRest<T>(pluginId, path, opts),
     socket: (path, onMessage) => track(pluginSocket(pluginId, path, onMessage)),
     os: createPluginOs(pluginId),

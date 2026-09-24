@@ -21,6 +21,80 @@ import { slashCommandMatches, type SlashCommandScanOptions } from './slash-refs'
 
 export const RICH_INPUT_SLOT = 'composer-rich-input'
 
+/** Chromium's litter: editing beside a `contenteditable=false` chip splits the
+ *  line and leaves zero-length text nodes behind. They render as nothing and
+ *  serialize as nothing, so no reader of the editor should count them. */
+function isEmptyTextNode(node: ChildNode | null): boolean {
+  return node?.nodeType === Node.TEXT_NODE && !node.textContent
+}
+
+/** The node before `node`, stepping over that litter. */
+function meaningfulPreviousSibling(node: ChildNode | null): ChildNode | null {
+  let prev = node?.previousSibling ?? null
+
+  while (isEmptyTextNode(prev)) {
+    prev = prev?.previousSibling ?? null
+  }
+
+  return prev
+}
+
+/** The node after `node`, stepping over that litter. */
+function meaningfulNextSibling(node: ChildNode | null): ChildNode | null {
+  let next = node?.nextSibling ?? null
+
+  while (isEmptyTextNode(next)) {
+    next = next?.nextSibling ?? null
+  }
+
+  return next
+}
+
+/** The live collapsed selection container, if it belongs to this editor. */
+function composerCollapsedSelectionContainer(editor: HTMLElement): Node | null {
+  const selection = window.getSelection()
+
+  if (!selection?.isCollapsed || selection.rangeCount === 0) {
+    return null
+  }
+
+  const range = selection.getRangeAt(0)
+
+  return editor.contains(range.startContainer) ? range.startContainer : null
+}
+
+/** Keep the `data-empty` marker the placeholder paints on in step with the
+ *  editor root's contents.
+ *
+ *  `:empty` can't be the whole test: a cleared editor keeps a scaffolding <br>
+ *  so the contenteditable doesn't collapse, and that break makes `:empty`
+ *  false. Nor can CSS infer it on its own — a text node is invisible to
+ *  selectors, so `one<br>` and a lone `<br>` are the same shape, and
+ *  `:has(> br:only-child)` would paint the placeholder over the user's text.
+ *  The code that empties the editor is what knows, so it marks it.
+ *
+ *  Zero-length text nodes don't count as contents. Chromium leaves them behind
+ *  whenever an edit lands next to a `contenteditable=false` chip, and counting
+ *  them left an editor the user had emptied looking occupied. */
+export function markEditorEmptiness(editor: HTMLElement) {
+  if (Array.from(editor.childNodes).every(isEmptyTextNode)) {
+    editor.dataset.empty = ''
+  } else {
+    delete editor.dataset.empty
+  }
+}
+
+/** Drop the marker as IME composition starts, before any preedit text lands.
+ *
+ *  Input events during composition are deliberately skipped (they carry
+ *  uncommitted preedit text), so nothing else clears the marker until
+ *  `compositionend` — and the hint would otherwise sit behind the hiragana the
+ *  user is composing. `normalizeComposerEditorDom` restores it if composition
+ *  ends with nothing committed. */
+export function beginComposerComposition(editor: HTMLElement) {
+  delete editor.dataset.empty
+}
+
 /** @see referenceRe — the shared pattern every surface recognises a reference
  *  with. Module-level `/g` regexes carry `lastIndex`, so call sites reset it. */
 export const REF_RE = referenceRe()
@@ -59,6 +133,7 @@ export function quoteRefValue(value: string) {
 export function refChipHtml(kind: string, rawValue: string, displayLabel?: string) {
   const id = unquoteRef(rawValue)
   const text = `@${kind}:${quoteRefValue(id)}`
+
   const label = displayLabel || refChipLabel(kind, id)
 
   return `<span contenteditable="false" title="${escapeHtml(id)}" data-ref-text="${escapeHtml(text)}" data-ref-id="${escapeHtml(id)}" data-ref-kind="${escapeHtml(kind)}" ${refAttrsHtml(kind)}>${directiveIconSvg(kind)}${escapeHtml(label)}</span>`
@@ -97,58 +172,12 @@ export function slashChipElement(command: string, kind: SlashChipKind, label?: s
   return chip
 }
 
-/**
- * Marks a `<br>` the COMPOSER put there, as opposed to one the webview's editing
- * pipeline invented.
- *
- * The two are indistinguishable in the DOM and must be treated as opposites:
- * a line break the user asked for is content, and a phantom block/`<br>` the
- * engine leaves behind after editing around a `contenteditable=false` chip is
- * junk that serializes as a spurious `\n` and visibly grows the composer.
- * `normalizeComposerEditorDom` used to tell them apart by SHAPE — "a `<br>` after
- * real text is real, a trailing block wrapper is phantom" — which is a statement
- * about Chromium, not about the web: WebKit (WKWebView on macOS/iOS, WebKitGTK
- * on Linux) reaches for a block wrapper where Chromium reaches for a bare `<br>`,
- * so on those engines the phantom rule matched the user's own newline and
- * deleted it on the very next flush ("Shift+Enter does nothing on
- * macOS").
- *
- * Owning the gesture removes the guess entirely. Every break this module emits
- * carries the marker, so "did we put this here?" is a question with an answer
- * rather than a heuristic, and it reads the same on every engine.
- */
-const COMPOSER_BREAK_DATA_ATTR = 'data-composer-break'
-
-/** True for a `<br>` the composer itself inserted (a real, user-intended line
- *  break) — never for one the webview's editing pipeline left behind. */
-export function isComposerBreak(node: Node | null | undefined): boolean {
-  if (!node || node.nodeType !== Node.ELEMENT_NODE) {
-    return false
-  }
-
-  const el = node as HTMLElement
-
-  return el.tagName === 'BR' && el.dataset.composerBreak !== undefined
-}
-
-/** A tagged `<br>` — the only kind this module ever renders. */
-export function composerBreakElement(): HTMLBRElement {
-  const br = document.createElement('br')
-
-  br.dataset.composerBreak = ''
-
-  return br
-}
-
-/** The HTML form of `composerBreakElement`, for the string serializer. */
-const COMPOSER_BREAK_HTML = `<br ${COMPOSER_BREAK_DATA_ATTR}="">`
-
 function appendTextWithBreaks(target: DocumentFragment | HTMLElement, text: string) {
   const lines = text.split('\n')
 
   lines.forEach((line, index) => {
     if (index > 0) {
-      target.append(composerBreakElement())
+      target.append(document.createElement('br'))
     }
 
     if (line) {
@@ -210,6 +239,10 @@ export function renderComposerContents(target: HTMLElement, text: string, option
   // typed (`/wor`) and must stay editable. Callers repainting inert text (a
   // restored draft, a sent message opened for edit) pass `trailingCommitted`.
   appendComposerContents(target, text, options)
+
+  // The other writer that reshapes the editor root: painting a restored draft
+  // in clears the marker, clearing back to '' sets it.
+  markEditorEmptiness(target)
 }
 
 /** Caret range when the selection lives inside `editor`; else null. */
@@ -228,8 +261,8 @@ function composerSelectionRange(editor: HTMLElement) {
  *
  *  Chips are ATOMIC here: each contributes an object-replacement placeholder
  *  rather than leaking its label text, and a <br> contributes a newline. That
- *  makes a chip edge read as a token boundary, which is what directive
- *  recognition needs. */
+ *  makes a chip edge read as a token boundary, which is what both trigger
+ *  detection and directive recognition need. */
 export function serializeTextBefore(editor: HTMLElement, container: Node, offset: number): string {
   const probe = document.createRange()
 
@@ -266,97 +299,9 @@ function atTokenBoundary(editor: HTMLElement, range: Range | null): boolean {
   return !last || /[\s\uFFFC]/.test(last)
 }
 
-/** A Range covering the `length` characters immediately before a collapsed
- *  caret, or null when they aren't contiguous text. Spans text nodes: the
- *  webview fragments text around `contenteditable=false` chips on every edit,
- *  so a check that demanded the whole token inside ONE text node would degrade
- *  to a full re-render as soon as a chip existed anywhere in the line. */
-export function rangeBeforeCaret(editor: HTMLElement, length: number): Range | null {
-  const hit = composerSelectionRange(editor)
-
-  if (!hit?.range.collapsed || length <= 0) {
-    return null
-  }
-
-  let node: Node | null = hit.range.startContainer
-  let offset = hit.range.startOffset
-
-  // An element-positioned caret (common right after programmatic caret moves)
-  // resolves to the end of the text node before it. A chip or <br> there means
-  // no text token precedes the caret — bail rather than guess.
-  if (node.nodeType !== Node.TEXT_NODE) {
-    node = node.childNodes[offset - 1] ?? null
-
-    if (node?.nodeType !== Node.TEXT_NODE) {
-      return null
-    }
-
-    offset = (node.textContent || '').length
-  }
-
-  let startNode = node as Text
-  let startOffset = offset
-  let remaining = length
-
-  while (remaining > 0) {
-    if (startOffset >= remaining) {
-      startOffset -= remaining
-      remaining = 0
-
-      break
-    }
-
-    remaining -= startOffset
-
-    const prev: Node | null = startNode.previousSibling
-
-    if (prev?.nodeType !== Node.TEXT_NODE) {
-      return null
-    }
-
-    startNode = prev as Text
-    startOffset = (prev.textContent || '').length
-  }
-
-  const range = document.createRange()
-
-  range.setStart(startNode, startOffset)
-  range.setEnd(hit.range.startContainer, hit.range.startOffset)
-
-  return range
-}
-
-/** Swap the `length` characters immediately before a collapsed caret for
- *  `fragment`, leaving the caret after it. Returns whether it ran. */
-export function replaceBeforeCaret(editor: HTMLElement, length: number, fragment: DocumentFragment) {
-  const range = rangeBeforeCaret(editor, length)
-
-  if (!range) {
-    return false
-  }
-
-  const tail = fragment.lastChild
-
-  range.deleteContents()
-  range.insertNode(fragment)
-
-  if (tail) {
-    range.setStartAfter(tail)
-  }
-
-  range.collapse(true)
-
-  const selection = window.getSelection()
-
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-
-  return true
-}
-
 /** Insert text at the caret (replacing any selection), with any directives in
  *  it landing as chips. Pastes use this instead of `execCommand('insertText')`
- *  — the webview's editing pipeline is ~O(n²) on large multiline blobs.
+ *  — Chromium's editing pipeline is ~O(n²) on large multiline blobs.
  *
  *  The text arrives whole rather than typed, so a `/command` ending it is
  *  complete rather than half-written and chips like the rest.
@@ -416,76 +361,112 @@ export function insertComposerContentsAtCaret(editor: HTMLElement, text: string,
   }
 }
 
-/**
- * Insert ONE user-intended line break at the caret (replacing any selection),
- * leaving the caret after it. Returns whether it ran.
+/** Range covering exactly `length` serialized characters immediately before a
+ *  collapsed caret, spanning Chromium's split text nodes. Null when the caret
+ *  isn't a collapsed selection in `editor`, or when a chip/<br>/block boundary
+ *  interrupts before `length` characters are covered — a trigger token is
+ *  always contiguous text, so anything else means "don't touch the DOM here".
  *
- * This is what Shift+Enter does, instead of letting the webview's own
- * `insertLineBreak` do it. The engines do not agree on the DOM they produce for
- * that keystroke — Chromium leaves a bare `<br>`, WebKit a `<div><br></div>` —
- * and the normalizer downstream has to decide which trailing nodes are the
- * user's and which are the engine's leftovers. Emitting the break ourselves
- * makes that decision trivial and identical everywhere: it is ours, it is
- * tagged, it stays.
- *
- * Falls back to appending when the caret is not in this editor, so a
- * programmatic call cannot silently do nothing.
- */
-export function insertComposerLineBreak(editor: HTMLElement): boolean {
+ *  This is what keeps chip insertion stable: Chromium fragments text nodes
+ *  around contenteditable=false chips on every edit, so any commit path that
+ *  demands the whole token inside ONE text node (the old check) degrades to a
+ *  full re-render as soon as a chip exists anywhere in the line. */
+export function rangeBeforeCaret(editor: HTMLElement, length: number): Range | null {
   const hit = composerSelectionRange(editor)
-  const br = composerBreakElement()
 
-  if (hit) {
-    hit.range.deleteContents()
-    hit.range.insertNode(br)
-  } else {
-    editor.append(br)
+  if (!hit?.range.collapsed || length <= 0) {
+    return null
   }
 
-  const caret = document.createRange()
+  let node: Node | null = hit.range.startContainer
+  let offset = hit.range.startOffset
 
-  caret.setStartAfter(br)
-  caret.collapse(true)
+  // An element-positioned caret (common right after programmatic caret moves)
+  // resolves to the end of the text node before it. A chip or <br> there means
+  // no text token precedes the caret — bail rather than guess.
+  if (node.nodeType !== Node.TEXT_NODE) {
+    node = node.childNodes[offset - 1] ?? null
 
-  const selection = hit?.selection ?? window.getSelection()
+    if (node?.nodeType !== Node.TEXT_NODE) {
+      return null
+    }
 
-  selection?.removeAllRanges()
-  selection?.addRange(caret)
+    offset = (node.textContent || '').length
+  }
 
-  return true
+  let startNode = node as Text
+  let startOffset = offset
+  let remaining = length
+
+  while (remaining > 0) {
+    if (startOffset >= remaining) {
+      startOffset -= remaining
+      remaining = 0
+
+      break
+    }
+
+    remaining -= startOffset
+
+    const prev: Node | null = startNode.previousSibling
+
+    if (prev?.nodeType !== Node.TEXT_NODE) {
+      return null
+    }
+
+    startNode = prev as Text
+    startOffset = (prev.textContent || '').length
+  }
+
+  const range = document.createRange()
+
+  range.setStart(startNode, startOffset)
+  range.setEnd(hit.range.startContainer, hit.range.startOffset)
+
+  return range
 }
 
-/** Insert plain text at the caret (replacing any selection), with no directive
- *  recognition — for text that must land literally. */
-export function insertPlainTextAtCaret(editor: HTMLElement, text: string) {
-  const hit = composerSelectionRange(editor)
-  const fragment = document.createDocumentFragment()
+/** Swap the `length` characters immediately before a collapsed caret for
+ *  `fragment`, leaving the caret after it. Returns whether it ran. Spans split
+ *  text nodes (see rangeBeforeCaret) — a token typed around existing chips
+ *  still commits in place instead of falling back to a full re-render. */
+export function replaceBeforeCaret(editor: HTMLElement, length: number, fragment: DocumentFragment) {
+  const range = rangeBeforeCaret(editor, length)
 
-  appendTextWithBreaks(fragment, text)
+  if (!range) {
+    return false
+  }
 
   const tail = fragment.lastChild
 
-  if (hit) {
-    hit.range.deleteContents()
-    hit.range.insertNode(fragment)
-  } else {
-    editor.append(fragment)
-  }
+  range.deleteContents()
+  range.insertNode(fragment)
 
   if (tail) {
-    const caret = document.createRange()
-    caret.setStartAfter(tail)
-    caret.collapse(true)
-    const selection = hit?.selection ?? window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(caret)
+    range.setStartAfter(tail)
   }
+
+  range.collapse(true)
+
+  const selection = window.getSelection()
+
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+
+  return true
 }
 
 /** Backspace at a collapsed caret immediately after a chip: delete the chip AND
  *  the single trailing space we auto-insert after it, atomically — so removing a
  *  directive never strands an orphaned space (the contenteditable-driven cleanup
- *  was unreliable). Returns whether it ran. */
+ *  was unreliable). Returns whether it ran.
+ *
+ *  "Immediately after" has to be read through Chromium's litter. Committing a
+ *  completion empties the typed token's text node rather than removing it, and
+ *  `Range.insertNode` splits around the caret, so the chip routinely sits
+ *  between zero-length text nodes. Reading those as content made the caret look
+ *  like it was after plain text; the delete declined and Chromium's own
+ *  backspace bounced between the leftovers instead of removing the chip. */
 export function deleteChipBeforeCaret(editor: HTMLElement): boolean {
   const hit = composerSelectionRange(editor)
 
@@ -497,16 +478,20 @@ export function deleteChipBeforeCaret(editor: HTMLElement): boolean {
   let chip: ChildNode | null = null
 
   if (startContainer === editor) {
-    chip = startOffset > 0 ? editor.childNodes[startOffset - 1] : null
+    chip = startOffset > 0 ? (editor.childNodes[startOffset - 1] ?? null) : null
+
+    if (isEmptyTextNode(chip)) {
+      chip = meaningfulPreviousSibling(chip)
+    }
   } else if (startContainer.nodeType === Node.TEXT_NODE && startOffset === 0) {
-    chip = startContainer.previousSibling
+    chip = meaningfulPreviousSibling(startContainer as ChildNode)
   }
 
   if (chip?.nodeType !== Node.ELEMENT_NODE || !(chip as HTMLElement).dataset.refText) {
     return false
   }
 
-  const after = chip.nextSibling
+  const after = meaningfulNextSibling(chip)
   chip.remove()
 
   // Drop the auto-inserted trailing space; keep any real following text.
@@ -553,29 +538,21 @@ export function deleteSelectionInEditor(editor: HTMLElement) {
   return true
 }
 
-/** Serialize a draft string into chip-HTML for the contenteditable surface.
- *
- *  Breaks are TAGGED, exactly as `appendTextWithBreaks` tags the ones it builds
- *  as nodes. The two serializers have to agree: a draft repainted through this
- *  one and then normalized would otherwise have its newlines read as the
- *  webview's leftovers and stripped — the restored draft would lose a line every
- *  time it was put back. */
+/** Serialize a draft string into chip-HTML for the contenteditable surface. */
 export function composerHtml(text: string) {
   let cursor = 0
   let html = ''
 
   REF_RE.lastIndex = 0
 
-  const withBreaks = (slice: string) => escapeHtml(slice).replace(/\n/g, COMPOSER_BREAK_HTML)
-
   for (const match of text.matchAll(REF_RE)) {
     const index = match.index ?? 0
-    html += withBreaks(text.slice(cursor, index))
+    html += escapeHtml(text.slice(cursor, index)).replace(/\n/g, '<br>')
     html += refChipHtml(match[1] || 'file', match[2] || '')
     cursor = index + match[0].length
   }
 
-  return html + withBreaks(text.slice(cursor))
+  return html + escapeHtml(text.slice(cursor)).replace(/\n/g, '<br>')
 }
 
 /** Walk a DOM subtree back to the plain `@kind:value` text it represents. */
@@ -594,6 +571,15 @@ export function composerPlainText(node: Node): string {
     return el.dataset.refText
   }
 
+  // An editor holding nothing but the placeholder <br> is EMPTY. That <br> is
+  // scaffolding normalizeComposerEditorDom adds so the contenteditable keeps
+  // its height — not a line the user typed. Reading it as "\n" is how a
+  // just-cleared composer stayed non-empty: the newline got stashed as the
+  // session's draft and painted back on return.
+  if (el.dataset.slot === RICH_INPUT_SLOT && el.childNodes.length === 1 && el.firstChild?.nodeName === 'BR') {
+    return ''
+  }
+
   if (el.tagName === 'BR') {
     return '\n'
   }
@@ -605,6 +591,14 @@ export function composerPlainText(node: Node): string {
 }
 
 export function placeCaretEnd(element: HTMLElement) {
+  // A repaint can land on an editor React has already unmounted (the chat
+  // bar toggles with the thread's loading gate). Selecting into a detached
+  // node throws `addRange(): The given range isn't in document` from inside
+  // the commit phase, and React re-renders in a loop on it (#117285).
+  if (!element.isConnected) {
+    return
+  }
+
   const range = document.createRange()
   const selection = window.getSelection()
 
@@ -702,9 +696,9 @@ export function placeCaretAtOffset(editor: HTMLElement, offset: number) {
     return null
   }
 
-  const range = walk(editor)
+  const range = editor.isConnected ? walk(editor) : null
 
-  if (range) {
+  if (range?.startContainer.isConnected) {
     selection.removeAllRanges()
     selection.addRange(range)
 
@@ -714,21 +708,29 @@ export function placeCaretAtOffset(editor: HTMLElement, offset: number) {
   placeCaretEnd(editor)
 }
 
-/** Nothing but a PHANTOM break / whitespace (recursively) — i.e. no real text,
- *  no chip, and no break the composer itself put there.
- *
- *  A tagged break is content by definition: the user pressed Shift+Enter and we
- *  wrote it down. Without that exception a WebKit-shaped `<div><br></div>` and a
- *  Chromium-shaped bare `<br>` are the same node to this predicate, so the only
- *  thing separating "the newline you just typed" from "junk the engine left"
- *  would be which engine you happen to be running. */
+/** Snapshot only when cleanup actually removes the focused caret's container;
+ * cloning the draft on every input flush makes ordinary typing needlessly costly. */
+function removeComposerJunk(editor: HTMLElement, node: ChildNode) {
+  const selected = composerCollapsedSelectionContainer(editor)
+
+  const offset =
+    document.activeElement === editor && selected && node.contains(selected) ? caretOffsetInEditor(editor) : null
+
+  node.remove()
+
+  if (offset !== null) {
+    placeCaretAtOffset(editor, Math.min(offset, composerPlainText(editor).length))
+  }
+}
+
+/** Nothing but a break / whitespace (recursively) — i.e. no real text or chip. */
 function isBlankNode(node: ChildNode | null): boolean {
   if (!node) {
     return false
   }
 
   if (node.nodeName === 'BR') {
-    return !isComposerBreak(node)
+    return true
   }
 
   if (node.nodeType === Node.TEXT_NODE) {
@@ -745,20 +747,23 @@ function isBlankNode(node: ChildNode | null): boolean {
 }
 
 /** Drop contenteditable junk that serializes as `\n` and falsely expands the
- *  composer. Editing around a contenteditable=false chip makes the webview wrap
- *  the remainder in stray block <div>s / trailing <br>s — none of which our own
- *  rendering emits (we use text nodes + tagged <br> + chips).
- *
- *  Line breaks the COMPOSER inserted are preserved, and that is now a property of
- *  the node rather than of its position: `insertComposerLineBreak` tags every
- *  break it writes, so Shift+Enter survives here whether the engine would have
- *  represented it as a bare `<br>` (Chromium), as a trailing `<div><br></div>`
- *  (WebKit), or right after a chip — three shapes that all used to be read as
- *  phantoms and deleted on the next flush. Untagged leftovers are still junk and
- *  still go. */
+ *  composer. Editing around a contenteditable=false chip makes Chromium wrap the
+ *  remainder in stray block <div>s / trailing <br>s — none of which our own
+ *  rendering emits (we use text nodes + <br> + chips). Real <br> line breaks
+ *  (Shift+Enter, which sit after actual text) are preserved. */
 export function normalizeComposerEditorDom(editor: HTMLElement) {
+  const selectedContainer = composerCollapsedSelectionContainer(editor)
+
+  // Chromium's zero-length text nodes first: every check below reads siblings,
+  // and litter between them makes a chip look like it has text either side.
+  for (const child of Array.from(editor.childNodes)) {
+    if (isEmptyTextNode(child) && child !== selectedContainer) {
+      child.remove()
+    }
+  }
+
   // A trailing block wrapper holding only a break/whitespace is the phantom
-  // "new line" the webview adds after a chip on backspace — drop it.
+  // "new line" Chromium adds after a chip on backspace — drop it.
   const tailBlock = editor.lastChild as HTMLElement | null
 
   if (
@@ -766,7 +771,7 @@ export function normalizeComposerEditorDom(editor: HTMLElement) {
     (tailBlock.tagName === 'DIV' || tailBlock.tagName === 'P') &&
     isBlankNode(tailBlock)
   ) {
-    editor.removeChild(tailBlock)
+    removeComposerJunk(editor, tailBlock)
   }
 
   // Unwrap a lone block wrapper back to inline content.
@@ -774,18 +779,33 @@ export function normalizeComposerEditorDom(editor: HTMLElement) {
     const wrapper = editor.firstChild as HTMLElement
 
     if ((wrapper.tagName === 'DIV' || wrapper.tagName === 'P') && wrapper.dataset.slot !== RICH_INPUT_SLOT) {
+      // Moving the text nodes out resets Chromium's selection to the editor's
+      // start. Keep DOM endpoints (and direction), not serialized text offsets:
+      // chips are atomic and the wrapper's trailing newline is being removed.
+      const selection = editor.ownerDocument.getSelection()
+      const anchorNode = selection?.anchorNode
+      const focusNode = selection?.focusNode
+      const anchorOffset = selection?.anchorOffset ?? 0
+      const focusOffset = selection?.focusOffset ?? 0
+      const ownsSelection = anchorNode && focusNode && wrapper.contains(anchorNode) && wrapper.contains(focusNode)
+
       editor.replaceChildren(...Array.from(wrapper.childNodes))
+
+      if (ownsSelection && editor.isConnected) {
+        selection?.setBaseAndExtent(
+          anchorNode === wrapper ? editor : anchorNode,
+          anchorOffset,
+          focusNode === wrapper ? editor : focusNode,
+          focusOffset
+        )
+      }
     }
   }
 
-  // A trailing <br> right after a chip / only whitespace is a phantom line —
-  // UNLESS we put it there. Shift+Enter straight after a picked `@file:` chip, or
-  // as the first keystroke into an empty composer, produces exactly that shape
-  // and is exactly what the user asked for; on every engine this branch used to
-  // eat it.
+  // A trailing <br> right after a chip / only whitespace is a phantom line.
   const last = editor.lastChild
 
-  if (last?.nodeName === 'BR' && !isComposerBreak(last)) {
+  if (last?.nodeName === 'BR') {
     let prev: ChildNode | null = last.previousSibling
 
     while (prev?.nodeType === Node.TEXT_NODE && !(prev.textContent || '').trim()) {
@@ -793,7 +813,19 @@ export function normalizeComposerEditorDom(editor: HTMLElement) {
     }
 
     if (!prev || (prev as HTMLElement).dataset?.refText) {
-      editor.removeChild(last)
+      removeComposerJunk(editor, last)
     }
+  }
+
+  // ContentEditable elements with no children can visually collapse to
+  // near-zero height in some browsers (especially Chromium), causing the
+  // composer to appear as a tiny dot/pixel. Ensure there's always at least
+  // one <br> so the element maintains intrinsic height. The CSS min-height
+  // is a belt; the <br> is suspenders — together they prevent the shrink.
+  // That break is also why emptiness has to be marked, not inferred.
+  markEditorEmptiness(editor)
+
+  if (editor.childNodes.length === 0) {
+    editor.appendChild(document.createElement('br'))
   }
 }

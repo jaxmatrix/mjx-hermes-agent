@@ -7,6 +7,7 @@ import { Progress } from '@/components/ui/progress'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useI18n } from '@/i18n'
 import { BarChart3, CreditCard, ExternalLink, Package, Wrench } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
@@ -29,7 +30,7 @@ import { type BillingDevFixtureName, billingDevFixtures } from './dev-fixtures'
 import { StepUpInlineAction } from './inline-feedback'
 import { openExternal } from './open-external'
 import { BillingPlansView } from './plans-view'
-import { BILLING_SIM_BEHAVIORS, type BillingSimBehavior, createSimulatedBillingApi } from './simulated-api'
+import { createSimulatedBillingApi } from './simulated-api'
 import type { BillingStateResponse } from './types'
 import {
   type BillingAccountRowView,
@@ -44,8 +45,8 @@ import { useStepUpFlow } from './use-step-up'
 
 // `bview` mirrors the settings pview/kview sub-view pattern (deep-linkable, replace
 // navigation). `overview` is the default landing; `plans` is the in-app catalog.
-const BILLING_VIEWS = ['overview', 'plans'] as const
-type BillingSubView = (typeof BILLING_VIEWS)[number]
+export const BILLING_VIEWS = ['overview', 'plans'] as const
+export type BillingSubView = (typeof BILLING_VIEWS)[number]
 
 const FEATURE_BILLING_INVOICES = false
 
@@ -54,16 +55,6 @@ const BILLING_DEV_FIXTURE_NAMES = import.meta.env.DEV
   : []
 
 type BillingFixtureSelection = 'live' | BillingDevFixtureName
-
-const BILLING_FIXTURE_OPTIONS: BillingFixtureSelection[] = ['live', ...BILLING_DEV_FIXTURE_NAMES]
-
-/** DEV-only preview state, threaded down to the header. Absent in production builds. */
-interface BillingDevPreview {
-  behavior: BillingSimBehavior
-  fixture: BillingFixtureSelection
-  onBehaviorChange: (value: BillingSimBehavior) => void
-  onFixtureChange: (value: BillingFixtureSelection) => void
-}
 
 function SummaryCard({ label, value, tone }: { label: string; tone?: 'muted' | 'primary'; value: string }) {
   return (
@@ -97,18 +88,25 @@ function NoticeCard({ notice }: { notice: BillingNoticeView }) {
       <div className="mt-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {notice.message}
       </div>
-      {notice.action && (
-        <Button
-          className="mt-3"
-          onClick={() => openExternal(notice.action?.url)}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          {notice.action.label}
-          <ExternalLink className="size-3.5" />
-        </Button>
-      )}
+      {notice.action &&
+        (notice.action.onSelect ? (
+          // In-app action (free-tier sign-in): a plain button, no external-link
+          // glyph — nothing leaves the app.
+          <Button className="mt-3" onClick={notice.action.onSelect} size="sm" type="button" variant="outline">
+            {notice.action.label}
+          </Button>
+        ) : (
+          <Button
+            className="mt-3"
+            onClick={() => openExternal(notice.action?.url)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {notice.action.label}
+            <ExternalLink className="size-3.5" />
+          </Button>
+        ))}
     </div>
   )
 }
@@ -374,81 +372,62 @@ function UsageRow({ row }: { row: BillingUsageRowView }) {
   )
 }
 
-const DEV_SELECT_TRIGGER_CLASS =
-  'h-7 border-dashed border-(--ui-stroke-secondary) bg-transparent px-2 text-xs font-normal text-(--ui-text-tertiary) shadow-none hover:bg-(--ui-bg-tertiary) focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-(--ui-bg-tertiary)'
-
-function DevSelect<T extends string>({
-  ariaLabel,
-  className,
+// DEV-only preview switcher: swaps the whole page onto a canned fixture so every
+// billing state can be reviewed without a matching live account. Marked with a
+// wrench + "preview" so it never reads as a shipping control (it's compiled out of
+// production builds entirely).
+function BillingFixtureSelect({
   onValueChange,
-  options,
   value
 }: {
-  ariaLabel: string
-  className?: string
-  onValueChange: (value: T) => void
-  options: readonly T[]
-  value: T
+  onValueChange: (value: BillingFixtureSelection) => void
+  value: BillingFixtureSelection
 }) {
-  return (
-    <Select onValueChange={next => onValueChange(next as T)} value={value}>
-      <SelectTrigger aria-label={ariaLabel} className={cn(DEV_SELECT_TRIGGER_CLASS, className)} size="sm">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent align="end">
-        {options.map(option => (
-          <SelectItem key={option} value={option}>
-            {option}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
-
-// DEV-only preview switcher. The left select swaps the whole page onto a canned
-// fixture so every billing state can be reviewed without a matching live account;
-// the right one scripts how that fixture's mutations resolve (settlement timing,
-// charge / auto-reload failures), so the two compose — any account state crossed
-// with any behaviour. Marked with a wrench + "preview" so it never reads as a
-// shipping control (it's compiled out of production builds entirely).
-function BillingFixtureSelect({ behavior, fixture, onBehaviorChange, onFixtureChange }: BillingDevPreview) {
   return (
     <div className="flex items-center gap-1.5 text-(--ui-text-tertiary)">
       <Wrench className="size-3.5 shrink-0" />
       <span className="text-xs font-normal">preview</span>
-      <DevSelect
-        ariaLabel="Billing preview fixture (dev only)"
-        className="w-36"
-        onValueChange={onFixtureChange}
-        options={BILLING_FIXTURE_OPTIONS}
-        value={fixture}
-      />
-      {
-        // A mutation script only means anything against the simulated api.
-        fixture !== 'live' ? (
-          <DevSelect
-            ariaLabel="Billing preview mutation behavior (dev only)"
-            className="w-44"
-            onValueChange={onBehaviorChange}
-            options={BILLING_SIM_BEHAVIORS}
-            value={behavior}
-          />
-        ) : null
-      }
+      <Select onValueChange={value => onValueChange(value as BillingFixtureSelection)} value={value}>
+        <SelectTrigger
+          aria-label="Billing preview fixture (dev only)"
+          className="h-7 w-36 border-dashed border-(--ui-stroke-secondary) bg-transparent px-2 text-xs font-normal text-(--ui-text-tertiary) shadow-none hover:bg-(--ui-bg-tertiary) focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-(--ui-bg-tertiary)"
+          size="sm"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end">
+          <SelectItem value="live">live</SelectItem>
+          {BILLING_DEV_FIXTURE_NAMES.map(name => (
+            <SelectItem key={name} value={name}>
+              {name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }
 
-function BillingHeader({ devPreview }: { devPreview?: BillingDevPreview }) {
+function BillingHeader({
+  fixtureName,
+  onFixtureChange
+}: {
+  fixtureName?: BillingFixtureSelection
+  onFixtureChange?: (value: BillingFixtureSelection) => void
+}) {
+  const { t } = useI18n()
+
   return (
-    <div className="mb-2.5 flex items-center justify-between gap-3 pt-2 text-[length:var(--conversation-text-font-size)] font-medium">
-      <div className="flex min-w-0 items-center gap-2">
-        <BarChart3 className="size-4 shrink-0 text-muted-foreground" />
-        <span>Billing</span>
-      </div>
-      {import.meta.env.DEV && devPreview ? <BillingFixtureSelect {...devPreview} /> : null}
-    </div>
+    <SectionHeading
+      aside={
+        import.meta.env.DEV && fixtureName && onFixtureChange ? (
+          <BillingFixtureSelect onValueChange={onFixtureChange} value={fixtureName} />
+        ) : undefined
+      }
+      icon={BarChart3}
+      page
+      title={t.settings.nav.billing}
+    />
   )
 }
 
@@ -480,7 +459,13 @@ function BillingSkeleton() {
   )
 }
 
-function BillingSettingsContent({ devPreview }: { devPreview?: BillingDevPreview }) {
+function BillingSettingsContent({
+  fixtureName,
+  onFixtureChange
+}: {
+  fixtureName?: BillingFixtureSelection
+  onFixtureChange?: (value: BillingFixtureSelection) => void
+}) {
   const [subView, setSubView] = useRouteEnumParam<BillingSubView>('bview', BILLING_VIEWS, 'overview')
 
   // Fixture mode flows through the SAME query path — the simulated api (supplied by
@@ -494,7 +479,7 @@ function BillingSettingsContent({ devPreview }: { devPreview?: BillingDevPreview
   if (billingState.isPending) {
     return (
       <SettingsContent>
-        <BillingHeader devPreview={devPreview} />
+        <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
         <BillingSkeleton />
       </SettingsContent>
     )
@@ -520,7 +505,7 @@ function BillingSettingsContent({ devPreview }: { devPreview?: BillingDevPreview
   if (showPlans) {
     return (
       <SettingsContent>
-        <BillingHeader devPreview={devPreview} />
+        <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
         <BillingPlansView onBack={() => setSubView('overview')} tiers={view.tiers} />
       </SettingsContent>
     )
@@ -528,7 +513,7 @@ function BillingSettingsContent({ devPreview }: { devPreview?: BillingDevPreview
 
   return (
     <SettingsContent>
-      <BillingHeader devPreview={devPreview} />
+      <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
 
       {view.notice && <NoticeCard notice={view.notice} />}
 
@@ -543,6 +528,11 @@ function BillingSettingsContent({ devPreview }: { devPreview?: BillingDevPreview
       {view.plan && (
         <SettingsSection icon={Package} title="Plan">
           <CurrentPlanCard onViewPlans={() => setSubView('plans')} plan={view.plan} />
+          {view.planFootnote && (
+            <div className="mt-1 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+              {view.planFootnote}
+            </div>
+          )}
         </SettingsSection>
       )}
 
@@ -578,34 +568,25 @@ function BillingSettingsContent({ devPreview }: { devPreview?: BillingDevPreview
 
 function BillingSettingsWithDevFixtures() {
   const [fixtureName, setFixtureName] = useState<BillingFixtureSelection>('live')
-  const [behavior, setBehavior] = useState<BillingSimBehavior>('ok')
   const queryClient = useQueryClient()
 
   // DEV-only: a picked fixture is served by a simulated api (in-memory, mutable) that
   // the whole subtree resolves via BillingApiProvider → useBillingApi. `live` → null →
-  // the real gateway api. Rebuilt per fixture AND per behavior so switching either one
-  // starts from a fresh copy, with no half-settled charge carried across.
+  // the real gateway api. Rebuilt per fixture so switching starts from a fresh copy.
   const simulatedApi = useMemo(
-    () => (fixtureName !== 'live' ? createSimulatedBillingApi(billingDevFixtures[fixtureName], behavior) : null),
-    [behavior, fixtureName]
+    () => (fixtureName !== 'live' ? createSimulatedBillingApi(billingDevFixtures[fixtureName]) : null),
+    [fixtureName]
   )
 
-  const devPreview: BillingDevPreview = {
-    behavior,
-    fixture: fixtureName,
-    onBehaviorChange: setBehavior,
-    onFixtureChange: setFixtureName
-  }
-
-  // Switching fixture or behavior must refetch, since the billing queries are keyed
-  // the same across both. `simulatedApi` is the right dep: it is rebuilt by either.
+  // Switching fixtures (or its simulated api) must refetch, since the billing queries
+  // are keyed the same across fixtures.
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ['billing'] })
   }, [queryClient, simulatedApi])
 
   return (
     <BillingApiProvider value={simulatedApi}>
-      <BillingSettingsContent devPreview={devPreview} />
+      <BillingSettingsContent fixtureName={fixtureName} onFixtureChange={setFixtureName} />
     </BillingApiProvider>
   )
 }

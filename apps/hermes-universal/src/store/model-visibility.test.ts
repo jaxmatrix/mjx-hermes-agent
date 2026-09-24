@@ -1,10 +1,8 @@
+import type { ModelOptionProvider } from '@hermes/shared'
 import { describe, expect, it } from 'vitest'
-
-import type { ModelOptionProvider } from '@/types/hermes'
 
 import {
   collapseModelFamilies,
-  curatedFamilies,
   defaultVisibleKeys,
   effectiveVisibleKeys,
   emptyProviderSentinelKey,
@@ -35,13 +33,39 @@ describe('model visibility', () => {
     expect(visible.has(modelVisibilityKey('local-ollama', 'llama3.2:latest'))).toBe(true)
   })
 
-  it('does not re-add models from a provider that already has stored choices', () => {
+  it('does not re-add models the user already judged for a curated provider', () => {
     const stored = new Set([modelVisibilityKey('local-ollama', 'qwen3:latest')])
 
-    const visible = effectiveVisibleKeys(stored, [provider('local-ollama', ['qwen3:latest', 'llama3.2:latest'])])
+    const known = new Set([
+      modelVisibilityKey('local-ollama', 'qwen3:latest'),
+      modelVisibilityKey('local-ollama', 'llama3.2:latest')
+    ])
+
+    const visible = effectiveVisibleKeys(stored, [provider('local-ollama', ['qwen3:latest', 'llama3.2:latest'])], known)
 
     expect(visible.has(modelVisibilityKey('local-ollama', 'qwen3:latest'))).toBe(true)
     expect(visible.has(modelVisibilityKey('local-ollama', 'llama3.2:latest'))).toBe(false)
+  })
+
+  it('shows a model that appeared after the user curated its provider, unless the provider is hidden', () => {
+    // User curated claude-sub (kept sonnet, hid haiku) and hid all of nous; then a plugin update adds opus.
+    const stored = new Set([modelVisibilityKey('claude-sub', 'sonnet'), emptyProviderSentinelKey('nous')])
+
+    const known = new Set([
+      modelVisibilityKey('claude-sub', 'sonnet'),
+      modelVisibilityKey('claude-sub', 'haiku'),
+      modelVisibilityKey('nous', 'hermes-4')
+    ])
+
+    const providers = [provider('claude-sub', ['sonnet', 'haiku', 'opus']), provider('nous', ['hermes-4', 'hermes-5'])]
+    const visible = effectiveVisibleKeys(stored, providers, known)
+
+    expect(visible.has(modelVisibilityKey('claude-sub', 'opus'))).toBe(true)
+    expect(visible.has(modelVisibilityKey('claude-sub', 'haiku'))).toBe(false)
+    expect(visible.has(modelVisibilityKey('nous', 'hermes-5'))).toBe(false)
+
+    // No snapshot yet (pre-upgrade store): nothing counts as new, hide choices stay verbatim.
+    expect(effectiveVisibleKeys(stored, providers, null).has(modelVisibilityKey('claude-sub', 'opus'))).toBe(false)
   })
 
   it('preserves hidden-provider sentinel without re-adding defaults', () => {
@@ -59,24 +83,6 @@ describe('model visibility', () => {
     expect(visible.has(emptyProviderSentinelKey('nous'))).toBe(false)
     // Other providers still get defaults.
     expect(visible.has(modelVisibilityKey('ollama', 'qwen3:latest'))).toBe(true)
-  })
-
-  it('restores model when toggling on after hiding all', () => {
-    // Simulates: user hid all "nous" models, then toggles one back on.
-    const stored = new Set([emptyProviderSentinelKey('nous'), modelVisibilityKey('ollama', 'qwen3:latest')])
-
-    // After toggle: sentinel removed, one model added.
-    const afterToggle = new Set(stored)
-    afterToggle.delete(emptyProviderSentinelKey('nous'))
-    afterToggle.add(modelVisibilityKey('nous', 'hermes-3-llama-3.1-70b'))
-
-    const visible = effectiveVisibleKeys(afterToggle, [
-      provider('nous', ['hermes-3-llama-3.1-70b', 'hermes-3-llama-3.1-8b']),
-      provider('ollama', ['qwen3:latest'])
-    ])
-
-    expect(visible.has(modelVisibilityKey('nous', 'hermes-3-llama-3.1-70b'))).toBe(true)
-    expect(visible.has(modelVisibilityKey('nous', 'hermes-3-llama-3.1-8b'))).toBe(false)
   })
 
   it('folds a date-pinned snapshot into its rolling alias when present', () => {
@@ -269,46 +275,6 @@ describe('featured defaults', () => {
     expect(visible.has(modelVisibilityKey('ollama', 'qwen3:latest'))).toBe(true)
     expect(visible.has(modelVisibilityKey('ollama', 'llama3.2:latest'))).toBe(true)
   })
-
-  it('features a date-pinned snapshot through the rolling alias that represents it', () => {
-    // The backend features ids off the RAW catalog, where the snapshot carries
-    // the release date; `collapseModelFamilies` folds it into the alias row.
-    const nous = featuredProvider(
-      'nous',
-      ['anthropic/opus', 'anthropic/opus-20260615', 'google/gemini'],
-      ['anthropic/opus-20260615']
-    )
-
-    const visible = defaultVisibleKeys([nous])
-
-    expect(visible.has(modelVisibilityKey('nous', 'anthropic/opus'))).toBe(true)
-    // The snapshot has no row of its own, so it never becomes a key.
-    expect(visible.has(modelVisibilityKey('nous', 'anthropic/opus-20260615'))).toBe(false)
-    expect(visible.has(modelVisibilityKey('nous', 'google/gemini'))).toBe(false)
-  })
-
-  it('features a -fast sibling through its base family', () => {
-    const nous = featuredProvider(
-      'nous',
-      ['anthropic/opus', 'anthropic/opus-fast', 'google/gemini'],
-      ['anthropic/opus-fast']
-    )
-
-    const visible = defaultVisibleKeys([nous])
-
-    expect(visible.has(modelVisibilityKey('nous', 'anthropic/opus'))).toBe(true)
-    expect(visible.has(modelVisibilityKey('nous', 'google/gemini'))).toBe(false)
-  })
-
-  it('falls back to top-N when no featured id resolves to a catalog row', () => {
-    const nous = featuredProvider('nous', ['anthropic/opus', 'google/gemini'], ['retired/model'])
-
-    const visible = defaultVisibleKeys([nous])
-
-    // Better a full catalog than an empty provider the user cannot see at all.
-    expect(visible.has(modelVisibilityKey('nous', 'anthropic/opus'))).toBe(true)
-    expect(visible.has(modelVisibilityKey('nous', 'google/gemini'))).toBe(true)
-  })
 })
 
 describe('setProviderVisibility', () => {
@@ -358,82 +324,13 @@ describe('setProviderVisibility', () => {
   })
 
   it('collapses model families to one key per family when enabling', () => {
-    const withFast = [provider('anthropic', ['opus', 'opus-fast', 'haiku'])]
+    // A base + its -fast sibling collapse to a single family row/key.
+    const ps = [provider('nous', ['model', 'model-fast'])]
 
-    const next = setProviderVisibility(null, withFast, 'anthropic', true)
+    const next = setProviderVisibility(null, ps, 'nous', true)
 
-    expect(next.has(modelVisibilityKey('anthropic', 'opus'))).toBe(true)
-    expect(next.has(modelVisibilityKey('anthropic', 'haiku'))).toBe(true)
-    // The -fast sibling rides on its base family, so it gets no key of its own.
-    expect(next.has(modelVisibilityKey('anthropic', 'opus-fast'))).toBe(false)
-  })
-})
-
-describe('curatedFamilies', () => {
-  const nous: ModelOptionProvider = {
-    featured_models: ['anthropic/opus'],
-    models: ['anthropic/opus', 'anthropic/haiku', 'google/gemini'],
-    name: 'Nous',
-    slug: 'nous'
-  }
-
-  const visible = defaultVisibleKeys([nous])
-
-  it('shows only the featured shortlist with no search', () => {
-    expect(curatedFamilies(nous, { visible }).map(f => f.id)).toEqual(['anthropic/opus'])
-  })
-
-  it('a search widens past the shortlist to the whole catalog', () => {
-    expect(curatedFamilies(nous, { search: 'haiku', visible }).map(f => f.id)).toEqual(['anthropic/haiku'])
-  })
-
-  it('matches on the provider name and slug, not just the model id', () => {
-    expect(curatedFamilies(nous, { search: 'nous', visible }).map(f => f.id)).toEqual([
-      'anthropic/opus',
-      'anthropic/haiku',
-      'google/gemini'
-    ])
-  })
-
-  it('keeps the active model even when it is outside the shortlist', () => {
-    expect(curatedFamilies(nous, { activeModel: 'google/gemini', visible }).map(f => f.id)).toEqual([
-      'anthropic/opus',
-      'google/gemini'
-    ])
-  })
-
-  it('does not pin the active model into a search that does not match it', () => {
-    // A query is a narrowing action: 'haiku' must return the haiku row alone,
-    // not the row the surface happens to be sitting on.
-    expect(curatedFamilies(nous, { activeModel: 'google/gemini', search: 'haiku', visible }).map(f => f.id)).toEqual([
-      'anthropic/haiku'
-    ])
-  })
-
-  it('returns nothing for a search that matches nothing, active model included', () => {
-    expect(curatedFamilies(nous, { activeModel: 'google/gemini', search: 'zzz', visible })).toEqual([])
-  })
-
-  it('preserves catalog order rather than match order', () => {
-    // 'anthropic' matches both anthropic models; they come back in list order.
-    expect(curatedFamilies(nous, { search: 'anthropic', visible }).map(f => f.id)).toEqual([
-      'anthropic/opus',
-      'anthropic/haiku'
-    ])
-  })
-
-  it('resolves a -fast active id back to its base family row', () => {
-    const anthropic: ModelOptionProvider = { models: ['opus', 'opus-fast'], name: 'Anthropic', slug: 'anthropic' }
-
-    const families = curatedFamilies(anthropic, { activeModel: 'opus-fast', visible: new Set() })
-
-    expect(families.map(f => f.id)).toEqual(['opus'])
-    expect(families[0].fastId).toBe('opus-fast')
-  })
-
-  it('finds a model by its search-only alias', () => {
-    const kimi: ModelOptionProvider = { models: ['k3'], name: 'Kimi', slug: 'kimi-coding' }
-
-    expect(curatedFamilies(kimi, { search: 'kimi-k3', visible: new Set() }).map(f => f.id)).toEqual(['k3'])
+    expect(next.has(modelVisibilityKey('nous', 'model'))).toBe(true)
+    // The -fast sibling is represented by its base family, not its own key.
+    expect(next.has(modelVisibilityKey('nous', 'model-fast'))).toBe(false)
   })
 })

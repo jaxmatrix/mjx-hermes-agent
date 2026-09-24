@@ -8,8 +8,7 @@ import { cn } from '@/lib/utils'
  * Reusable float-up particle emitter. It owns the motion (rise + organic sway +
  * springy pop) and lifecycle (staggered burst, lifetime, cleanup); callers just
  * hand it a `glyph` (any element using `currentColor`) and `colors`, then place
- * it with `className` / `style`. See `components/chat/vibe-hearts` for the
- * chat-hearts skin.
+ * it with `className` / `style`. See {@link VibeHearts} for the chat-hearts use.
  */
 
 type Range = readonly [min: number, max: number]

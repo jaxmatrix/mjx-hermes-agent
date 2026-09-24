@@ -40,11 +40,11 @@ interface ReadableStore<T> {
  * scalar changes by `Object.is` — not on every write to the store it came from.
  *
  * `useStore($someHotStore)` bails out on reference equality alone, so a store
- * republished per streaming token re-renders every consumer even when the one
- * field they actually read is identical. The session membership atoms are the
- * canonical case: `$workingSessionIds` and friends recompute off `$sessionStates`,
- * which republishes on every message delta, so a sidebar of 200 rows each doing
- * `useStore($workingSessionIds).has(id)` repaints wholesale on every token.
+ * republished per streaming token re-renders every consumer even when the two
+ * or three fields they actually read are identical. `$sessionStates` is the
+ * canonical case: it is republished on every message delta, so a component
+ * reading only `busy` or `turnStartedAt` off it pays for the whole transcript's
+ * churn.
  *
  * `select` must return a PRIMITIVE (or a referentially stable value). Returning
  * a fresh object or array defeats the bail-out and reintroduces the churn this
@@ -60,4 +60,43 @@ export function useStoreSelector<T, S>(store: ReadableStore<T>, select: (value: 
   const subscribe = useCallback((onChange: () => void) => store.listen(onChange), [store])
 
   return useSyncExternalStore(subscribe, () => selectRef.current(store.get()))
+}
+
+/**
+ * `useStoreSelector` for a scalar whose inputs span SEVERAL stores: recomputes
+ * when any of them notifies, still re-rendering only when the scalar changes.
+ *
+ * Subscribing to one store while the selector reads others is the failure this
+ * exists to prevent — it looks correct for as long as the subscribed store
+ * happens to churn on its own, then silently goes stale when it doesn't. If a
+ * selector reads it, list it.
+ */
+export function useStoresSelector<S>(stores: readonly ReadableStore<unknown>[], select: () => S): S {
+  const selectRef = useRef(select)
+  selectRef.current = select
+
+  // Hold the array identity steady: call sites pass an inline literal of
+  // module-level singletons, so only a genuine store swap should resubscribe.
+  const storesRef = useRef(stores)
+
+  if (storesRef.current.length !== stores.length || storesRef.current.some((store, i) => store !== stores[i])) {
+    storesRef.current = stores
+  }
+
+  const stable = storesRef.current
+
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const stops = stable.map(store => store.listen(onChange))
+
+      return () => {
+        for (const stop of stops) {
+          stop()
+        }
+      }
+    },
+    [stable]
+  )
+
+  return useSyncExternalStore(subscribe, () => selectRef.current())
 }

@@ -1,13 +1,6 @@
+import type { SessionListDensity } from '@/store/session-list-density'
 import type { SessionInfo } from '@/types/hermes'
 
-/**
- * The extra lines a non-compact sidebar row shows. Ported verbatim in behaviour
- * from desktop `app/chat/sidebar/session-row-details.ts`.
- *
- * Pure and deterministic on purpose: the row is virtualised on desktop and
- * re-rendered constantly here, so anything that reads a store or formats a
- * relative time would either churn or lie. Everything below comes off the row.
- */
 export interface SessionRowDetails {
   metadata: string
   preview: null | string
@@ -18,11 +11,11 @@ export interface SessionRowFormatters {
   toolCallCount: (count: number) => string
 }
 
-/** `anthropic/claude-x` → `claude-x`. The provider prefix is noise on a row this
- *  narrow, and every row of a profile carries the same one. */
 const modelLabel = (model: null | string) => model?.split('/').pop()?.trim() || null
-
 const oneLine = (value: null | string) => value?.replace(/\s+/g, ' ').trim() || null
+
+export const sessionRowEstimate = (density: SessionListDensity) =>
+  ({ compact: 28, comfortable: 45, detailed: 63 })[density]
 
 export function sessionRowDetails(session: SessionInfo, fmt: SessionRowFormatters): SessionRowDetails {
   const preview = oneLine(session.preview)
@@ -39,9 +32,6 @@ export function sessionRowDetails(session: SessionInfo, fmt: SessionRowFormatter
 
   return {
     metadata,
-    // A row with no title of its own ALREADY renders the preview as its title
-    // (`sessionTitle` falls back to it), so repeating it underneath would print
-    // the same sentence twice.
     preview: hasOwnTitle ? preview : null
   }
 }

@@ -1,49 +1,131 @@
-import { IS_MAC } from '@/lib/keybinds/combo'
+import type { ITheme, Terminal } from '@xterm/xterm'
+import type { CSSProperties } from 'react'
 
-export const isMacPlatform = (): boolean => IS_MAC
+import { isMacPlatform } from '@/lib/platform'
+import type { DesktopTerminalPalette } from '@/themes/types'
 
-/**
- * Hand the terminal's selection to the OS by mirroring it into xterm's hidden
- * helper textarea (the same trick xterm uses for Linux middle-click paste,
- * CoreBrowserTerminal.ts:531). Without it the webview's own copy — the
- * right-click menu, and any platform copy that bypasses our key handler — finds
- * no DOM selection and copies nothing, because xterm's selection lives on a
- * canvas.
- *
- * `textarea.select()` REPLACES the document's live range, which is why the
- * guards below are the whole point of this function rather than defensive
- * padding. Only claim the range while the terminal owns focus AND nothing
- * outside the terminal is highlighted — otherwise a leftover terminal scrap wins
- * ⌘C over text the user just selected in the chat, which is exactly the
- * arbitration bug (a copy in chat silently yielding terminal output instead).
- * The terminal's own ⌘C handler still copies through `writeClipboardText` when
- * focus is genuinely on the canvas.
- */
-export function mirrorSelection(host: HTMLElement, text: string) {
-  const textarea = host.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea')
+// VS Code's default integrated-terminal palette (terminalColorRegistry.ts) — a
+// fixed table per theme type, not luminance-derived. Light/dark diverge on
+// purpose so each stays legible (e.g. mustard yellow on white).
+const DARK_THEME: ITheme = {
+  background: '#1e1e1e',
+  foreground: '#cccccc',
+  cursor: '#cccccc',
+  cursorAccent: '#1e1e1e',
+  selectionBackground: '#264f7866',
+  black: '#000000',
+  red: '#cd3131',
+  green: '#0dbc79',
+  yellow: '#e5e510',
+  blue: '#2472c8',
+  magenta: '#bc3fbc',
+  cyan: '#11a8cd',
+  white: '#e5e5e5',
+  brightBlack: '#666666',
+  brightRed: '#f14c4c',
+  brightGreen: '#23d18b',
+  brightYellow: '#f5f543',
+  brightBlue: '#3b8eea',
+  brightMagenta: '#d670d6',
+  brightCyan: '#29b8db',
+  brightWhite: '#e5e5e5'
+}
 
-  if (!textarea) {
-    return
+const LIGHT_THEME: ITheme = {
+  background: '#ffffff',
+  foreground: '#333333',
+  cursor: '#333333',
+  cursorAccent: '#ffffff',
+  selectionBackground: '#add6ff80',
+  black: '#000000',
+  red: '#cd3131',
+  green: '#00bc00',
+  yellow: '#949800',
+  blue: '#0451a5',
+  magenta: '#bc05bc',
+  cyan: '#0598bc',
+  white: '#555555',
+  brightBlack: '#666666',
+  brightRed: '#cd3131',
+  brightGreen: '#14ce14',
+  brightYellow: '#b5ba00',
+  brightBlue: '#0451a5',
+  brightMagenta: '#bc05bc',
+  brightCyan: '#0598bc',
+  brightWhite: '#a5a5a5'
+}
+
+// Palette by painted mode, optionally overlaid with an imported theme's ANSI
+// palette (Solarized terminal for the Solarized skin, etc.). `palette` only
+// fills the slots it defines, so a partial import keeps the mode defaults for
+// the rest. `background` is a fallback only — withSurface swaps in the live skin
+// surface at runtime (keeping transparency); minimumContrastRatio keeps colors
+// crisp against it.
+export function terminalTheme(mode: 'light' | 'dark', palette?: DesktopTerminalPalette): ITheme {
+  const base = mode === 'dark' ? DARK_THEME : LIGHT_THEME
+
+  if (!palette) {
+    return base
   }
 
-  if (!text) {
-    textarea.value = ''
+  const overlay = { ...base } as Record<string, string>
 
-    return
+  for (const [slot, value] of Object.entries(palette)) {
+    if (value) {
+      overlay[slot] = value
+    }
   }
 
-  textarea.value = text
+  return overlay as ITheme
+}
 
-  if (!host.contains(document.activeElement)) {
-    return
+// Resolve --ui-terminal-surface-background (a color-mix on the skin seed) to a
+// concrete color for the WebGL renderer + contrast clamp. Custom props don't
+// resolve via getComputedStyle, so probe a real background-color. Read AFTER
+// applyTheme repaints (mount / rAF post-change) or it lags a frame behind.
+export function resolveSurfaceColor(fallback: string): string {
+  if (typeof document === 'undefined' || !document.body) {
+    return fallback
   }
 
-  const live = window.getSelection()
-  const foreign = live && !live.isCollapsed && live.anchorNode != null && !host.contains(live.anchorNode)
+  const probe = document.createElement('span')
+  probe.style.cssText =
+    'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-terminal-surface-background)'
+  document.body.appendChild(probe)
+  const resolved = getComputedStyle(probe).backgroundColor
+  probe.remove()
 
-  if (foreign) {
-    return
+  return resolved && resolved !== 'rgba(0, 0, 0, 0)' ? resolved : fallback
+}
+
+export { isMacPlatform }
+
+export function terminalSelectionLabel(term: Terminal, shellName: string, text: string) {
+  const pos = term.getSelectionPosition()
+
+  if (pos) {
+    return pos.start.y === pos.end.y ? `${shellName}:${pos.start.y}` : `${shellName}:${pos.start.y}-${pos.end.y}`
   }
 
-  textarea.select()
+  const lines = Math.max(1, text.trim().split(/\r?\n/).length)
+
+  return `${shellName}:${lines} line${lines === 1 ? '' : 's'}`
+}
+
+export function terminalSelectionAnchor(host: HTMLDivElement): CSSProperties | null {
+  const rect = Array.from(host.querySelectorAll<HTMLElement>('.xterm-selection div'))
+    .map(node => node.getBoundingClientRect())
+    .filter(r => r.width > 0 && r.height > 0)
+    .at(-1)
+
+  if (!rect) {
+    return null
+  }
+
+  const hostRect = host.getBoundingClientRect()
+  const buttonWidth = 128
+  const left = Math.min(Math.max(rect.left - hostRect.left, 8), Math.max(8, host.clientWidth - buttonWidth - 8))
+  const top = Math.min(Math.max(rect.bottom - hostRect.top + 4, 8), Math.max(8, host.clientHeight - 34))
+
+  return { left, top }
 }

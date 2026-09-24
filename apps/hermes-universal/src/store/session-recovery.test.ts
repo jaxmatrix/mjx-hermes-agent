@@ -9,16 +9,16 @@ const aliasStoredSessionId = vi.fn()
 const rekeySession = vi.fn()
 const runtimeKeyForStoredSession = vi.fn<(id: null | string) => null | string>(() => null)
 
-vi.mock('@/store/gateway', () => ({
+vi.mock('@/store/gateway-client', () => ({
   // `$gatewayState` too: `store/connection.ts` subscribes to it at module scope,
-  // and the session-request-router's dispatch reads it as the "is there a socket"
+  // and the session-route-dispatch's dispatch reads it as the "is there a socket"
   // half of the route check.
   $gatewayState: atom('open'),
   requestGateway: (...args: unknown[]) => requestGateway(...args)
 }))
 
-vi.mock('@/store/session', () => ({
-  knownSessionProfile: (id: string) => knownSessionProfile(id),
+vi.mock('@/store/session-lifecycle', () => ({
+  knownSessionProfileFor: (id: string) => knownSessionProfile(id),
   resolveSessionProfile: () => resolveSessionProfile(),
   sessionProfileIsAmbiguous: () => sessionProfileIsAmbiguous()
 }))
@@ -29,13 +29,15 @@ vi.mock('@/store/session-state-types', () => ({
   runtimeKeyForStoredSession: (id: null | string) => runtimeKeyForStoredSession(id)
 }))
 
-const { setSessionOwnerResolver } = await import('./session-request-router')
+const { setSessionOwnerResolver } = await import('./session-route-dispatch')
 const { isSessionNotFoundError, SessionRecoveryAborted, withSessionNotFoundResume } = await import('./session-recovery')
 
 // The owning-profile lookup is a hook the real `store/session` registers at
 // module init; this stands in for it with the same two fast paths, so the route
 // assertions below still exercise the real router.
-setSessionOwnerResolver(id => knownSessionProfile(id) ?? (sessionProfileIsAmbiguous() ? resolveSessionProfile() : undefined))
+setSessionOwnerResolver(
+  id => knownSessionProfile(id) ?? (sessionProfileIsAmbiguous() ? resolveSessionProfile() : undefined)
+)
 
 const notFound = () => new Error('session not found: dead-runtime')
 
@@ -88,7 +90,8 @@ describe('withSessionNotFoundResume', () => {
 
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-1',
-      omit_messages: true
+      omit_messages: true,
+      source: 'desktop'
     })
     // The recovered binding is published, or every later call still holds the
     // dead id and recovers again on each one. With no open slice there is
@@ -144,7 +147,8 @@ describe('withSessionNotFoundResume', () => {
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-1',
       omit_messages: true,
-      profile: 'work'
+      profile: 'work',
+      source: 'desktop'
     })
     expect(resolveSessionProfile).not.toHaveBeenCalled()
   })

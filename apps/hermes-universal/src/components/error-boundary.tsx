@@ -1,12 +1,9 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { ErrorState } from '@/components/ui/error-state'
 import { useI18n } from '@/i18n'
-
-// Adapted from apps/desktop/src/components/error-boundary.tsx: the class is
-// verbatim; the fallback is a simple inline one (no ErrorState/logs deps). The
-// fallback strings are i18n'd via t.errors.*; note the boundary is mounted above
-// I18nProvider, so useI18n resolves to the default (English) catalog on a crash.
+import { requestSendDiagnostics } from '@/store/send-diagnostics'
 
 export interface ErrorBoundaryFallbackProps {
   error: Error
@@ -37,7 +34,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   state: ErrorBoundaryState = { error: null }
   private autoRecoveryCount = 0
   private autoRecoveryPending = false
-  private autoRecoveryTimer: null | number = null
+  private autoRecoveryTimer: number | null = null
   private autoRecoveryWindowStart = 0
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
@@ -46,18 +43,32 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidMount() {
     // StrictMode replays mount lifecycles in development. Its synthetic
-    // componentWillUnmount clears the timer scheduled by componentDidCatch, so
-    // restore the still-owned recovery on the matching remount — otherwise the
-    // whole app sits on the crash screen in dev for a race it had already
-    // decided to recover from.
+    // componentWillUnmount clears the timer scheduled by componentDidCatch,
+    // so restore the still-owned recovery on the matching remount.
     if (this.autoRecoveryPending && this.autoRecoveryTimer === null) {
       this.scheduleAutoRecovery()
     }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    const tag = this.props.label ? `[error-boundary:${this.props.label}]` : '[error-boundary]'
+    const label = this.props.label ?? ''
+    const tag = label ? `[error-boundary:${label}]` : '[error-boundary]'
     console.error(tag, error, info.componentStack)
+
+    // Persist to desktop.log via Electron (#79428): console.error only reaches
+    // the main process for windows with a console hook, is minified, and loses
+    // the component stack. This survives the window and names the component.
+    try {
+      window.hermesDesktop?.reportRendererError?.({
+        label: new URLSearchParams(window.location.search).get('win') ?? 'main',
+        boundary: label || 'unlabeled',
+        message: error.message,
+        componentStack: info.componentStack ?? ''
+      })
+    } catch {
+      // Logging must never take the boundary down with it.
+    }
+
     this.props.onError?.(error, info)
 
     if (this.props.label === 'root' && isTransientAssistantUiLookupError(error) && this.takeAutoRecoveryAttempt()) {
@@ -79,18 +90,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     this.setState({ error: null })
   }
 
-  /** One recovery budget per rolling window.
-   *
-   *  The `count === 0` arm is DEFENSIVE, not load-bearing, and the comment it
-   *  carried claimed otherwise (MJXHRM-406). `autoRecoveryWindowStart` is only
-   *  ever set to `now` — inside this arm, immediately before the count leaves
-   *  zero — or to 0, so `count === 0` already implies a window start of 0, and
-   *  against a real epoch clock the elapsed check restarts the window on its
-   *  own. It cannot change an outcome today; it exists so a future caller that
-   *  zeroes the count without the window start still opens a budget rather than
-   *  inheriting a stale one. No test pins it, deliberately — one would have to
-   *  freeze the clock at epoch 0 to see any difference, which is a property of
-   *  the test rig and not of the app. */
   private takeAutoRecoveryAttempt(): boolean {
     const now = Date.now()
 
@@ -137,9 +136,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 }
 
-/** The root boundary, as a component rather than `<ErrorBoundary label="root">`
- *  spelled out at the mount site: the auto-recovery above is gated on that exact
- *  label, and a typo in it silently turns recovery off. */
 export function RootErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary label="root">{children}</ErrorBoundary>
 }
@@ -148,19 +144,42 @@ function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
   const { t } = useI18n()
 
   return (
-    <div className="fixed inset-0 z-(--z-crash) grid place-items-center bg-background p-6">
-      <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
-        <h1 className="text-lg font-semibold text-foreground">{t.errors.boundaryTitle}</h1>
-        <p className="text-sm break-words text-muted-foreground">{error.message || t.errors.boundaryDesc}</p>
-        <div className="flex flex-col gap-2">
-          <Button className="font-semibold" onClick={reset} size="lg">
-            {t.common.retry}
-          </Button>
-          <Button onClick={() => window.location.reload()} variant="text">
-            {t.errors.reloadWindow}
-          </Button>
-        </div>
-      </div>
+    <div
+      className="fixed inset-0 z-(--z-crash) grid place-items-center bg-(--ui-chat-surface-background) p-6"
+      // Masks a crashed app — must stay filled under window glass. Contract:
+      // `[data-glass-opaque]` in styles.css.
+      data-glass-opaque=""
+    >
+      <ErrorState
+        className="w-full max-w-[28rem]"
+        description={
+          <>
+            {t.errors.boundaryDesc}
+            {error.message ? (
+              <details className="mt-2 text-start text-xs text-muted-foreground">
+                <summary className="cursor-pointer select-none text-center">{t.errors.boundaryDetails}</summary>
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[0.6875rem]">
+                  {error.message}
+                </pre>
+              </details>
+            ) : null}
+          </>
+        }
+        title={t.errors.boundaryTitle}
+      >
+        <Button className="font-semibold" onClick={reset} size="lg">
+          {t.common.retry}
+        </Button>
+        <Button onClick={() => window.location.reload()} variant="text">
+          {t.errors.reloadWindow}
+        </Button>
+        <Button onClick={() => void window.hermesDesktop?.revealLogs()?.catch(() => undefined)} variant="text">
+          {t.errors.openLogs}
+        </Button>
+        <Button onClick={() => requestSendDiagnostics(error.stack || error.message)} variant="text">
+          {t.errors.sendDiagnostics}
+        </Button>
+      </ErrorState>
     </div>
   )
 }

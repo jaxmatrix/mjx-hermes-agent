@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/ui/tooltip'
-import { deleteSession, getDefaultCwd, listSessions, setSessionArchived } from '@/hermes'
+import { deleteSession, listSessions, setSessionArchived } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { desktopDefaultCwd } from '@/lib/desktop-fs'
 import { pathLeaf } from '@/lib/display-path'
-import { Archive, ArchiveOff, FolderOpen, Loader2, Trash } from '@/lib/icons'
+import { Archive, ArchiveOff, FolderOpen, Loader2, Trash2 } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useStore } from '@/store/atom'
 import { confirm } from '@/store/confirm'
@@ -13,7 +14,7 @@ import { $defaultProjectDir, setDefaultProjectDir } from '@/store/default-projec
 import { useDisplayPath } from '@/store/display-home'
 import { notify, notifyError } from '@/store/notifications'
 import { pickProjectFolder } from '@/store/projects'
-import { isSessionPinned, refreshSessions } from '@/store/session'
+import { isSessionPinned, refreshSessions } from '@/store/session-lifecycle'
 import type { SessionInfo } from '@/types/hermes'
 
 import { EmptyState, ListRow, SectionHeading, SettingsContent, SettingsSkeleton } from './primitives'
@@ -46,9 +47,11 @@ function DefaultProjectDirSetting() {
   // Best-effort backend cwd for the "Defaults to …" hint when unset.
   useEffect(() => {
     let alive = true
-    void getDefaultCwd()
+    // desktopDefaultCwd answers null in local mode, where the monolith's
+    // getDefaultCwd always returned an object — hence the optional chain.
+    void desktopDefaultCwd()
       .then(res => {
-        if (alive && res.cwd) {
+        if (alive && res?.cwd) {
           setFallback(res.cwd)
         }
       })
@@ -249,7 +252,7 @@ export function ArchivedSection() {
                           type="button"
                           variant="ghost"
                         >
-                          <Trash className="size-3.5" />
+                          <Trash2 className="size-3.5" />
                         </Button>
                       </Tip>
                     </div>

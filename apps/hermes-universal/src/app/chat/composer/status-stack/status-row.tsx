@@ -1,26 +1,58 @@
-import { memo, type ReactNode } from 'react'
+import { Fragment, memo, type ReactNode } from 'react'
 
+import { openAgentTerminal } from '@/app/right-pane/terminal/terminals'
+import { StatusPendingIcon } from '@/components/chat/status-pending-icon'
 import { StatusRow } from '@/components/chat/status-row'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { type Translations, useI18n } from '@/i18n'
+import { capitalize } from '@/lib/text'
+import type { TodoStatus } from '@/lib/todos'
 import { cn } from '@/lib/utils'
-import type { SubagentProgress } from '@/store/subagents'
+import type { ComposerStatusItem } from '@/store/composer-status'
 
-// Adapted from apps/desktop/src/app/chat/composer/status-stack/status-row.tsx.
-// Universal's status stack shows subagents (todos / background processes /
-// terminals aren't wired here — FLAG(chat-port)), so this renders one
-// SubagentProgress into the shared StatusRow.
+const toolLabel = (name: string) => name.split('_').filter(Boolean).map(capitalize).join(' ') || name
 
-const toolLabel = (name: string) =>
-  name
-    .split('_')
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ') || name
+// Todo rows speak checkbox, not spinner-and-dot: a dashed ring while the item
+// is still open (pending), codicons once it resolves, a live spinner only on
+// the in-progress item.
+const TODO_GLYPHS: Record<Exclude<TodoStatus, 'in_progress' | 'pending'>, { icon: string; tone: string }> = {
+  cancelled: { icon: 'circle-slash', tone: 'text-muted-foreground/45' },
+  completed: { icon: 'pass-filled', tone: 'text-emerald-500/80' }
+}
 
-function leadingGlyph(item: SubagentProgress, s: Translations['statusStack']): ReactNode {
-  if (item.status === 'running') {
+// Left slot: braille spinner while running, otherwise a small status dot
+// (green = done, red = failed) so the slot is always filled and rows align.
+function leadingGlyph(item: ComposerStatusItem, s: Translations['statusStack']): ReactNode {
+  if (item.type === 'goal') {
+    if (item.goalStatus === 'paused') {
+      return <Codicon className="text-muted-foreground/60" name="debug-pause" size="0.8rem" />
+    }
+
+    if (item.goalStatus === 'done') {
+      return <Codicon className="text-emerald-500/80" name="pass-filled" size="0.8rem" />
+    }
+
+    return (
+      <GlyphSpinner
+        ariaLabel={s.running}
+        className="text-[0.85rem] leading-none text-emerald-500/80"
+        spinner="braille"
+      />
+    )
+  }
+
+  if (item.todoStatus === 'pending') {
+    return <StatusPendingIcon />
+  }
+
+  if (item.todoStatus && item.todoStatus !== 'in_progress') {
+    const glyph = TODO_GLYPHS[item.todoStatus]
+
+    return <Codicon className={glyph.tone} name={glyph.icon} size="0.8rem" />
+  }
+
+  if (item.state === 'running') {
     return (
       <GlyphSpinner
         ariaLabel={s.running}
@@ -33,62 +65,87 @@ function leadingGlyph(item: SubagentProgress, s: Translations['statusStack']): R
   return (
     <span
       aria-hidden
-      className={cn(
-        'size-1.5 rounded-full',
-        item.status === 'failed' || item.status === 'interrupted' ? 'bg-destructive/80' : 'bg-(--ui-green)/70'
-      )}
+      className={cn('size-1.5 rounded-full', item.state === 'failed' ? 'bg-destructive/80' : 'bg-emerald-500/70')}
     />
   )
 }
 
+interface StatusItemRowProps {
+  item: ComposerStatusItem
+  /** Clear a finished background task from the stack. */
+  onDismiss?: (id: string) => void
+  /** Open the subagent's own session window, livestreamed by the gateway's
+   *  child-session mirror (Agents view fallback for older gateways). */
+  onOpen?: () => void
+  /** Cancel a running background task. */
+  onStop?: (id: string) => void
+}
+
 /**
- * `onOpen` takes the subagent's session id rather than closing over it, so the
- * caller can pass ONE stable callback for every row instead of a fresh arrow per
- * row per render. Without that this component is memoized in name only: a new
- * function identity on every render means the comparator never bails, which is
- * the same silent-inert-memo class MJXHRM-383 fixed in the sidebar (MJXHRM-45).
- *
- * `canOpen` is the caller's gate (desktop-only, not from a pop-out); the row
- * still requires the item to actually name a session.
+ * Renders one {@link ComposerStatusItem} into the shared {@link StatusRow}.
+ * Memoised + keyed by id so parent re-renders never remount it (the spinner
+ * keeps ticking instead of resetting).
  */
-export const StatusItemRow = memo(function StatusItemRow({
-  canOpen = false,
-  item,
-  onOpen
-}: {
-  canOpen?: boolean
-  item: SubagentProgress
-  onOpen?: (sessionId: string) => void
-}) {
+export const StatusItemRow = memo(function StatusItemRow({ item, onDismiss, onOpen, onStop }: StatusItemRowProps) {
   const { t } = useI18n()
   const s = t.statusStack
-  const failed = item.status === 'failed' || item.status === 'interrupted'
-  const openable = canOpen && Boolean(onOpen) && Boolean(item.sessionId)
-  const activate = openable ? () => onOpen?.(item.sessionId!) : undefined
+  const failed = item.state === 'failed'
+  const running = item.state === 'running'
+
+  const action =
+    item.type === 'background'
+      ? running
+        ? onStop && { label: s.stop, onClick: () => onStop(item.id) }
+        : onDismiss && { label: s.dismiss, onClick: () => onDismiss(item.id) }
+      : null
+
+  const canOpen = item.type === 'subagent' && !!onOpen
+
+  // Background rows link to their read-only terminal tab; subagents open their session.
+  const onActivate =
+    item.type === 'background' ? () => openAgentTerminal(item.id, item.title) : canOpen ? onOpen : undefined
 
   return (
-    <StatusRow
-      leading={leadingGlyph(item, s)}
-      onActivate={activate}
-      trailing={
-        openable ? (
-          <Codicon aria-hidden className="text-muted-foreground/55" name="link-external" size="0.85rem" />
-        ) : undefined
-      }
-    >
-      <span
-        className={cn(
-          'min-w-0 max-w-[18rem] truncate text-[0.73rem] leading-4',
-          failed ? 'text-destructive/90' : 'text-foreground/92'
-        )}
+    <Fragment>
+      <StatusRow
+        depth={Math.min(item.depth ?? 0, 4)}
+        dismiss={action ? { label: action.label, onDismiss: action.onClick } : undefined}
+        leading={leadingGlyph(item, s)}
+        onActivate={onActivate}
+        trailing={
+          canOpen ? (
+            <Codicon aria-hidden className="text-muted-foreground/55" name="link-external" size="0.85rem" />
+          ) : undefined
+        }
       >
-        {item.goal || t.statusStack.subagents(1)}
-      </span>
-      {item.currentTool && (
-        <span className="shrink-0 truncate text-[0.62rem] leading-4 text-muted-foreground/70">
-          {toolLabel(item.currentTool)}
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate text-[0.73rem] leading-4',
+            failed
+              ? 'text-destructive/90'
+              : item.todoStatus && item.todoStatus !== 'in_progress'
+                ? 'text-muted-foreground/75'
+                : 'text-foreground/92'
+          )}
+        >
+          {item.title}
         </span>
-      )}
-    </StatusRow>
+        {item.type === 'subagent' && item.currentTool && (
+          <span className="shrink-0 truncate text-[0.62rem] leading-4 text-muted-foreground/70">
+            {toolLabel(item.currentTool)}
+          </span>
+        )}
+        {item.type === 'goal' && item.currentTool && (
+          <span className="shrink-0 truncate text-[0.62rem] leading-4 text-muted-foreground/70">
+            {item.currentTool}
+          </span>
+        )}
+        {failed && typeof item.exitCode === 'number' && item.exitCode !== 0 && (
+          <span className="shrink-0 rounded bg-destructive/15 px-1 text-[0.58rem] font-semibold text-destructive tabular-nums">
+            {s.exit(item.exitCode)}
+          </span>
+        )}
+      </StatusRow>
+    </Fragment>
   )
 })

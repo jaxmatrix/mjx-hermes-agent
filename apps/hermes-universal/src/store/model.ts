@@ -1,3 +1,4 @@
+import type { ModelOptionsResult } from '@hermes/shared'
 import { atom } from 'nanostores'
 
 import { getGlobalModelInfo } from '@/hermes'
@@ -6,12 +7,11 @@ import { modelOptionsQueryKey } from '@/lib/model-options'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { queryClient } from '@/lib/query-client'
 import { $sessionId } from '@/store/chat'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { notify, notifyError } from '@/store/notifications'
 import { $activeGatewayProfile } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
-import { $sessionStates, updateSession } from '@/store/session-state-types'
-import type { ModelOptionsResponse } from '@/types/hermes'
+import { $sessionKeyStates, updateSession } from '@/store/session-state-types'
 
 // Composer model state (ported from desktop's session-store model atoms +
 // use-model-controls). The current model/provider drives the composer model
@@ -102,9 +102,9 @@ function writeModelOptionsCache(
   model: string,
   profile: null | string | undefined
 ): void {
-  queryClient.setQueryData<ModelOptionsResponse>(
+  queryClient.setQueryData<ModelOptionsResult>(
     modelOptionsQueryKey(profile, sessionId),
-    prev => ({ ...(prev ?? {}), model, provider }) as ModelOptionsResponse
+    prev => ({ ...(prev ?? {}), model, provider }) as ModelOptionsResult
   )
 }
 
@@ -174,7 +174,7 @@ export async function selectModel(selection: ModelSelection): Promise<boolean> {
   const primaryRuntimeId = $sessionId.get()
   const targetKey = 'sessionId' in selection ? (selection.sessionId ?? null) : primaryRuntimeId
   const touchesPrimary = !targetKey || targetKey === primaryRuntimeId
-  const slice = targetKey ? $sessionStates.get()[targetKey] : undefined
+  const slice = targetKey ? $sessionKeyStates.get()[targetKey] : undefined
   // The wire id. For the primary the key already IS the runtime id ($sessionId);
   // for a named surface it comes off the slice, and its absence means "no live
   // session", i.e. the pick is UI state the next session.create ships.

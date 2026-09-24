@@ -1,19 +1,27 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
-import type { SessionView } from '@/app/chat/session-view'
 import { playSpeechText } from '@/lib/voice-playback'
+import { ownsAmbientCue } from '@/store/ambient'
 import { notifyError } from '@/store/notifications'
 import { $voicePlayback } from '@/store/voice-playback'
 import { $autoSpeakReplies } from '@/store/voice-prefs'
-import { lastReply, markReplySpoken } from '@/store/voice-reply-cursor'
+
+import { useComposerScope } from '../scope'
+
+interface AutoSpeakReply {
+  id: string
+  pending: boolean
+  text: string
+}
 
 interface UseAutoSpeakReplies {
   conversationActive: boolean
   failureLabel: string
-  /** The session whose replies to read — shares the dedupe cursor with the
-   * conversation loop, and reads THIS session's messages (not the global chat). */
-  view: SessionView
+  /** Mark the current last reply spoken — shared dedupe with the conversation consumer. */
+  markSpoken: () => void
+  /** Latest completed assistant reply, or null; `pending` true while still streaming. */
+  pendingReply: () => AutoSpeakReply | null
   /** Re-arm on session switch so opening a chat never reads its existing last reply. */
   sessionId: string | null | undefined
 }
@@ -25,10 +33,19 @@ interface UseAutoSpeakReplies {
  * landing mid-playback is held and spoken on the playback-idle edge. Always reads
  * the latest reply, so a backlog collapses to the newest.
  */
-export function useAutoSpeakReplies({ conversationActive, failureLabel, view, sessionId }: UseAutoSpeakReplies) {
+export function useAutoSpeakReplies({
+  conversationActive,
+  failureLabel,
+  markSpoken,
+  pendingReply,
+  sessionId
+}: UseAutoSpeakReplies) {
   const enabled = useStore($autoSpeakReplies)
-  const latest = useRef({ conversationActive, failureLabel, view })
-  latest.current = { conversationActive, failureLabel, view }
+  // Wake on THIS composer's transcript: a tile subscribed to the primary's
+  // would never fire on its own replies (and would fire on someone else's).
+  const { $messages, connectionId, profile } = useComposerScope()
+  const latest = useRef({ connectionId, conversationActive, failureLabel, markSpoken, pendingReply, profile })
+  latest.current = { connectionId, conversationActive, failureLabel, markSpoken, pendingReply, profile }
 
   useEffect(() => {
     if (!enabled) {
@@ -37,31 +54,38 @@ export function useAutoSpeakReplies({ conversationActive, failureLabel, view, se
 
     // Don't read whatever reply already sits at the bottom when the toggle flips
     // on (or a chat opens) — consume it so only later replies are spoken.
-    markReplySpoken(latest.current.view)
+    latest.current.markSpoken()
 
     const speakLatest = () => {
-      const { conversationActive, failureLabel, view } = latest.current
+      const { connectionId, conversationActive, failureLabel, markSpoken, pendingReply, profile } = latest.current
 
       if (conversationActive || $voicePlayback.get().status !== 'idle') {
         return
       }
 
-      const reply = lastReply(view)
+      const reply = pendingReply()
 
       if (!reply || reply.pending) {
         return
       }
 
-      markReplySpoken(view)
-      void playSpeechText(reply.text, { messageId: reply.id, source: 'read-aloud' }).catch(error =>
-        notifyError(error, failureLabel)
-      )
+      markSpoken()
+      // Only one window voices a given reply when the same chat is open in
+      // several (reply.id is the shared backend message id). markSpoken already
+      // ran in every window, so peers just stay quiet.
+      void ownsAmbientCue(`speak:${reply.id}`).then(owns => {
+        if (owns) {
+          void playSpeechText(reply.text, { connectionId, messageId: reply.id, profile, source: 'read-aloud' }).catch(
+            error => notifyError(error, failureLabel)
+          )
+        }
+      })
     }
 
-    // Re-check on a reply completing (this view's messages) and on the prior clip
-    // ending ($voicePlayback → idle), which frees us to read the next held reply.
-    const stops = [latest.current.view.$messages.subscribe(speakLatest), $voicePlayback.listen(speakLatest)]
+    // Re-check on a reply completing ($messages) and on the prior clip ending
+    // ($voicePlayback → idle), which frees us to read the next held reply.
+    const stops = [$messages.subscribe(speakLatest), $voicePlayback.listen(speakLatest)]
 
     return () => stops.forEach(f => f())
-  }, [enabled, sessionId])
+  }, [$messages, enabled, sessionId])
 }

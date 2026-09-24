@@ -9,8 +9,9 @@
  * reports it's unavailable.
  */
 
+import type { DesktopMarketplaceThemeResult } from '@/global'
 import { IS_TAURI } from '@/lib/platform'
-import { buildThemeFromMarketplace, type MarketplaceThemeResult } from '@/themes/install'
+import { buildThemeFromMarketplace } from '@/themes/install'
 import type { DesktopTheme } from '@/themes/types'
 import { installUserTheme } from '@/themes/user-themes'
 
@@ -47,7 +48,7 @@ export async function installFromMarketplace(id: string): Promise<DesktopTheme> 
   }
 
   const { invoke } = await import('@tauri-apps/api/core')
-  const result = await invoke<MarketplaceThemeResult>('marketplace_fetch', { id: id.trim() })
+  const result = await invoke<DesktopMarketplaceThemeResult>('marketplace_fetch', { id: id.trim() })
 
   return installUserTheme(buildThemeFromMarketplace(result))
 }

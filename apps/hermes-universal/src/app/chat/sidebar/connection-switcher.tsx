@@ -1,134 +1,271 @@
-import { useState } from 'react'
+import { useStore } from '@nanostores/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  dropdownMenuRow,
+  DropdownMenuSearch,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import type { DesktopRegistryConnection } from '@/global'
 import { useI18n } from '@/i18n'
 import {
   CONNECTION_SEARCH_THRESHOLD,
-  connectionEndpointLabel,
-  connectionSearchMatches,
+  connectionMatchesQuery,
+  connectionTooltip,
   sortConnectionsForDisplay
 } from '@/lib/connection-display'
+import { triggerHaptic } from '@/lib/haptics'
+import { Loader2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { $activeConnection } from '@/store/active-connection'
-import { useStore } from '@/store/atom'
-import { $latchedConnections } from '@/store/connection-latches'
-import { $connectionsRegistry, $hasMultipleConnections, selectConnection } from '@/store/connections'
+import { $activeConnectionId, $connectionsRegistry, $pendingConnectionId, selectConnection } from '@/store/connections'
+import { closeFindBar } from '@/store/find-in-page'
+import { notifyError } from '@/store/notifications'
 
-/**
- * WHICH MACHINE — one row above the profile rail.
- *
- * A NAMED selector, not profile-like glyphs. A source is a machine and a profile
- * is a persona; giving them the same visual language is exactly the confusion
- * desktop spent four commits undoing. So this is a labelled button with a
- * chevron, and the rail below it is untouched.
- *
- * WITH ONE SOURCE THE WHOLE ROW IS ABSENT — not disabled, not collapsed. A
- * single-source install keeps today's exact sidebar and keyboard flow, which is
- * acceptance criterion 1.
- */
-export function ConnectionSwitcher() {
+import { ConnectionGlyph } from './connection-glyph'
+
+export function ConnectionSwitcher({ compact = false, onConnect }: { compact?: boolean; onConnect: () => void }) {
   const { t } = useI18n()
   const registry = useStore($connectionsRegistry)
-  const active = useStore($activeConnection)
-  const latched = useStore($latchedConnections)
-  const multiple = useStore($hasMultipleConnections)
-  const [open, setOpen] = useState(false)
-  const [term, setTerm] = useState('')
-  const [pending, setPending] = useState<null | string>(null)
+  const activeConnectionId = useStore($activeConnectionId)
+  const pendingConnectionId = useStore($pendingConnectionId)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const connectionListRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
-  if (!multiple) {
-    return null
+  const connections = useMemo(() => sortConnectionsForDisplay(registry?.connections ?? []), [registry?.connections])
+
+  const activeConnection = connections.find(connection => connection.id === activeConnectionId)
+  const searchable = connections.length >= CONNECTION_SEARCH_THRESHOLD
+
+  const kindLabels: Record<DesktopRegistryConnection['kind'], string> = {
+    cloud: t.settings.connections.kindCloud,
+    local: t.settings.connections.kindLocal,
+    remote: t.settings.connections.kindRemote,
+    ssh: t.settings.connections.kindSsh
   }
 
-  const sorted = sortConnectionsForDisplay(registry.connections)
-  const searchable = sorted.length >= CONNECTION_SEARCH_THRESHOLD
-  const rows = searchable ? sorted.filter(row => connectionSearchMatches(row, term)) : sorted
-  const label = active?.label ?? t.settings.connections.noSource
+  const displayedConnections = searchable
+    ? connections.filter(connection => connectionMatchesQuery(connection, searchQuery, [kindLabels[connection.kind]]))
+    : connections
 
-  const choose = async (id: string) => {
-    if (id === active?.connectionId) {
-      setOpen(false)
-
+  useEffect(() => {
+    if (!menuOpen || !searchable || searchQuery) {
       return
     }
 
-    // The control stays STABLE while a remote opens: a switch can take 90 s over
-    // ssh, and a button that jumps or empties mid-dial reads as a failure.
-    setPending(id)
+    connectionListRef.current?.querySelector('[aria-checked="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [activeConnectionId, menuOpen, searchQuery, searchable])
 
-    try {
-      await selectConnection(id, { allowInteractive: true })
-    } finally {
-      setPending(null)
-      setOpen(false)
+  useEffect(() => {
+    if (!menuOpen) {
+      return
     }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      setMenuOpen(false)
+      setSearchQuery('')
+    }
+
+    window.addEventListener('keydown', closeOnEscape, { capture: true })
+
+    return () => window.removeEventListener('keydown', closeOnEscape, { capture: true })
+  }, [menuOpen])
+
+  if (connections.length <= 1) {
+    return null
+  }
+
+  const choose = (connectionId: string) => {
+    triggerHaptic('selection')
+    const connection = connections.find(candidate => candidate.id === connectionId)
+
+    void selectConnection(connectionId).catch(error =>
+      notifyError(error, t.profiles.switchConnectionFailed(connection?.label ?? connectionId))
+    )
   }
 
   return (
-    <Popover onOpenChange={setOpen} open={open}>
-      <PopoverTrigger asChild>
-        <Button className="w-full justify-start gap-2 px-2" size="sm" variant="ghost">
-          <Codicon className="shrink-0 text-muted-foreground" name="server" size="1rem" />
-          <span className="min-w-0 flex-1 truncate text-start">{pending ? t.settings.connections.connecting(registry.connections.find(row => row.id === pending)?.label ?? '') : label}</span>
-          <Codicon className="shrink-0 text-muted-foreground" name="chevron-down" size="0.9rem" />
-        </Button>
-      </PopoverTrigger>
+    <div
+      aria-busy={pendingConnectionId !== null}
+      aria-label={t.settings.connections.title}
+      className={cn('min-w-20 shrink overflow-hidden', compact ? 'h-full max-w-40' : 'max-w-72')}
+      data-slot="connection-switcher"
+      role="group"
+    >
+      <DropdownMenu
+        onOpenChange={open => {
+          setMenuOpen(open)
 
-      {/* Anchored to the keyboard inset (rule 32) even though the desktop layout
-          never needs it — the same component is what any mobile shell mounts. */}
-      <PopoverContent
-        align="start"
-        className="w-[min(22rem,calc(100vw-2rem))] p-1"
-        style={{ maxHeight: 'calc(60vh - var(--keyboard-inset, 0px))' }}
+          if (!open) {
+            setSearchQuery('')
+          }
+        }}
+        open={menuOpen}
       >
-        {searchable && (
-          <input
-            aria-label={t.settings.connections.searchPlaceholder}
-            className="mb-1 w-full rounded-sm bg-muted px-2 py-1.5 text-sm outline-none"
-            onChange={event => setTerm(event.target.value)}
-            placeholder={t.settings.connections.searchPlaceholder}
-            value={term}
+        <DropdownMenuTrigger asChild>
+          <ConnectionSwitcherTrigger
+            activeConnection={activeConnection}
+            compact={compact}
+            pending={pendingConnectionId !== null}
+            title={t.settings.connections.title}
           />
-        )}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          className={cn('min-w-52 max-w-72', searchable && 'w-72 overflow-hidden p-0')}
+          collisionPadding={8}
+          onKeyDownCapture={event => {
+            if (searchable && (event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'f') {
+              event.preventDefault()
+              event.stopPropagation()
+              // The app-level keybind sees the chord at window capture before
+              // this portal and may open Find in page. This menu owns the chord
+              // while it is open, so close that surface before focusing here.
+              closeFindBar()
+              searchInputRef.current?.focus()
+              searchInputRef.current?.select()
+            }
+          }}
+          side="top"
+        >
+          {searchable && (
+            <>
+              <DropdownMenuSearch
+                className="[font-family:inherit] text-xs font-normal leading-4"
+                onKeyDown={event => {
+                  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+                    return
+                  }
 
-        <div className="max-h-[inherit] overflow-y-auto">
-          {rows.map(row => {
-            const endpoint = connectionEndpointLabel(row)
-            const isActive = row.id === active?.connectionId
+                  const results = connectionListRef.current?.querySelectorAll<HTMLElement>(
+                    '[role="menuitemradio"]:not([data-disabled])'
+                  )
 
-            return (
-              <button
-                className={cn(
-                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent',
-                  isActive && 'bg-accent/60'
-                )}
-                key={row.id}
-                onClick={() => void choose(row.id)}
-                type="button"
-              >
-                <Codicon
-                  className={cn('shrink-0', isActive ? 'text-foreground' : 'text-transparent')}
-                  name="check"
-                  size="0.9rem"
-                />
-                <span className="min-w-0 flex-1 truncate">{row.label}</span>
-                {latched[row.id] && (
-                  <Codicon className="shrink-0 text-amber-500" name="warning" size="0.9rem" />
-                )}
-                {endpoint && <span className="shrink-0 truncate text-xs text-muted-foreground">{endpoint}</span>}
-              </button>
-            )
-          })}
+                  const target =
+                    event.key === 'ArrowDown' ? results?.item(0) : results?.item((results?.length ?? 1) - 1)
 
-          {rows.length === 0 && (
-            // An empty large-list search explains itself rather than showing a
-            // blank popover.
-            <p className="px-2 py-3 text-sm text-muted-foreground">{t.settings.connections.searchEmpty(term)}</p>
+                  if (target) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    target.focus()
+                  }
+                }}
+                onValueChange={setSearchQuery}
+                placeholder={t.settings.connections.searchPlaceholder}
+                ref={searchInputRef}
+                value={searchQuery}
+              />
+              <DropdownMenuSeparator className="m-0" />
+            </>
           )}
-        </div>
-      </PopoverContent>
-    </Popover>
+          <DropdownMenuRadioGroup
+            className={
+              searchable
+                ? 'dt-portal-scrollbar h-48 max-h-[calc(var(--radix-dropdown-menu-content-available-height)-4.5rem)] overflow-y-auto p-1'
+                : undefined
+            }
+            onValueChange={choose}
+            ref={connectionListRef}
+            value={activeConnectionId ?? ''}
+          >
+            {displayedConnections.length === 0 ? (
+              <div
+                className="flex h-full items-center justify-center px-4 text-center text-xs text-(--ui-text-tertiary)"
+                role="status"
+              >
+                {t.settings.connections.noSearchResults}
+              </div>
+            ) : (
+              displayedConnections.map(connection => (
+                <DropdownMenuRadioItem
+                  className={cn('min-w-0', searchable && dropdownMenuRow)}
+                  key={connection.id}
+                  value={connection.id}
+                >
+                  <ConnectionLabel connection={connection} />
+                </DropdownMenuRadioItem>
+              ))
+            )}
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator className={searchable ? 'm-0' : undefined} />
+          <DropdownMenuItem className={searchable ? dropdownMenuRow : undefined} onSelect={onConnect}>
+            <ManageGatewaysLabel label={t.profiles.connectGateway} />
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
+
+interface ConnectionMenuProps {
+  activeConnection?: DesktopRegistryConnection
+  compact: boolean
+  pending: boolean
+  title: string
+}
+
+function ConnectionSwitcherTrigger({
+  activeConnection,
+  compact,
+  pending,
+  title,
+  ...triggerProps
+}: ConnectionMenuProps & React.ComponentProps<'button'>) {
+  return (
+    <Button
+      {...triggerProps}
+      aria-label={activeConnection ? `${title}: ${activeConnection.label}` : title}
+      className={cn(
+        'w-full min-w-0 justify-between overflow-hidden px-1 text-(--ui-text-secondary) data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground',
+        compact && 'h-full min-h-0 rounded-none px-1.5 text-[0.6875rem] font-normal',
+        triggerProps.className
+      )}
+      size="xs"
+      type="button"
+      variant="ghost"
+    >
+      <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+        {pending && <Loader2 aria-hidden="true" className="size-3 shrink-0 animate-spin" />}
+        {activeConnection ? (
+          <ConnectionLabel connection={activeConnection} />
+        ) : (
+          <span className="truncate">{title}</span>
+        )}
+      </span>
+      <Codicon aria-hidden="true" className="shrink-0 opacity-60" name="chevron-down" size="0.875rem" />
+    </Button>
+  )
+}
+
+function ManageGatewaysLabel({ label }: { label: string }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-(--ui-text-secondary)">
+      <Codicon aria-hidden="true" name="settings-gear" size="0.875rem" />
+      <span className="truncate">{label}</span>
+    </span>
+  )
+}
+
+function ConnectionLabel({ connection }: { connection: DesktopRegistryConnection }) {
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden" title={connectionTooltip(connection)}>
+      <ConnectionGlyph connection={connection} />
+      <span className="truncate">{connection.label}</span>
+    </span>
   )
 }

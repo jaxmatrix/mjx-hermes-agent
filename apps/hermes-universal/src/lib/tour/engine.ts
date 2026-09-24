@@ -8,22 +8,12 @@
  * self-contained: no imports, no closure references, no renderer globals —
  * everything arrives as a parameter. The minimal structural types below erase
  * at compile time, so the stringified function stays plain JS.
- *
- * UNIVERSAL (MJXHRM-473): ported verbatim from desktop `src/lib/tour/engine.ts`
- * with exactly one rename — desktop's `TourDriver` (a driver.js INSTANCE) is
- * `TourDriverInstance` here, because `store/agent-read-requests.ts` already
- * exports `TourDriver` for the FUNCTION that answers `tour.request`. Two
- * opposite meanings under one name in one app is a trap, not parity.
- *
- * Universal has no preview surface yet — MJXHRM-447 owns it — but the
- * self-contained rule holds anyway: 447 injects THIS source, unchanged, and any
- * import added here is the thing that breaks it.
  */
 
 import type { TourTarget } from './collect-targets'
 
 /** The slice of a driver.js instance the engine drives. */
-export interface TourDriverInstance {
+export interface TourDriver {
   destroy: () => void
   drive: (stepIndex?: number) => void
   getActiveIndex: () => number | undefined
@@ -37,7 +27,7 @@ export interface TourDriverInstance {
   movePrevious: () => void
 }
 
-export type TourDriverFactory = (config?: object) => TourDriverInstance
+export type TourDriverFactory = (config?: object) => TourDriver
 
 /** Look-and-feel passed into every driver instance: the scrim, how the cutout
  *  hugs the highlighted element, and the transition speed. Surface-supplied so
@@ -55,7 +45,7 @@ export interface TourStyle {
 /** Where a surface keeps its live instance between actions (module state in
  *  the app, a window global in the preview page). */
 export interface TourHolder {
-  driver?: TourDriverInstance
+  driver?: TourDriver
   /** Tears down the keep-alive observer. Runs with the driver. */
   release?: () => void
 }
@@ -66,6 +56,10 @@ export interface TourHolder {
  *  supplies the actual navigation (see TourHost), so the engine itself stays
  *  self-contained and portable to a guest page. */
 export interface TourStep {
+  /** Draw this step accent-lit: a slowly travelling ring around the popover
+   *  instead of the usual hairline. For the moment in a run that is worth more
+   *  than a step — used sparingly, or it stops meaning anything. */
+  accent?: boolean
   navigate?: string
   pane?: string
   selector?: string
@@ -126,7 +120,7 @@ export function runTourEngine(
     step.title || step.text
       ? {
           description: step.text || '',
-          popoverClass: first ? 'tour-pop-in' : 'tour-pop-next',
+          popoverClass: (first ? 'tour-pop-in' : 'tour-pop-next') + (step.accent ? ' tour-pop-accent' : ''),
           side: step.side || undefined,
           title: step.title || ''
         }

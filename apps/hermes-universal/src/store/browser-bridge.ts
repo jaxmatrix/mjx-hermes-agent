@@ -9,13 +9,19 @@ import {
   registerPreviewActor,
   registerPreviewReader
 } from '@/store/agent-read-requests'
-import { $browserState, $browserSupported, closeInAppBrowser, ensureBrowserCapabilities, openInAppBrowser } from '@/store/browser'
+import {
+  $browserState,
+  $browserSupported,
+  closeInAppBrowser,
+  ensureBrowserCapabilities,
+  openInAppBrowser
+} from '@/store/browser'
 import { appendBrowserConsole } from '@/store/browser-console'
 import { $chatBubbles } from '@/store/chat-bubbles'
-import { addGatewayEventListener } from '@/store/gateway'
+import { addGatewayEventListener } from '@/store/gateway-client'
 import { previewFile } from '@/store/preview-open'
-import { $activeStoredSessionId } from '@/store/session'
-import { $focusedStoredSessionId } from '@/store/session-states'
+import { $focusedStoredSessionId } from '@/store/session-key-states'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { ownsPersistedAppState } from '@/store/windows'
 
 /**

@@ -33,7 +33,12 @@ const h = vi.hoisted(() => {
 })
 
 vi.mock('@/hermes', () => ({
-  apiRequestProfile: () => null,
+  peekConfigReadOrigin: () => undefined,
+  retainConfigReadOrigin: (record: object) => record,
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   // Reached via useOnProfileSwitch → store/profile → store/profiles, which syncs
   // the REST scope at import time.
   setApiRequestProfile: vi.fn(),
@@ -41,11 +46,12 @@ vi.mock('@/hermes', () => ({
   saveHermesConfig: h.save
 }))
 vi.mock('@/voice/engine', () => ({ voiceEngine: { open: h.open, updateAuth: vi.fn(), owner: null } }))
-vi.mock('@/store/wake-word', () => ({ pauseWakeForVoice: h.pauseWake, resumeWakeAfterVoice: h.resumeWake }))
+vi.mock('@/voice/wake-pause', () => ({ pauseWakeForVoice: h.pauseWake, resumeWakeIfPaused: vi.fn() }))
+vi.mock('@/store/wake-word', () => ({ resumeWakeAfterVoice: h.resumeWake }))
 vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: h.notifyError }))
 
 import { I18nProvider } from '@/i18n'
-import { $voiceBargeinThreshold, $voiceInputGain, $voiceInputThreshold, $voiceOutputVolume } from '@/store/voice-prefs'
+import { $voiceBargeinThreshold, $voiceInputGain, $voiceInputThreshold, $voiceOutputVolume } from '@/store/voice-levels'
 
 import { VoiceLevelsPanel } from './voice-levels'
 
@@ -81,15 +87,15 @@ describe('voice levels panel', () => {
     renderPanel()
 
     expect(screen.getByLabelText('Input gain')).toHaveValue('4.5')
-    expect(screen.getByLabelText('Input threshold')).toHaveValue('0.2')
+    expect(screen.getByLabelText('Speech threshold')).toHaveValue('0.2')
     expect(screen.getByLabelText('Barge-in threshold')).toHaveValue('0.16')
-    expect(screen.getByLabelText('Speech volume')).toHaveValue('1')
+    expect(screen.getByLabelText('Reply volume')).toHaveValue('1')
   })
 
   it('persists a dragged slider under its voice.* key', async () => {
     renderPanel()
 
-    fireEvent.change(screen.getByLabelText('Input threshold'), { target: { value: '0.25' } })
+    fireEvent.change(screen.getByLabelText('Speech threshold'), { target: { value: '0.25' } })
 
     await waitFor(() =>
       expect(h.save).toHaveBeenCalledWith(
@@ -152,7 +158,7 @@ describe('voice levels panel', () => {
     await startMeter()
     expect(h.pauseWake).toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole('button', { name: /Stop/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Stop meter/i }))
 
     await waitFor(() => expect(h.lease.close).toHaveBeenCalled())
     await waitFor(() => expect(h.resumeWake).toHaveBeenCalled())

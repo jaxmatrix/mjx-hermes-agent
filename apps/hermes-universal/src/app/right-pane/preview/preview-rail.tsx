@@ -8,61 +8,96 @@ import { isMetaClose, middleClickHandlers } from '@/lib/middle-click'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { useDisplayPath } from '@/store/display-home'
+import { $rightRailActiveTabId, selectRightRailTab } from '@/store/layout'
 import {
-  $activePreviewTarget,
   $previewTabs,
-  isArtifactTab,
-  isBrowserTab,
-  previewCloseTargets,
-  type PreviewTarget,
-  requestCloseAllPreviewTabs,
-  requestCloseOtherPreviewTabs,
-  requestClosePreviewTab,
-  requestClosePreviewTabsToRight,
-  selectPreviewTab
+  $previewTarget,
+  closeRightRailTab,
+  type PreviewTab,
+  type PreviewTarget
 } from '@/store/preview'
-import { $dirtyPreviewPaths } from '@/store/preview-edit'
+import { $dirtyPreviewUrls } from '@/store/preview-edit'
 
 import { ArtifactPreview } from './preview-artifact'
 import { PreviewFile } from './preview-file'
 
-// The VS Code-style tabbed file viewer/editor rail — for the shells that have
-// NO LAYOUT TREE: the phone Workspace's Editor tab and the narrow AppShell
-// drawer. In the tree, a preview is a tile (app/chat/preview-tile.tsx) and the
-// ZONE owns its tab, so this rail's own strip is not a second bar there — it
-// simply isn't on that path at all.
-//
-// It reads the same `$previewTabs` / `$activePreviewPath` / view-mode stores the
-// tiles do, so a file opened on one shell is the same open file on the other.
+function tabLabel(target: PreviewTarget): string {
+  if (target.kind === 'url') {
+    return 'Browser'
+  }
+
+  if (target.kind === 'artifact') {
+    return target.label || 'Preview'
+  }
+
+  const value = target.label || target.path || target.source || target.url
+  const tail = value.split(/[\\/]/).filter(Boolean).at(-1)
+
+  return tail || value || 'Preview'
+}
+
+function closeTargets(tabId: string) {
+  const tabs = $previewTabs.get()
+  const index = tabs.findIndex(tab => tab.id === tabId)
+  const toRight = index === -1 ? 0 : Math.max(0, tabs.length - index - 1)
+
+  return {
+    all: tabs.length,
+    others: Math.max(0, tabs.length - 1),
+    right: toRight
+  }
+}
+
+function closeOtherTabs(tabId: string) {
+  for (const tab of $previewTabs.get()) {
+    if (tab.id !== tabId) {
+      closeRightRailTab(tab.id)
+    }
+  }
+}
+
+function closeTabsToRight(tabId: string) {
+  const tabs = $previewTabs.get()
+  const index = tabs.findIndex(tab => tab.id === tabId)
+
+  if (index === -1) {
+    return
+  }
+
+  for (const tab of tabs.slice(index + 1)) {
+    closeRightRailTab(tab.id)
+  }
+}
 
 export function PreviewRail() {
   const tabs = useStore($previewTabs)
-  const active = useStore($activePreviewTarget)
-  const dirty = useStore($dirtyPreviewPaths)
+  const active = useStore($previewTarget)
+  const activeTabId = useStore($rightRailActiveTabId)
+  const dirty = useStore($dirtyPreviewUrls)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-(--ui-editor-surface-background)">
       {tabs.length > 0 && (
         <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-t border-b border-(--ui-stroke-tertiary) bg-(--ui-sidebar-surface-background)">
           {tabs.map(tab => (
-            <PreviewTab active={active?.path === tab.path} dirty={dirty.has(tab.path)} key={tab.path} tab={tab} />
+            <PreviewRailTab
+              active={tab.id === activeTabId}
+              dirty={Boolean(dirty[tab.target.url])}
+              key={tab.id}
+              tab={tab}
+            />
           ))}
         </div>
       )}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {active ? (
-          // The browser tab renders here too: the phone's Workspace shell and
-          // the narrow drawer have no layout tree, and a browser only reachable
-          // from the tree would be a desktop-only feature by accident.
-          isBrowserTab(active.path) ? (
-            <BrowserPane key={active.path} />
-          ) : // An artifact tab names a registry entry, not a file on disk — a
-          // different reader entirely, sharing only the tab strip above.
-          isArtifactTab(active.path) ? (
-            <ArtifactPreview key={active.path} target={active} />
+          active.kind === 'url' ? (
+            <BrowserPane key={activeTabId ?? active.url} />
+          ) : active.kind === 'artifact' ? (
+            <ArtifactPreview key={activeTabId ?? active.url} target={active} />
           ) : (
-            <PreviewFile key={active.path} target={active} />
+            <PreviewFile key={activeTabId ?? active.url} target={active} />
           )
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground/60">
@@ -74,12 +109,12 @@ export function PreviewRail() {
   )
 }
 
-function PreviewTab({ active, dirty, tab }: { active: boolean; dirty: boolean; tab: PreviewTarget }) {
+function PreviewRailTab({ active, dirty, tab }: { active: boolean; dirty: boolean; tab: PreviewTab }) {
   const { t } = useI18n()
   const p = t.preview
-  // The tab's tooltip is the file's absolute path on the GATEWAY (MJXHRM-394).
-  // An `artifact:<id>` tab has no home prefix, so it passes through untouched.
   const displayPath = useDisplayPath()
+  const name = tabLabel(tab.target)
+  const pathHint = tab.target.path || tab.target.source || tab.target.url
 
   return (
     <ContextMenu>
@@ -91,41 +126,29 @@ function PreviewTab({ active, dirty, tab }: { active: boolean; dirty: boolean; t
               ? 'bg-(--ui-editor-surface-background) text-foreground'
               : 'text-(--ui-text-tertiary) hover:text-foreground'
           )}
-          // Middle-click closes — through `middleClickHandlers`, not
-          // `auxclick`. This strip is `overflow-x-auto`, and a middle press
-          // inside a scroller starts the AUTOSCROLL pan on Windows and Linux:
-          // the mouseup is spent stopping the pan, so `auxclick` never arrives
-          // and the gesture only ever worked on macOS. Every other tab surface
-          // in the app already used the shared handlers; this one was the
-          // holdout.
-          {...middleClickHandlers(() => requestClosePreviewTab(tab.path))}
+          {...middleClickHandlers(() => closeRightRailTab(tab.id))}
           onClick={event => {
-            // ⌘-click closes too, the trackpad equivalent of the middle button.
             if (isMetaClose(event)) {
               event.preventDefault()
-              requestClosePreviewTab(tab.path)
+              closeRightRailTab(tab.id)
 
               return
             }
 
-            selectPreviewTab(tab.path)
+            selectRightRailTab(tab.id)
           }}
-          title={displayPath(tab.path)}
+          title={displayPath(pathHint)}
         >
-          <span className="min-w-0 flex-1 truncate">{tab.name}</span>
+          <span className="min-w-0 flex-1 truncate">{name}</span>
           <button
-            aria-label={p.closeTab(tab.name)}
+            aria-label={`Close ${name}`}
             className="inline-flex size-4 shrink-0 items-center justify-center rounded hover:bg-(--chrome-action-hover)"
             onClick={event => {
               event.stopPropagation()
-              requestClosePreviewTab(tab.path)
+              closeRightRailTab(tab.id)
             }}
             type="button"
           >
-            {/* A dirty tab shows a dot where the × goes, and hover swaps them.
-                On touch that leaves a control you can tap but can't identify —
-                so there the × always wins. The dirty state is not lost: the
-                Workspace's Editor tab carries its own dirty badge. */}
             {dirty ? (
               <span aria-hidden className="size-1.5 rounded-full bg-(--ui-yellow) group-hover/tab:hidden coarse:hidden" />
             ) : null}
@@ -138,16 +161,16 @@ function PreviewTab({ active, dirty, tab }: { active: boolean; dirty: boolean; t
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-44">
-        {/* The SAME four close verbs as every tab strip in the app. This rail
-            used to hand-roll three of them under `preview.*` labels of its own
-            and never offered "to the right"; those labels are gone now and the
-            group reads from `zones.*`, like every other strip. */}
         {paneTabCloseItems(CONTEXT_KIT, {
-          counts: previewCloseTargets(tab.path),
-          onClose: () => requestClosePreviewTab(tab.path),
-          onCloseAll: () => requestCloseAllPreviewTabs(),
-          onCloseOthers: () => requestCloseOtherPreviewTabs(tab.path),
-          onCloseToRight: () => requestClosePreviewTabsToRight(tab.path)
+          counts: closeTargets(tab.id),
+          onClose: () => closeRightRailTab(tab.id),
+          onCloseAll: () => {
+            for (const item of [...$previewTabs.get()]) {
+              closeRightRailTab(item.id)
+            }
+          },
+          onCloseOthers: () => closeOtherTabs(tab.id),
+          onCloseToRight: () => closeTabsToRight(tab.id)
         })}
       </ContextMenuContent>
     </ContextMenu>

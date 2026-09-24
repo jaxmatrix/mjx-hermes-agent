@@ -1,6 +1,6 @@
 /**
  * Rehydration is the half of live-sync that has to be RIGHT rather than merely
- * fast: it writes busy/needs-input straight into `$sessionStates`, so a wrong
+ * fast: it writes busy/needs-input straight into `$sessionKeyStates`, so a wrong
  * key duplicates a conversation and a wrong reap clears a turn that is still
  * running. The reap in particular has no visible failure mode — the row just
  * goes quiet — which is exactly why it is pinned down here.
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -24,11 +24,14 @@ vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<typeof HermesApi>()),
+  getApiRequestConnection: () => null,
+  setApiRequestProfile: vi.fn(),
+  getApiRequestProfile: () => 'default',
   listAllProfileSessions: vi.fn().mockResolvedValue({ sessions: [], total: 0 })
 }))
 
 import { listAllProfileSessions } from '@/hermes'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import {
   type LiveSessionStatusItem,
   type LiveSessionStatusResponse,
@@ -38,20 +41,17 @@ import {
   startLiveSessionSync
 } from '@/store/live-session-status'
 import { $changeEventsAvailable, $sessionsChangeTick, resetLiveSync } from '@/store/live-sync'
-import {
-  $activeStoredSessionId,
-  $attentionSessionIds,
-  $unreadFinishedSessionIds,
-  $workingSessionIds
-} from '@/store/session'
+import { $unreadFinishedSessionIds } from '@/store/session'
+import { $stalledSessionIds, clearAllSessionStates, SESSION_WATCHDOG_TIMEOUT_MS } from '@/store/session-key-states'
+import { $activeStoredSessionId, $attentionSessionIds, $workingSessionIds } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   emptySessionState,
   publishSessionState,
+  runtimeKeyFor,
   runtimeKeyForStoredSession
 } from '@/store/session-state-types'
-import { $stalledSessionIds, clearAllSessionStates, SESSION_WATCHDOG_TIMEOUT_MS } from '@/store/session-states'
 
 const snapshot = (...sessions: LiveSessionStatusItem[]): LiveSessionStatusResponse => ({ sessions })
 
@@ -78,7 +78,7 @@ describe('rehydrateLiveSessionStatuses', () => {
 
   it('leaves a live stranger with NOTHING a warm short-circuit could adopt', () => {
     // The regression this split exists for (MJXHRM-356). The snapshot used to
-    // publish a `$sessionStates` slice for a session it had only HEARD about: no
+    // publish a `$sessionKeyStates` slice for a session it had only HEARD about: no
     // transcript, no `session.resume`, no transport bound to this webview — but
     // WITH a `storedSessionId`, so `publishSessionState` indexed it.
     //
@@ -94,7 +94,7 @@ describe('rehydrateLiveSessionStatuses', () => {
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-warm', session_key: 'stored-warm', status: 'working' }))
 
     expect(runtimeKeyForStoredSession('stored-warm')).toBeNull()
-    expect($sessionStates.get()['rt-warm']).toBeUndefined()
+    expect($sessionKeyStates.get()['rt-warm']).toBeUndefined()
     // …and the row still lights up, which is the only reason the stub existed.
     expect($workingSessionIds.get().has('stored-warm')).toBe(true)
   })
@@ -115,17 +115,17 @@ describe('rehydrateLiveSessionStatuses', () => {
 
     expect($workingSessionIds.get().has('stored-own')).toBe(true)
 
-    publishSessionState('rt-own', { ...$sessionStates.get()['rt-own'], busy: false })
+    publishSessionState('rt-own', { ...$sessionKeyStates.get()['rt-own'], busy: false })
 
     expect($workingSessionIds.get().has('stored-own')).toBe(false)
   })
 
   it('does NOT create a slice for an idle stranger', () => {
-    // Universal caps `$sessionStates` and prunes idle slices on every growth, so
+    // Universal caps `$sessionKeyStates` and prunes idle slices on every growth, so
     // seeding one per snapshot row would churn create→prune→republish forever.
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-idle', session_key: 'stored-idle', status: 'idle' }))
 
-    expect($sessionStates.get()['rt-idle']).toBeUndefined()
+    expect($sessionKeyStates.get()['rt-idle']).toBeUndefined()
   })
 
   it('writes into the slice a conversation ALREADY has, rather than opening a second one', () => {
@@ -135,8 +135,8 @@ describe('rehydrateLiveSessionStatuses', () => {
 
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-2', session_key: 'stored-2', status: 'waiting' }))
 
-    expect($sessionStates.get()['rt-2']).toBeUndefined()
-    expect($sessionStates.get()['hydrating:stored-2']).toMatchObject({ busy: true, needsInput: true })
+    expect($sessionKeyStates.get()['rt-2']).toBeUndefined()
+    expect($sessionKeyStates.get()['hydrating:stored-2']).toMatchObject({ busy: true, needsInput: true })
     expect(runtimeKeyForStoredSession('stored-2')).toBe('hydrating:stored-2')
   })
 
@@ -152,7 +152,7 @@ describe('rehydrateLiveSessionStatuses', () => {
 
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-3', session_key: 'stored-3', status: 'idle' }))
 
-    expect($sessionStates.get()['rt-3'].busy).toBe(true)
+    expect($sessionKeyStates.get()['rt-3'].busy).toBe(true)
   })
 
   it('marks a working session quiet once it is past the watchdog timeout', () => {
@@ -193,7 +193,7 @@ describe('reaping runtimes that vanish between snapshots', () => {
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-5b', session_key: 'stored-5b', status: 'working' }))
     rehydrateLiveSessionStatuses(snapshot())
 
-    expect($sessionStates.get()['rt-5b']).toMatchObject({ busy: false, needsInput: false, streamId: null })
+    expect($sessionKeyStates.get()['rt-5b']).toMatchObject({ busy: false, needsInput: false, streamId: null })
     expect($workingSessionIds.get().has('stored-5b')).toBe(false)
   })
 
@@ -218,11 +218,11 @@ describe('reaping runtimes that vanish between snapshots', () => {
     })
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-5c', session_key: 'stored-5c', status: 'idle' }))
 
-    expect($sessionStates.get()['rt-5c']).toMatchObject({ awaitingResponse: true, busy: false })
+    expect($sessionKeyStates.get()['rt-5c']).toMatchObject({ awaitingResponse: true, busy: false })
 
     rehydrateLiveSessionStatuses(snapshot())
 
-    expect($sessionStates.get()['rt-5c'].awaitingResponse).toBe(false)
+    expect($sessionKeyStates.get()['rt-5c'].awaitingResponse).toBe(false)
   })
 
   it('seals a tool row left spinning by the events that never arrived', () => {
@@ -241,7 +241,7 @@ describe('reaping runtimes that vanish between snapshots', () => {
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-5d', session_key: 'stored-5d', status: 'working' }))
     rehydrateLiveSessionStatuses(snapshot())
 
-    expect($sessionStates.get()['rt-5d'].messages[0].parts[0]).toHaveProperty('result')
+    expect($sessionKeyStates.get()['rt-5d'].messages[0].parts[0]).toHaveProperty('result')
   })
 
   it('reaps a session whose slice was rekeyed onto its runtime id in the meantime', () => {
@@ -254,7 +254,7 @@ describe('reaping runtimes that vanish between snapshots', () => {
 
     rehydrateLiveSessionStatuses(snapshot())
 
-    expect($sessionStates.get()['rt-6'].busy).toBe(false)
+    expect($sessionKeyStates.get()['rt-6'].busy).toBe(false)
   })
 
   it('does NOT clear a turn belonging to a DIFFERENT run of the same conversation', () => {
@@ -268,7 +268,7 @@ describe('reaping runtimes that vanish between snapshots', () => {
 
     rehydrateLiveSessionStatuses(snapshot())
 
-    expect($sessionStates.get()['rt-new'].busy).toBe(true)
+    expect($sessionKeyStates.get()['rt-new'].busy).toBe(true)
   })
 
   it('only reaps what the SAME profile previously saw', () => {
@@ -283,7 +283,7 @@ describe('reaping runtimes that vanish between snapshots', () => {
     // Another profile's gateway reports an empty registry — it never saw rt-8.
     rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'personal')
 
-    expect($sessionStates.get()['rt-8'].busy).toBe(true)
+    expect($sessionKeyStates.get()['rt-8'].busy).toBe(true)
     // The registry is per profile too, or the same empty snapshot would darken
     // the other gateway's rows.
     expect($workingSessionIds.get().has('stored-8')).toBe(true)
@@ -297,7 +297,7 @@ describe('reaping runtimes that vanish between snapshots', () => {
     seed('rt-9', { busy: true, runtimeSessionId: 'rt-9', storedSessionId: 'stored-9' })
     rehydrateLiveSessionStatuses(snapshot())
 
-    expect($sessionStates.get()['rt-9'].busy).toBe(true)
+    expect($sessionKeyStates.get()['rt-9'].busy).toBe(true)
   })
 })
 
@@ -374,5 +374,114 @@ describe('startLiveSessionSync', () => {
     second()
 
     expect(pulls).toBe(1)
+  })
+})
+
+/**
+ * MJXHRM-591, invariant 37 — the reaper only reaps its own backend.
+ *
+ * The snapshot comes from the socket the app is on, and the slice it would
+ * settle is found by STORED id: two backends mint the same shape of id, so an
+ * unscoped lookup lets the active backend's "that run is gone" stop a spinner on
+ * a turn running on another connection entirely.
+ */
+describe('a foreign tab\u2019s live turn', () => {
+  it('is not settled by the active backend\u2019s snapshot', () => {
+    const foreign = runtimeKeyFor('conn-b', 'rt-shared')
+
+    seed(foreign, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-shared',
+      storedSessionId: 'shared-id'
+    })
+
+    // Connection A reported the same runtime id live, then stopped reporting it.
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-shared', session_key: 'shared-id', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-a'
+    )
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-a')
+
+    expect($sessionKeyStates.get()[foreign]?.busy).toBe(true)
+  })
+
+  it('is not reaped by ANOTHER connection\u2019s snapshot that never saw it', () => {
+    // The hazard the tracking scope exists for: A reports a runtime live, B's
+    // own snapshot does not mention it, and a reap set shared between them lets
+    // B conclude that A's run has ended — then finds B's same-named slice and
+    // settles it.
+    const foreign = runtimeKeyFor('conn-b', 'rt-x')
+
+    seed(foreign, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-x',
+      storedSessionId: 'shared'
+    })
+
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-x', session_key: 'shared', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-a'
+    )
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-b')
+
+    expect($sessionKeyStates.get()[foreign]?.busy).toBe(true)
+  })
+
+  it('is settled by its OWN connection\u2019s snapshot', () => {
+    const own = runtimeKeyFor('conn-b', 'rt-own')
+
+    seed(own, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-own',
+      storedSessionId: 'own-id'
+    })
+
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-own', session_key: 'own-id', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-b'
+    )
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-b')
+
+    expect($sessionKeyStates.get()[own]?.busy).toBe(false)
+  })
+})
+
+describe('invariant 37 / N4 — a switch forgets only the connection it leaves', () => {
+  it('keeps a background connection\u2019s live-runtime tracking', () => {
+    const foreign = runtimeKeyFor('conn-b', 'rt-keep')
+
+    seed(foreign, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-keep',
+      storedSessionId: 'keep-id'
+    })
+
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-keep', session_key: 'keep-id', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-b'
+    )
+
+    // The app leaves conn-a. B's bookkeeping is not this switch's to forget…
+    resetLiveRuntimeTracking('conn-a')
+    // …so when B's own snapshot next says the run ended, it still reaps it.
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-b')
+
+    expect($sessionKeyStates.get()[foreign]?.busy).toBe(false)
   })
 })

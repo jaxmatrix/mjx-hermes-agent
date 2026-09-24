@@ -197,8 +197,12 @@ pub struct ConnectionInput {
     /// `Some("")` deletes the stored token; `None` leaves it alone.
     #[serde(default)]
     pub token: Option<String>,
+    /// Authoritative when present: the row keeps exactly these NAMES. A value
+    /// is the new secret, `""` deletes it, and `null` keeps the one already
+    /// stored under that name — desktop's editor sends `null` for a header it
+    /// loaded by name and did not retype, since no value ever reaches it.
     #[serde(default)]
-    pub headers: Option<BTreeMap<String, String>>,
+    pub headers: Option<BTreeMap<String, Option<String>>>,
     #[serde(default)]
     pub org: Option<String>,
     #[serde(default)]
@@ -615,7 +619,10 @@ pub fn normalize_connection_input(
             let names = match &input.headers {
                 Some(headers) => {
                     for (name, value) in headers {
-                        if value.len() > MAX_HEADER_VALUE_BYTES {
+                        if value
+                            .as_ref()
+                            .is_some_and(|v| v.len() > MAX_HEADER_VALUE_BYTES)
+                        {
                             return Err(ConnectionsError::invalid(format!(
                                 "the value for header \"{name}\" is too long"
                             )));
@@ -1037,9 +1044,11 @@ pub fn migrate_from_v1_target(
                     label,
                     order: 0,
                     url: Some(url),
-                    // The pre-registry remote path negotiates its auth on every
-                    // connect; `none` is the honest stored answer until a save
-                    // says otherwise, and it never gates a dial.
+                    // The pre-registry remote path negotiated its auth on every
+                    // connect, so the target carries no hint: `none` here is a
+                    // stamp, not a finding. Whoever proves the gate — a switch's
+                    // preflight, the bridge's dial-time probe — writes it back
+                    // (`correctAuthMode`, `store/connections.ts`).
                     auth_mode: Some(AuthMode::None),
                     header_names: Vec::new(),
                     org: None,
@@ -1686,6 +1695,93 @@ mod tests {
 
         assert_eq!(merged.org.as_deref(), Some("acme"));
         assert_eq!(merged.order, 0);
+    }
+
+    /// MJXHRM-592: Connect keeps a prompt answer through `connections_save`, and
+    /// that save must not recycle the tunnel it just brought up.
+    #[test]
+    fn saving_only_an_ssh_secret_changes_no_dial_field() {
+        let input = ConnectionInput {
+            kind: ConnectionKind::Ssh,
+            label: "Box".to_string(),
+            host: Some("deploy@box:2222".to_string()),
+            key_path: Some("~/.ssh/id_ed25519".to_string()),
+            ..ConnectionInput::default()
+        };
+        let (stored, _) =
+            normalize_connection_input(&input, None, 0, &BTreeSet::new(), &BTreeSet::new())
+                .expect("stored");
+        let mut registry = Registry {
+            connections: vec![stored.clone()],
+            ..Registry::default()
+        };
+
+        // What Connect sends: the row as the registry view shows it, plus the answer.
+        let answer = ConnectionInput {
+            id: Some(stored.id.clone()),
+            kind: ConnectionKind::Ssh,
+            label: stored.label.clone(),
+            host: stored.host.clone(),
+            user: stored.user.clone(),
+            port: stored.port,
+            key_path: stored.key_path.clone(),
+            passphrase: Some("open sesame".to_string()),
+            ..ConnectionInput::default()
+        };
+        let (saved, _) = normalize_connection_input(
+            &answer,
+            Some(&stored),
+            0,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .expect("saved");
+
+        assert!(!merge_connection_input(&mut registry, saved).expect("merged"));
+    }
+
+    #[test]
+    fn a_null_header_value_keeps_its_name_and_is_not_a_new_secret() {
+        // Desktop's editor: one header loaded by name and left alone, one retyped.
+        let input: ConnectionInput = serde_json::from_value(serde_json::json!({
+            "kind": "remote",
+            "label": "Edge",
+            "url": "https://edge.test",
+            "headers": { "cf-access-client-id": null, "cf-access-client-secret": "fresh" },
+        }))
+        .expect("a null header value deserializes");
+
+        let headers = input.headers.as_ref().expect("headers");
+
+        assert_eq!(headers["cf-access-client-id"], None);
+        assert_eq!(headers["cf-access-client-secret"].as_deref(), Some("fresh"));
+
+        let (stored, dropped) =
+            normalize_connection_input(&input, None, 0, &BTreeSet::new(), &BTreeSet::new())
+                .expect("stored");
+
+        assert!(dropped.is_empty());
+        assert_eq!(
+            stored.header_names,
+            vec![
+                "cf-access-client-id".to_string(),
+                "cf-access-client-secret".to_string()
+            ]
+        );
+
+        // The pre-existing wire shape — every value a string — still reads.
+        let plain: ConnectionInput = serde_json::from_value(serde_json::json!({
+            "kind": "remote",
+            "label": "Edge",
+            "url": "https://edge.test",
+            "headers": { "cf-access-client-id": "abc" },
+        }))
+        .expect("string values still deserialize");
+
+        assert_eq!(
+            plain.headers.expect("headers")["cf-access-client-id"].as_deref(),
+            Some("abc")
+        );
     }
 
     #[test]

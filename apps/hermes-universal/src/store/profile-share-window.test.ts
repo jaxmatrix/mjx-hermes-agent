@@ -19,6 +19,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as ModHermes from '@/hermes'
+import { LAYOUT_KEYS } from '@/lib/layout-persistence'
+
 const realLocation = window.location
 
 function atSearch(search: string) {
@@ -29,8 +32,9 @@ function atSearch(search: string) {
   })
 }
 
-const TREE_KEY = 'hermes.layout.tree.v2'
-const PRESET_KEY = 'hermes.layout.preset.active'
+const TREE_KEY = LAYOUT_KEYS.tree
+const PRESET_KEY = LAYOUT_KEYS.preset
+const IMPORT_TOKEN_KEY = LAYOUT_KEYS.imported
 
 /** A tree the receiver could not have invented for itself, so finding it on
  *  disk can only mean the import wrote it. */
@@ -54,18 +58,20 @@ const panesOf = (node: unknown): string[] => (node as null | { panes?: string[] 
  * the current `?win=` names. `desktop` is the overlay the fake archive carries.
  */
 async function loadShare(desktop: unknown) {
-  vi.doMock('@/lib/gateway-rest', () => ({
-    exportProfileArchive: vi.fn().mockResolvedValue({ ok: true, archive: '/exports/work.tar.gz' }),
-    importProfileArchive: vi.fn().mockResolvedValue({ ok: true, name: 'work', path: '/p/work', desktop })
-  }))
-  vi.doMock('@/lib/desktop-fs', () => ({ selectRemotePaths: vi.fn() }))
+  const exportProfileArchive = vi.fn().mockResolvedValue({ ok: true, archive: '/exports/work.tar.gz' })
+  const importProfileArchive = vi.fn().mockResolvedValue({ ok: true, name: 'work', path: '/p/work', desktop })
+
+  vi.doMock('@/hermes', async importOriginal => {
+    const actual = await importOriginal<typeof ModHermes>()
+
+    return { ...actual, exportProfileArchive, importProfileArchive }
+  })
   vi.doMock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
 
   const share = await import('./profile-share')
-  const rest = await import('@/lib/gateway-rest')
   const tree = await import('@/components/pane-shell/tree/store')
 
-  return { rest, share, tree }
+  return { exportProfileArchive, importProfileArchive, share, tree }
 }
 
 beforeEach(() => {
@@ -75,8 +81,7 @@ beforeEach(() => {
 
 afterEach(() => {
   Object.defineProperty(window, 'location', { configurable: true, value: realLocation, writable: true })
-  vi.doUnmock('@/lib/gateway-rest')
-  vi.doUnmock('@/lib/desktop-fs')
+  vi.doUnmock('@/hermes')
   vi.doUnmock('@/store/notifications')
   vi.resetModules()
 })
@@ -86,12 +91,12 @@ describe('export from the Android Profiles activity', () => {
     localStorage.setItem(TREE_KEY, JSON.stringify(localTree))
     atSearch('?win=activity')
 
-    const { rest, share } = await loadShare(null)
+    const { exportProfileArchive, share } = await loadShare(null)
 
     await share.exportProfileBundle('work')
 
     const staged = JSON.parse(
-      vi.mocked(rest.exportProfileArchive).mock.calls[0][1]?.extraFiles?.[share.DESKTOP_OVERLAY_FILENAME] ?? '{}'
+      exportProfileArchive.mock.calls[0][1]?.extraFiles?.[share.DESKTOP_OVERLAY_FILENAME] ?? '{}'
     )
 
     // The read gate stays OPEN in an activity window: standing it down would
@@ -103,12 +108,12 @@ describe('export from the Android Profiles activity', () => {
     localStorage.setItem(TREE_KEY, JSON.stringify(localTree))
     atSearch('?win=tile&tile=terminal')
 
-    const { rest, share } = await loadShare(null)
+    const { exportProfileArchive, share } = await loadShare(null)
 
     await share.exportProfileBundle('work')
 
     const staged = JSON.parse(
-      vi.mocked(rest.exportProfileArchive).mock.calls[0][1]?.extraFiles?.[share.DESKTOP_OVERLAY_FILENAME] ?? '{}'
+      exportProfileArchive.mock.calls[0][1]?.extraFiles?.[share.DESKTOP_OVERLAY_FILENAME] ?? '{}'
     )
 
     expect(staged.layoutTree).toBeNull()
@@ -180,8 +185,8 @@ describe('the import handshake other windows watch', () => {
     // What the activity window's import leaves behind: the new tree, plus the
     // token bump that says "this was authored somewhere else".
     localStorage.setItem(TREE_KEY, JSON.stringify(importedTree))
-    localStorage.setItem('hermes.layout.tree.imported', '7')
-    window.dispatchEvent(new StorageEvent('storage', { key: 'hermes.layout.tree.imported', newValue: '7' }))
+    localStorage.setItem(IMPORT_TOKEN_KEY, '7')
+    window.dispatchEvent(new StorageEvent('storage', { key: IMPORT_TOKEN_KEY, newValue: '7' }))
 
     expect(panesOf(tree.$layoutTree.get())).toEqual(['imported-pane'])
     // The importing window already cleared the size overrides on disk (a new
@@ -201,7 +206,7 @@ describe('the import handshake other windows watch', () => {
     // event crosses that boundary is not something this app can promise —
     // finishing the Activity turning the main window `visible` again is.
     localStorage.setItem(TREE_KEY, JSON.stringify(importedTree))
-    localStorage.setItem('hermes.layout.tree.imported', '7')
+    localStorage.setItem(IMPORT_TOKEN_KEY, '7')
     document.dispatchEvent(new Event('visibilitychange'))
 
     expect(panesOf(tree.$layoutTree.get())).toEqual(['imported-pane'])
@@ -212,14 +217,14 @@ describe('the import handshake other windows watch', () => {
     // An import from an earlier run of the app: the token outlives the process,
     // so a window that treated "a token exists" as "a layout just arrived" would
     // re-adopt on every single focus — and clear the user's pane sizes each time.
-    localStorage.setItem('hermes.layout.tree.imported', '7')
+    localStorage.setItem(IMPORT_TOKEN_KEY, '7')
     atSearch('')
 
     const { tree } = await loadShare(null)
 
     localStorage.setItem(TREE_KEY, JSON.stringify(importedTree))
     document.dispatchEvent(new Event('visibilitychange'))
-    window.dispatchEvent(new StorageEvent('storage', { key: 'hermes.layout.tree.imported', newValue: '7' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: IMPORT_TOKEN_KEY, newValue: '7' }))
 
     expect(panesOf(tree.$layoutTree.get())).toEqual(['chat'])
   })
@@ -247,8 +252,8 @@ describe('the import handshake other windows watch', () => {
     expect(tree.$layoutTree.get()).toBeNull()
 
     localStorage.setItem(TREE_KEY, JSON.stringify(importedTree))
-    localStorage.setItem('hermes.layout.tree.imported', '7')
-    window.dispatchEvent(new StorageEvent('storage', { key: 'hermes.layout.tree.imported', newValue: '7' }))
+    localStorage.setItem(IMPORT_TOKEN_KEY, '7')
+    window.dispatchEvent(new StorageEvent('storage', { key: IMPORT_TOKEN_KEY, newValue: '7' }))
 
     expect(tree.$layoutTree.get()).toBeNull()
   })

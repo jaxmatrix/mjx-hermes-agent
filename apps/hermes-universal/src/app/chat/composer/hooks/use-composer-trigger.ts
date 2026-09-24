@@ -2,7 +2,7 @@ import type { Unstable_TriggerAdapter, Unstable_TriggerItem } from '@assistant-u
 import { type MutableRefObject, type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 
 import { hermesDirectiveFormatter } from '@/components/assistant-ui/directive-text'
-import { desktopSlashCommandTakesArgs } from '@/lib/desktop-slash-commands'
+import { desktopSlashCommandArgumentMode } from '@/lib/desktop-slash-commands'
 
 import {
   COMPLETION_ACTIONS,
@@ -22,7 +22,7 @@ import {
   RICH_INPUT_SLOT,
   slashChipElement
 } from '../rich-editor'
-import { detectTrigger, mayContainTrigger, textBeforeCaret, type TriggerState } from '../text-utils'
+import { detectTrigger, textBeforeCaret, type TriggerState } from '../text-utils'
 
 /** One shared empty list, so "there is nothing to show" is the SAME value every
  *  time. A fresh `[]` per call is never `Object.is`-equal to the last one, which
@@ -30,16 +30,37 @@ import { detectTrigger, mayContainTrigger, textBeforeCaret, type TriggerState } 
 const NO_TRIGGER_ITEMS: readonly Unstable_TriggerItem[] = []
 
 /**
- * Rewrite the `tokenLength` characters before the caret, keeping the prose on
- * either side. The fallback for when the in-place `replaceBeforeCaret` can't
- * run — it rebuilds the editor from text, which is correct but loses nothing
- * only because every chip hydrates back (see `appendComposerContents`).
+ * Rebuild-from-text fallback for carets the range walk can't anchor (a
+ * non-collapsed selection, a caret not preceded by contiguous text). It
+ * re-renders the whole editor from serialized text, so it only runs when the
+ * in-place path reports failure — never as the default.
  *
- * Anchored on the CARET, not the end of the editor: a completion picked
- * mid-message used to chop the trailing prose off and strand a partial
- * `folder:` in front of the chip, because the window it removed wasn't the
- * token the user was typing.
+ * The split is around the CARET, not the end of the draft. Slicing
+ * `length - tokenLength` off the end assumed the trigger token was the last
+ * thing in the editor: a completion picked mid-message chopped the trailing
+ * prose off and stranded a partial `folder:` in front of the chip, because the
+ * window it removed wasn't the token the user was typing.
  */
+/** The keyup half of trigger detection, shared by both composers.
+ *
+ *  If the open popover already consumed this key in keydown (Arrow/Enter/Tab/
+ *  Escape), skip the refresh: those keys never edit text, and for Escape the
+ *  keydown already closed the menu — refreshing here would re-detect the
+ *  still-present `/` and instantly reopen it. It reads a ref set during keydown
+ *  rather than `trigger`, because by keyup time React has re-rendered and
+ *  `trigger` may already be null. */
+export function triggerKeyUpHandler(consumedRef: MutableRefObject<boolean>, refreshTrigger: () => void) {
+  return () => {
+    if (consumedRef.current) {
+      consumedRef.current = false
+
+      return
+    }
+
+    window.setTimeout(refreshTrigger, 0)
+  }
+}
+
 export function rebuildAroundCaret(editor: HTMLDivElement, tokenLength: number, insert: DocumentFragment | string) {
   const current = composerPlainText(editor)
   const caret = caretOffsetInEditor(editor)
@@ -54,7 +75,8 @@ export function rebuildAroundCaret(editor: HTMLDivElement, tokenLength: number, 
   }
 
   // Measure before appending — moving a fragment empties it. Appending the
-  // element rather than re-serializing keeps mid-message slash pills alive.
+  // element rather than re-serializing keeps mid-message slash pills alive:
+  // they have no text hydration, unlike `@` refs and the leading command.
   const scratch = document.createElement('div')
 
   scratch.dataset.slot = RICH_INPUT_SLOT
@@ -75,18 +97,11 @@ interface CompletionSource {
 
 interface UseComposerTriggerOptions {
   at: CompletionSource
-  /** True while an IME preedit is open. The popover must not act on composition
-   *  keys: the DOM already holds the uncommitted preedit, so detecting against
-   *  it opens a menu over the IME's own candidate window on characters the user
-   *  has not committed and may never commit. `compositionend` refreshes with
-   *  what the input method actually produced. */
-  composingRef?: MutableRefObject<boolean>
-  /** `:joy` emoji completions — inserts the emoji character, never a chip. */
-  emoji?: CompletionSource
   draftRef: MutableRefObject<string>
   editorRef: RefObject<HTMLDivElement | null>
-  /** Bank the pre-edit state before a pick rewrites the editor, so ⌘Z steps
-   *  back over a committed chip instead of past it. */
+  /** `:joy` emoji completions — inserts the emoji character, never a chip. */
+  emoji?: CompletionSource
+  /** Bank the pre-commit state so a popover pick is a single undo step. */
   recordUndoPoint?: () => void
   requestMainFocus: () => void
   setComposerText: (text: string) => void
@@ -104,10 +119,9 @@ interface UseComposerTriggerOptions {
  */
 export function useComposerTrigger({
   at,
-  composingRef,
-  emoji,
   draftRef,
   editorRef,
+  emoji,
   recordUndoPoint,
   requestMainFocus,
   setComposerText,
@@ -115,6 +129,11 @@ export function useComposerTrigger({
 }: UseComposerTriggerOptions) {
   const [trigger, setTrigger] = useState<TriggerState | null>(null)
   const [triggerActive, setTriggerActive] = useState(0)
+  // The list highlights its first row on open, which is a suggestion rather
+  // than a choice. This records that the user moved the highlight themselves,
+  // which is what lets Enter accept a completion in a free-text argument stage
+  // without stealing prose from everyone who never touched the arrows.
+  const [triggerActiveExplicit, setTriggerActiveExplicit] = useState(false)
   const [triggerItems, setTriggerItems] = useState<readonly Unstable_TriggerItem[]>([])
   // Set synchronously in keydown when the open trigger popover consumes a
   // navigation/control key (Arrow/Enter/Tab/Escape). The subsequent keyup must
@@ -125,6 +144,11 @@ export function useComposerTrigger({
   // re-rendered and the handler closure sees the post-keydown state.
   const triggerKeyConsumedRef = useRef(false)
 
+  const resetTriggerActive = useCallback(() => {
+    setTriggerActive(0)
+    setTriggerActiveExplicit(false)
+  }, [])
+
   const refreshTrigger = useCallback(() => {
     const editor = editorRef.current
 
@@ -132,29 +156,17 @@ export function useComposerTrigger({
       return
     }
 
-    // Mid-composition the editor holds an uncommitted IME preedit, so anything
-    // detected against it is a menu opened on keys the user is still choosing
-    // between. Leave whatever is already open alone and wait for
-    // `compositionend`, which refreshes with the committed text. Keyup fires for
-    // every physical key during a preedit, so without this the popover reacts to
-    // the composition on both composers.
-    if (composingRef?.current) {
-      return
-    }
-
-    // Fast-bail: if the draft holds no character that can START a trigger,
-    // there's nothing for `detectTrigger` to match. Use `textContent` (cheap
-    // browser-native walk) for the precondition check rather than
-    // `composerPlainText` (recursive child walk with chip-aware logic). Only
-    // when a trigger char is present do we pay the cost of the full walk + DOM
-    // range work. The character set lives beside the regexes in `text-utils` —
-    // a local copy of it is what silently dropped every `:` emoji trigger.
+    // Fast-bail: if neither `@` nor `/` appears in the current draft, there's
+    // nothing for `detectTrigger` to match. Use `textContent` (cheap browser-
+    // native walk) for the precondition check rather than `composerPlainText`
+    // (recursive child walk with chip-aware logic). Only when a trigger char
+    // is present do we pay the cost of the full walk + DOM range work.
     const rawText = editor.textContent ?? ''
 
-    if (!mayContainTrigger(rawText)) {
+    if (!rawText.includes('@') && !rawText.includes('/') && !rawText.includes(':')) {
       if (trigger) {
         setTrigger(null)
-        setTriggerActive(0)
+        resetTriggerActive()
       }
 
       return
@@ -163,11 +175,16 @@ export function useComposerTrigger({
     const before = textBeforeCaret(editor)
     const found = detectTrigger(before ?? composerPlainText(editor))
 
-    // The arg-stage popover is only useful for commands with an options screen.
-    // For a no-arg command it would dead-end on "No matches", so drop it — the
-    // directive is already complete.
+    // A text-only command has no completion screen once its prose begins. Mixed
+    // commands such as /goal stay live so their finite subcommands can still be
+    // suggested, while arbitrary goal text remains valid.
+    const argumentMode =
+      found?.kind === '/' && slashArgStage(found.query)
+        ? desktopSlashCommandArgumentMode(slashCommandToken(found.query))
+        : null
+
     const detected =
-      found?.kind === '/' && slashArgStage(found.query) && !desktopSlashCommandTakesArgs(slashCommandToken(found.query))
+      found?.kind === '/' && slashArgStage(found.query) && argumentMode !== 'options' && argumentMode !== 'mixed'
         ? null
         : found
 
@@ -178,14 +195,10 @@ export function useComposerTrigger({
     // caret move (mouseup) or a stray refresh — must preserve the user's
     // current selection instead of snapping back to the first item.
     if (detected?.kind !== trigger?.kind || detected?.query !== trigger?.query) {
-      setTriggerActive(0)
+      resetTriggerActive()
     }
-  }, [composingRef, editorRef, trigger])
+  }, [editorRef, resetTriggerActive, trigger])
 
-  // Every arm names its kind — no trailing fallback. Letting `:` be the `else`
-  // meant that with NO trigger open the adapter was still the emoji one, so a
-  // completion source whose identity churns fed the effect below a dependency
-  // that changed every render while the composer sat idle.
   const triggerAdapter: Unstable_TriggerAdapter | null =
     trigger?.kind === '@'
       ? at.adapter
@@ -205,24 +218,43 @@ export function useComposerTrigger({
     const items = triggerAdapter.search(trigger.query)
 
     // Mid-message only offers SKILLS. A built-in like `/model` or `/new` acts
-    // on the app, so it is meaningless as a reference inside prose — only a
+    // on the app, so it's meaningless as a reference inside prose — only a
     // skill reads as "handle this part with X". Filtering here rather than in
     // the fetcher keeps one completion source for both shapes.
     setTriggerItems(trigger.inline ? items.filter(isSkillItem) : items)
   }, [trigger, triggerAdapter])
 
   const triggerLoading =
-    trigger?.kind === '@' ? at.loading : trigger?.kind === '/' ? slash.loading : (emoji?.loading ?? false)
+    trigger?.kind === '@'
+      ? at.loading
+      : trigger?.kind === '/'
+        ? slash.loading
+        : trigger?.kind === ':'
+          ? (emoji?.loading ?? false)
+          : false
 
   // Suppress the "No matches" empty state once a slash command is past its name:
   // a no-arg command has nothing to offer, and a fully-typed arg commits on
   // Space/Tab — neither should dead-end on a popover.
   const argStageEmpty = trigger?.kind === '/' && slashArgStage(trigger.query) && !triggerLoading && !triggerItems.length
 
+  const slashArgumentMode =
+    trigger?.kind === '/' && slashArgStage(trigger.query)
+      ? desktopSlashCommandArgumentMode(slashCommandToken(trigger.query))
+      : null
+
+  const slashFreeTextArgStage = slashArgumentMode === 'mixed' || slashArgumentMode === 'text'
+
   const closeTrigger = () => {
     setTrigger(null)
     setTriggerItems(NO_TRIGGER_ITEMS)
-    setTriggerActive(0)
+    resetTriggerActive()
+  }
+
+  /** Step the highlight, marking it as the user's own deliberate pick. */
+  const moveTriggerActive = (delta: number) => {
+    setTriggerActiveExplicit(true)
+    setTriggerActive(idx => (idx + delta + triggerItems.length) % triggerItems.length)
   }
 
   useEffect(() => {
@@ -233,9 +265,16 @@ export function useComposerTrigger({
   // the completion list is empty because the arg is already fully typed (the
   // backend completer drops exact matches). Reuses the chip path via a
   // synthetic item whose serialized form is the verbatim text.
-  const commitTypedSlashDirective = () => {
+  const commitTypedSlashDirective = (): boolean => {
     if (trigger?.kind !== '/') {
-      return
+      return false
+    }
+
+    // Free prose must stay ordinary contentEditable text. This guard also
+    // protects against a stale completion result reaching the keydown path
+    // before refreshTrigger has caught up with the latest DOM input.
+    if (desktopSlashCommandArgumentMode(slashCommandToken(trigger.query)) !== 'options') {
+      return false
     }
 
     const text = `/${trigger.query.trimEnd()}`
@@ -253,6 +292,8 @@ export function useComposerTrigger({
         rawText: text
       }
     })
+
+    return true
   }
 
   const replaceTriggerWithChip = (item: Unstable_TriggerItem, options?: { descend?: boolean }) => {
@@ -290,13 +331,6 @@ export function useComposerTrigger({
     const serialized = hermesDirectiveFormatter.serialize(item)
     const starter = serialized.endsWith(':')
 
-    const finish = (keepOpen: boolean) => {
-      draftRef.current = composerPlainText(editor)
-      setComposerText(draftRef.current)
-      requestMainFocus()
-      keepOpen ? window.setTimeout(refreshTrigger, 0) : closeTrigger()
-    }
-
     // Tab on a folder walks INTO it instead of committing it: re-type the
     // token as the bare path so the next `complete.path` lists that folder's
     // children, exactly as typing the path by hand would. Enter still commits
@@ -307,12 +341,19 @@ export function useComposerTrigger({
         ? String((item.metadata as { insertId?: unknown } | undefined)?.insertId ?? '')
         : ''
 
+    const finish = (keepOpen: boolean) => {
+      draftRef.current = composerPlainText(editor)
+      setComposerText(draftRef.current)
+      requestMainFocus()
+      keepOpen ? window.setTimeout(refreshTrigger, 0) : closeTrigger()
+    }
+
     if (descendInto) {
       const path = descendInto.endsWith('/') ? descendInto : `${descendInto}/`
-      // Carry the browse scope down with the path. Dropping it turns an
-      // explicit `@folder:` browse into a bare `@apps/foo/` token halfway
-      // through, so the next completion silently widens back to files and the
-      // committed chip has to re-guess the kind from a trailing slash.
+      // Carry the browse scope down with the path. Dropping it turned an
+      // explicit `@folder:` browse into a bare `@apps/desktop/` token halfway
+      // through, so the next completion silently widened back to files and the
+      // committed chip had to re-guess the kind from a trailing slash.
       const scope = trigger.scope ? `${trigger.scope}:` : ''
       const fragment = document.createDocumentFragment()
 
@@ -328,22 +369,30 @@ export function useComposerTrigger({
     // Picking a bare arg-taking command (e.g. `/personality`) shouldn't commit
     // it — expand to its options step so the popover shows the inline list, just
     // as typing `/personality ` by hand would. A serialized value with a space is
-    // already an arg pick (`/personality alice`), so it commits normally.
+    // already an arg pick (`/personality alice`), so it commits normally. An
+    // inline (mid-message) pick never expands: it's a reference inside prose, so
+    // there's no command invocation for the args to belong to.
     const command = (item.metadata as { command?: string } | undefined)?.command ?? ''
 
-    const expandsToArgs = trigger.kind === '/' && !serialized.includes(' ') && desktopSlashCommandTakesArgs(command)
+    const argumentMode = desktopSlashCommandArgumentMode(command)
+    const expandsToArgs = trigger.kind === '/' && !trigger.inline && !serialized.includes(' ') && argumentMode !== null
 
     const text = starter || serialized.endsWith(' ') ? serialized : `${serialized} `
     const directive = !starter && serialized.match(/^@([^:]+):(.+)$/)
     // No pill while expanding — the bare command stays plain text until an arg
     // is picked, at which point a single pill is emitted for the full command.
     const slashKind = !expandsToArgs && trigger.kind === '/' ? slashChipKindForItem(item) : null
-    const keepTriggerOpen = starter || expandsToArgs
+    const keepTriggerOpen = starter || (expandsToArgs && argumentMode !== 'text')
 
     const chip = slashKind
       ? slashChipElement(serialized, slashKind)
       : directive
-        ? refChipElement(directive[1], directive[2])
+        ? // Carry the picked row's own label into the chip rather than letting
+          // it re-derive one from the value. Upstream's DirectiveNode does the
+          // same (`__label = item.label`), and it's what makes the list and the
+          // chip agree: you get the string you just read, not a second guess at
+          // it. Falls back to the shared deriver for callers with no label.
+          refChipElement(directive[1], directive[2], (item.metadata as { display?: string })?.display || item.label)
         : null
 
     // The trailing space is a convenience for "keep typing after the chip", so
@@ -356,14 +405,12 @@ export function useComposerTrigger({
       ? fragment.append(chip, ...(followedBySpace ? [] : [document.createTextNode(' ')]))
       : fragment.append(document.createTextNode(followedBySpace ? text.trimEnd() : text))
 
-    // In place first. The re-render fallback rebuilds the whole editor from
-    // text, and the old code took it whenever the typed token wasn't wholly
-    // inside ONE text node — which a contenteditable=false chip anywhere in the
-    // line guarantees, because the engine fragments text nodes around it.
     if (!replaceBeforeCaret(editor, trigger.tokenLength, fragment)) {
-      // The failed attempt never consumed the fragment, so the chip + trailing
-      // space are re-inserted around the caret here. Moving the element rather
-      // than re-serializing is what keeps a mid-message slash pill alive.
+      // The failed in-place attempt never consumed the fragment, so the chip +
+      // trailing space are re-inserted around the caret here. Moving the
+      // element (rather than re-serializing) keeps mid-message slash pills
+      // alive — they have no text hydration, unlike `@` refs and the leading
+      // command.
       rebuildAround(chip ? fragment : text)
     }
 
@@ -402,6 +449,9 @@ export function useComposerTrigger({
 
     fragment.append(document.createTextNode(`@${next}`))
 
+    // In place first: the destructive re-render fallback rebuilds the editor
+    // from text, which is exactly what used to demote a leading command pill
+    // to plaintext on every Backspace inside a path.
     if (!replaceBeforeCaret(editor, trigger.tokenLength, fragment)) {
       rebuildAroundCaret(editor, trigger.tokenLength, `@${next}`)
     }
@@ -418,11 +468,14 @@ export function useComposerTrigger({
     ascendTriggerPath,
     closeTrigger,
     commitTypedSlashDirective,
+    moveTriggerActive,
     refreshTrigger,
     replaceTriggerWithChip,
     setTriggerActive,
+    slashFreeTextArgStage,
     trigger,
     triggerActive,
+    triggerActiveExplicit,
     triggerItems,
     triggerKeyConsumedRef,
     triggerLoading

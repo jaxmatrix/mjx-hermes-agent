@@ -30,42 +30,17 @@ import {
 // surface (Item / Separator / Sub…), so a caller writes `items={kit => …}` once
 // and hands the render function to both wrappers.
 //
-// Ported verbatim from desktop `components/ui/actions-menu.tsx`.
+// The pattern originated inline in the session row menu; it lives here so every
+// kebab in the app can add right-click parity in one line.
 
-/**
- * A menu flavour — the item + separator + submenu parts.
- *
- * Typed STRUCTURALLY rather than as `typeof DropdownMenuItem | typeof
- * ContextMenuItem`. Those two unions admitted exactly the two Radix flavours,
- * which was fine while both were menus; a third flavour renders a touch drawer
- * out of plain buttons and is not a Radix menu part at all. The props below are
- * what `renderActionItem` and the spec renderers actually pass, so a flavour
- * only has to accept those — not to be a particular component.
- */
-/** A selectable row. `onSelect` is the DOM-event shape Radix menu items use. */
-export interface MenuItemProps {
-  children?: React.ReactNode
-  className?: string
-  disabled?: boolean
-  onSelect?: (event: Event) => void
-  variant?: 'default' | 'destructive'
-}
-
-/** Structural parts — no `onSelect`, because a submenu trigger's is React's
- *  handler shape and nothing here ever passes one. */
-export interface MenuSectionProps {
-  children?: React.ReactNode
-  className?: string
-  disabled?: boolean
-}
-
+/** A menu flavour (dropdown / context) — the item + separator + submenu parts. */
 export interface MenuKit {
-  Item: React.ComponentType<MenuItemProps>
-  Label: React.ComponentType<MenuSectionProps>
-  Separator: React.ComponentType<MenuSectionProps>
-  Sub: React.ComponentType<MenuSectionProps>
-  SubTrigger: React.ComponentType<MenuSectionProps>
-  SubContent: React.ComponentType<MenuSectionProps>
+  Item: typeof DropdownMenuItem | typeof ContextMenuItem
+  Label: typeof DropdownMenuLabel | typeof ContextMenuLabel
+  Separator: typeof DropdownMenuSeparator | typeof ContextMenuSeparator
+  Sub: typeof DropdownMenuSub | typeof ContextMenuSub
+  SubTrigger: typeof DropdownMenuSubTrigger | typeof ContextMenuSubTrigger
+  SubContent: typeof DropdownMenuSubContent | typeof ContextMenuSubContent
   /** `CopyButton`'s `appearance` for this flavour — pass to a menu-item copy. */
   copyAppearance: 'context-menu-item' | 'menu-item'
 }
@@ -88,6 +63,20 @@ export const CONTEXT_KIT: MenuKit = {
   SubContent: ContextMenuSubContent,
   SubTrigger: ContextMenuSubTrigger,
   copyAppearance: 'context-menu-item'
+}
+
+/** Drawer kit item surface — mirrors Radix menu item props without importing Radix here. */
+export interface MenuItemProps {
+  children?: React.ReactNode
+  className?: string
+  disabled?: boolean
+  onSelect?: (event: Event) => void
+  variant?: 'default' | 'destructive'
+}
+
+export interface MenuSectionProps {
+  children?: React.ReactNode
+  className?: string
 }
 
 /** A single action row. Provide `icon` (codicon name) or `iconNode` (any node). */
@@ -124,7 +113,7 @@ export function renderActionItem(
 
 interface ActionsMenuProps extends Pick<
   React.ComponentProps<typeof DropdownMenuContent>,
-  'align' | 'side' | 'sideOffset'
+  'align' | 'side' | 'sideOffset' | 'onCloseAutoFocus'
 > {
   /** The trigger (a kebab button). Wrapped in `DropdownMenuTrigger asChild`. */
   children: React.ReactNode
@@ -136,10 +125,16 @@ interface ActionsMenuProps extends Pick<
   onOpenChange?: (open: boolean) => void
 }
 
+// Let the existing presence boundary decide when item construction is needed.
+// Calling `items` in the wrapper builds every closed row menu on each refresh.
+function ActionItems({ items, kit }: { items: ActionsMenuProps['items']; kit: MenuKit }) {
+  return <>{items(kit)}</>
+}
+
 /**
  * A kebab dropdown menu. Pair it with `ActionsContextMenu` using the same
  * `items` render function so the two menus stay identical. No tip on the
- * trigger — `aria-label` on the button is enough.
+ * trigger — `aria-label` on the button is enough (see DESIGN.md).
  */
 export function ActionsMenu({
   align = 'end',
@@ -147,6 +142,7 @@ export function ActionsMenu({
   children,
   contentClassName,
   items,
+  onCloseAutoFocus,
   onOpenChange,
   open,
   side,
@@ -159,10 +155,11 @@ export function ActionsMenu({
         align={align}
         aria-label={ariaLabel}
         className={contentClassName}
+        onCloseAutoFocus={onCloseAutoFocus}
         side={side}
         sideOffset={sideOffset}
       >
-        {items(DROPDOWN_KIT)}
+        <ActionItems items={items} kit={DROPDOWN_KIT} />
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -177,6 +174,7 @@ interface ActionsContextMenuProps {
   contentClassName?: string
   /** Skip the wrapper (render children bare) — e.g. nothing is actionable yet. */
   disabled?: boolean
+  onCloseAutoFocus?: (event: Event) => void
 }
 
 /**
@@ -188,7 +186,8 @@ export function ActionsContextMenu({
   children,
   contentClassName,
   disabled,
-  items
+  items,
+  onCloseAutoFocus
 }: ActionsContextMenuProps) {
   if (disabled) {
     return <>{children}</>
@@ -197,8 +196,8 @@ export function ActionsContextMenu({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent aria-label={ariaLabel} className={contentClassName}>
-        {items(CONTEXT_KIT)}
+      <ContextMenuContent aria-label={ariaLabel} className={contentClassName} onCloseAutoFocus={onCloseAutoFocus}>
+        <ActionItems items={items} kit={CONTEXT_KIT} />
       </ContextMenuContent>
     </ContextMenu>
   )

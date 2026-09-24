@@ -1,10 +1,11 @@
 import { cleanup, render } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PlatformModule from '@/lib/platform'
-import { $panesFlipped, $rightSidebarOpen, $terminalOpen, setSidebarOpen } from '@/store/layout'
+import { $panesFlipped, setFileBrowserOpen, setSidebarOpen } from '@/store/layout'
 import { $reviewOpen } from '@/store/review'
+import { $terminalOpen } from '@/store/terminal-open'
 
 // The titlebar-clearing inset is desktop-only chrome; jsdom reports no Tauri
 // runtime, so force IS_DESKTOP while keeping the rest of the module real.
@@ -34,7 +35,8 @@ afterEach(() => {
   cleanup()
   seedActiveSession('draft', { runtimeSessionId: null, storedSessionId: null })
   $panesFlipped.set(false)
-  $rightSidebarOpen.set(false)
+  setSidebarOpen(false)
+  setFileBrowserOpen(false)
   $reviewOpen.set(false)
   $terminalOpen.set(false)
   setSidebarOpen(true)
@@ -63,7 +65,7 @@ describe('ChatHeader — titlebar cluster inset', () => {
     seedActiveSession('live-1')
     $panesFlipped.set(true)
     setSidebarOpen(true)
-    $rightSidebarOpen.set(false)
+    setSidebarOpen(false)
 
     expect(renderHeader().className).toContain(INSET)
   })
@@ -71,7 +73,8 @@ describe('ChatHeader — titlebar cluster inset', () => {
   it('hugs the pane edge when flipped with the rails on the left', () => {
     seedActiveSession('live-1')
     $panesFlipped.set(true)
-    $rightSidebarOpen.set(true)
+    // Flipped: the file browser owns the left edge, not the chat sidebar.
+    setFileBrowserOpen(true)
 
     expect(renderHeader().className).toContain('ps-3')
   })
@@ -79,7 +82,7 @@ describe('ChatHeader — titlebar cluster inset', () => {
   it('hugs the pane edge when flipped with only the review pane on the left', () => {
     seedActiveSession('live-1')
     $panesFlipped.set(true)
-    $rightSidebarOpen.set(false)
+    setSidebarOpen(false)
     $reviewOpen.set(true)
 
     expect(renderHeader().className).toContain('ps-3')

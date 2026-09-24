@@ -1,67 +1,175 @@
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { type Locale, LOCALE_OPTIONS, useI18n } from '@/i18n'
+import { useState } from 'react'
+
+import { Button } from '@/components/ui/button'
+import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { type Locale, LOCALE_META, useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { Check, ChevronDown, Globe } from '@/lib/icons'
+import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
-
-// Adapted from apps/desktop/src/components/language-switcher.tsx. Trimmed for
-// mobile: only four locales, so we drop cmdk search/Popover in favour of the
-// ported DropdownMenu, and drop the isSavingLocale/notifyError paths — mobile
-// setLocale just writes a persistentAtom and can't throw. Order follows the
-// curated LOCALE_OPTIONS (en → zh → zh-hant → ja).
+import { notifyError } from '@/store/notifications'
 
 export interface LanguageSwitcherProps {
   className?: string
-  // Icon-only trigger (e.g. a collapsed rail).
   collapsed?: boolean
+  dropUp?: boolean
 }
 
-export function LanguageSwitcher({ className, collapsed = false }: LanguageSwitcherProps) {
-  const { locale, setLocale, t } = useI18n()
-  const current = LOCALE_OPTIONS.find(option => option.id === locale) ?? LOCALE_OPTIONS[0]
+interface LanguageCommandProps {
+  allLocales: Array<[Locale, (typeof LOCALE_META)[Locale]]>
+  autoFocus?: boolean
+  disabled?: boolean
+  locale: Locale
+  noResults: string
+  onSelect: (code: Locale) => void
+  searchPlaceholder: string
+}
+
+export function LanguageSwitcher({ className, collapsed = false, dropUp = false }: LanguageSwitcherProps) {
+  const { isSavingLocale, locale, setLocale, t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const isMobile = useIsMobile()
+  const useMobileSheet = Boolean(dropUp && isMobile)
+  const current = LOCALE_META[locale]
+  const allLocales = Object.entries(LOCALE_META) as Array<[Locale, typeof current]>
   const title = t.language.switchTo
 
-  const selectLocale = (code: Locale) => {
-    if (code !== locale) {
-      triggerHaptic('selection')
-      void setLocale(code)
+  const selectLocale = async (code: Locale) => {
+    if (code === locale || isSavingLocale) {
+      setOpen(false)
+
+      return
+    }
+
+    triggerHaptic('selection')
+
+    try {
+      await setLocale(code)
+      setOpen(false)
+      triggerHaptic('success')
+    } catch (error) {
+      notifyError(error, t.language.saveError)
     }
   }
 
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        aria-label={title}
-        className={cn(
-          'inline-flex min-w-32 items-center justify-between gap-2 rounded-md border border-border bg-card px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground',
-          collapsed && 'min-w-0 px-2',
-          className
-        )}
-        title={title}
-      >
-        <span className="inline-flex min-w-0 items-center gap-2">
-          <Globe className="size-4 shrink-0" />
-          {!collapsed && <span className="truncate">{current.name}</span>}
-        </span>
-        {!collapsed && <ChevronDown className="size-3.5 shrink-0 opacity-70" />}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
-        {LOCALE_OPTIONS.map(option => {
-          const selected = option.id === locale
+  const trigger = (
+    <Button
+      aria-expanded={open}
+      aria-label={title}
+      className={cn(
+        'min-w-32 justify-between gap-2 border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-2.5 text-start text-muted-foreground hover:text-foreground',
+        collapsed && 'min-w-0 px-2',
+        className
+      )}
+      disabled={isSavingLocale}
+      size="sm"
+      type="button"
+      variant="outline"
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <Globe className="size-3.5 shrink-0" />
+        {!collapsed && <span className="truncate">{current.name}</span>}
+      </span>
+      {!collapsed && <ChevronDown className="size-3 shrink-0 opacity-70" />}
+    </Button>
+  )
 
-          return (
-            <DropdownMenuItem
-              className={cn(selected ? 'font-medium text-foreground' : 'text-muted-foreground')}
-              key={option.id}
-              onSelect={() => selectLocale(option.id as Locale)}
-            >
-              <Check className={cn('size-4 shrink-0 text-primary', !selected && 'invisible')} />
-              <span className="min-w-0 flex-1 truncate">{option.name}</span>
-              <span className="font-mono text-[0.65rem] text-muted-foreground uppercase">{option.id}</span>
-            </DropdownMenuItem>
-          )
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+  if (useMobileSheet) {
+    return (
+      <Sheet onOpenChange={setOpen} open={open}>
+        <SheetTrigger asChild>{trigger}</SheetTrigger>
+        <SheetContent className="max-h-[min(28rem,80vh)] rounded-t-xl" side="bottom">
+          <SheetHeader>
+            <SheetTitle>{title}</SheetTitle>
+            <SheetDescription>{t.language.description}</SheetDescription>
+          </SheetHeader>
+          <LanguageCommand
+            allLocales={allLocales}
+            disabled={isSavingLocale}
+            locale={locale}
+            noResults={t.language.noResults}
+            onSelect={code => void selectLocale(code)}
+            searchPlaceholder={t.language.searchPlaceholder}
+          />
+        </SheetContent>
+      </Sheet>
+    )
+  }
+
+  return (
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverContent align="end" className="w-56 p-0" side={dropUp ? 'top' : 'bottom'}>
+        <LanguageCommand
+          allLocales={allLocales}
+          autoFocus
+          disabled={isSavingLocale}
+          locale={locale}
+          noResults={t.language.noResults}
+          onSelect={code => void selectLocale(code)}
+          searchPlaceholder={t.language.searchPlaceholder}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function LanguageCommand({
+  allLocales,
+  autoFocus,
+  disabled,
+  locale,
+  noResults,
+  onSelect,
+  searchPlaceholder
+}: LanguageCommandProps) {
+  const [search, setSearch] = useState('')
+
+  // Own the search term and filter manually. cmdk's built-in shouldFilter
+  // reorders items by its fuzzy-match score (≈alphabetical with an empty
+  // query), which destroys the curated en→zh→zh-hant→ja order. We disable it
+  // and do a plain substring filter that preserves array order — matching
+  // model-picker.tsx. Match against the endonym, the (hidden) English name,
+  // and the locale code so "日本"/"japanese"/"ja" all find Japanese.
+  const q = normalize(search)
+
+  const filtered = allLocales.filter(
+    ([code, meta]) =>
+      !q ||
+      meta.name.toLowerCase().includes(q) ||
+      meta.englishName.toLowerCase().includes(q) ||
+      code.toLowerCase().includes(q)
+  )
+
+  return (
+    <Command className="bg-transparent" shouldFilter={false}>
+      <CommandInput autoFocus={autoFocus} onValueChange={setSearch} placeholder={searchPlaceholder} value={search} />
+      <CommandList className="max-h-80 p-1">
+        {filtered.length === 0 ? (
+          <div className="py-6 text-center text-sm text-muted-foreground">{noResults}</div>
+        ) : (
+          filtered.map(([code, meta]) => {
+            const selected = code === locale
+
+            return (
+              <CommandItem
+                className={cn(selected ? 'font-medium text-foreground' : 'text-muted-foreground')}
+                disabled={disabled}
+                key={code}
+                onSelect={() => onSelect(code)}
+                value={code}
+              >
+                <Check className={cn('size-3.5 shrink-0 text-primary', !selected && 'invisible')} />
+                <span className="min-w-0 flex-1 truncate">{meta.name}</span>
+                <span className="font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary)">{code}</span>
+              </CommandItem>
+            )
+          })
+        )}
+      </CommandList>
+    </Command>
   )
 }

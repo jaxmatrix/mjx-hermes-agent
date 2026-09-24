@@ -1,6 +1,7 @@
+import type { ModelOptionsResult } from '@hermes/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -18,14 +19,13 @@ vi.mock('@/hermes', async importOriginal => ({
 import { getGlobalModelInfo } from '@/hermes'
 import { modelOptionsQueryKey } from '@/lib/model-options'
 import { queryClient } from '@/lib/query-client'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import type { NotificationInput } from '@/store/notifications'
 import { notify } from '@/store/notifications'
 import { $activeGatewayProfile } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
-import { $sessionStates } from '@/store/session-state-types'
+import { $sessionKeyStates } from '@/store/session-state-types'
 import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
-import type { ModelOptionsResponse } from '@/types/hermes'
 
 import {
   $currentFastMode,
@@ -41,7 +41,7 @@ import {
 const optionsKey = (sessionId: null | string) => modelOptionsQueryKey($activeGatewayProfile.get(), sessionId)
 
 const cachedModel = (sessionId: null | string): string | undefined =>
-  queryClient.getQueryData<ModelOptionsResponse>(optionsKey(sessionId))?.model
+  queryClient.getQueryData<ModelOptionsResult>(optionsKey(sessionId))?.model
 
 // ⌘⇧M opens the picker for the pane under the pointer, so a selection names the
 // session it is meant for. The composer's own dropdown omits it and keeps
@@ -68,7 +68,7 @@ describe('selectModel targeting', () => {
     expect($currentProvider.get()).toBe('zai')
     // The primary composer reads its live slice, so the optimistic paint has to
     // land there too — not only on the draft-default globals.
-    expect($sessionStates.get()['runtime-1']).toMatchObject({ model: 'glm-5', provider: 'zai' })
+    expect($sessionKeyStates.get()['runtime-1']).toMatchObject({ model: 'glm-5', provider: 'zai' })
   })
 
   // The composer's globals belong to the primary chat. Writing them for a tile
@@ -80,7 +80,7 @@ describe('selectModel targeting', () => {
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'runtime-2' })).resolves.toBe(true)
 
     expect(requestGateway).toHaveBeenCalledWith('config.set', expect.objectContaining({ session_id: 'runtime-2' }))
-    expect($sessionStates.get()['runtime-2']).toMatchObject({ model: 'glm-5', provider: 'zai' })
+    expect($sessionKeyStates.get()['runtime-2']).toMatchObject({ model: 'glm-5', provider: 'zai' })
     expect($currentModel.get()).toBe('primary-model')
     expect($currentProvider.get()).toBe('primary-provider')
   })
@@ -92,7 +92,7 @@ describe('selectModel targeting', () => {
 
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'runtime-2' })).resolves.toBe(false)
 
-    expect($sessionStates.get()['runtime-2']).toMatchObject({ model: 'old-model', provider: 'old-provider' })
+    expect($sessionKeyStates.get()['runtime-2']).toMatchObject({ model: 'old-model', provider: 'old-provider' })
     expect($currentModel.get()).toBe('primary-model')
   })
 
@@ -118,7 +118,7 @@ describe('selectModel targeting', () => {
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'hydrating:stored-9' })).resolves.toBe(true)
 
     expect(requestGateway).toHaveBeenCalledWith('config.set', expect.objectContaining({ session_id: 'runtime-9' }))
-    expect($sessionStates.get()['hydrating:stored-9']).toMatchObject({ model: 'glm-5', provider: 'zai' })
+    expect($sessionKeyStates.get()['hydrating:stored-9']).toMatchObject({ model: 'glm-5', provider: 'zai' })
   })
 
   // No runtime yet = nothing to switch. It must NOT fall through to the
@@ -127,12 +127,12 @@ describe('selectModel targeting', () => {
   it('holds a named surface with no runtime as UI state only', async () => {
     seedActiveSession('runtime-1')
     seedSession('draft:2', { runtimeSessionId: '' })
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey(null), { model: 'profile-model' } as ModelOptionsResponse)
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey(null), { model: 'profile-model' } as ModelOptionsResult)
 
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'draft:2' })).resolves.toBe(true)
 
     expect(requestGateway).not.toHaveBeenCalled()
-    expect($sessionStates.get()['draft:2']).toMatchObject({ model: 'glm-5' })
+    expect($sessionKeyStates.get()['draft:2']).toMatchObject({ model: 'glm-5' })
     expect(cachedModel(null)).toBe('profile-model')
   })
 })
@@ -159,9 +159,9 @@ describe('selectModel round trip', () => {
 
   it('writes the pick through to the session-scoped model.options cache', async () => {
     seedActiveSession('runtime-1')
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey('runtime-1'), {
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey('runtime-1'), {
       model: 'old-model'
-    } as ModelOptionsResponse)
+    } as ModelOptionsResult)
 
     await selectModel({ model: 'glm-5', provider: 'zai' })
 
@@ -200,9 +200,9 @@ describe('selectModel round trip', () => {
   // the session is not running.
   it('rolls back and reports failure when the gateway refuses with confirm_required', async () => {
     seedActiveSession('runtime-1')
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey('runtime-1'), {
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey('runtime-1'), {
       model: 'primary-model'
-    } as ModelOptionsResponse)
+    } as ModelOptionsResult)
     vi.mocked(requestGateway).mockResolvedValue({
       confirm_required: true,
       confirm_message: 'Opus 5 costs $15/Mtok.',
@@ -248,9 +248,9 @@ describe('selectModel round trip', () => {
 
   it('rolls the cache back with the pill when the RPC throws', async () => {
     seedActiveSession('runtime-1')
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey('runtime-1'), {
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey('runtime-1'), {
       model: 'primary-model'
-    } as ModelOptionsResponse)
+    } as ModelOptionsResult)
     vi.mocked(requestGateway).mockRejectedValue(new Error('nope'))
 
     await expect(selectModel({ model: 'glm-5', provider: 'zai' })).resolves.toBe(false)

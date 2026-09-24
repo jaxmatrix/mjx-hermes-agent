@@ -1,5 +1,5 @@
+import { searchDir } from '@/hermes'
 import { ApiError } from '@/lib/api'
-import { searchDesktopDir } from '@/lib/desktop-fs'
 import {
   bodyHasEntries,
   entriesToHits,
@@ -46,7 +46,7 @@ export async function searchFiles(
   limit: number = FILE_SEARCH_LIMIT
 ): Promise<FileSearchHit[]> {
   try {
-    const body = await searchDesktopDir(root, query, limit)
+    const body = await searchDir(root, query, limit)
 
     applyVerdict(verdictFromBody(body))
 

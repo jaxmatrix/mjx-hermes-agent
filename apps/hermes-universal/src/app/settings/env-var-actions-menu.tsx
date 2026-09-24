@@ -9,10 +9,10 @@ import {
 } from '@/components/ui/actions-menu'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { openExternalLink } from '@/lib/external-link'
 import { triggerHaptic } from '@/lib/haptics'
-import { ExternalLink, Eye, EyeOff, Trash2 } from '@/lib/icons'
+import { ExternalLink, Eye, EyeOff, KeyRound, Trash2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 interface EnvVarActions {
@@ -23,6 +23,10 @@ interface EnvVarActions {
   label: string
   onClear?: () => void
   onEdit: () => void
+  /** Internal navigation to Settings → API Keys with this key highlighted.
+   *  Rendered only when provided AND the key is set (an unset key is managed
+   *  right here via Set). */
+  onManageKeys?: () => void
   onReveal?: () => void
   showReveal?: boolean
 }
@@ -36,6 +40,7 @@ function useEnvVarItems({
   isSet,
   onClear,
   onEdit,
+  onManageKeys,
   onReveal,
   showReveal = true
 }: EnvVarActions) {
@@ -43,6 +48,7 @@ function useEnvVarItems({
   const copy = t.settings.envActions
   const hasClear = isSet && onClear
   const hasReveal = isSet && showReveal && onReveal
+  const hasManageKeys = isSet && onManageKeys
   const hasDocs = Boolean(docsUrl?.trim())
 
   return (kit: MenuKit) => {
@@ -56,7 +62,7 @@ function useEnvVarItems({
         onSelect: event => {
           event.preventDefault()
           triggerHaptic('selection')
-          window.open(docsUrl!, '_blank', 'noopener,noreferrer')
+          openExternalLink(docsUrl!)
         }
       })
     }
@@ -82,6 +88,18 @@ function useEnvVarItems({
         onEdit()
       }
     })
+
+    if (hasManageKeys) {
+      rows.push({
+        iconNode: <KeyRound className="size-3.5" />,
+        key: 'manage-keys',
+        label: copy.manageInKeys,
+        onSelect: () => {
+          triggerHaptic('selection')
+          onManageKeys()
+        }
+      })
+    }
 
     return (
       <>
@@ -118,13 +136,7 @@ export function EnvVarActionsMenu({ align = 'end', children, sideOffset = 6, ...
   const items = useEnvVarItems(actions)
 
   return (
-    <ActionsMenu
-      align={align}
-      ariaLabel={copy.actionsFor(actions.label)}
-      contentClassName="w-44"
-      items={items}
-      sideOffset={sideOffset}
-    >
+    <ActionsMenu align={align} ariaLabel={copy.actions} contentClassName="w-44" items={items} sideOffset={sideOffset}>
       {children}
     </ActionsMenu>
   )
@@ -141,31 +153,28 @@ export function EnvVarContextMenu({ children, ...actions }: EnvVarContextMenuPro
   const items = useEnvVarItems(actions)
 
   return (
-    <ActionsContextMenu ariaLabel={copy.actionsFor(actions.label)} contentClassName="w-44" items={items}>
+    <ActionsContextMenu ariaLabel={copy.actions} contentClassName="w-44" items={items}>
       {children}
     </ActionsContextMenu>
   )
 }
 
-interface EnvVarActionsTriggerProps extends Omit<React.ComponentProps<typeof Button>, 'size' | 'variant'> {
-  label: string
-}
-
-export function EnvVarActionsTrigger({ className, label, ...props }: EnvVarActionsTriggerProps) {
+export function EnvVarActionsTrigger({
+  className,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, 'size' | 'variant'>) {
   const { t } = useI18n()
   const copy = t.settings.envActions
 
   return (
-    <Tip label={copy.credentialActions}>
-      <Button
-        aria-label={copy.actionsFor(label)}
-        className={cn('text-muted-foreground hover:text-foreground', className)}
-        size="icon-sm"
-        variant="ghost"
-        {...props}
-      >
-        <Codicon name="ellipsis" size="0.875rem" />
-      </Button>
-    </Tip>
+    <Button
+      aria-label={copy.actions}
+      className={cn('text-muted-foreground hover:text-foreground', className)}
+      size="icon-sm"
+      variant="ghost"
+      {...props}
+    >
+      <Codicon name="ellipsis" size="0.875rem" />
+    </Button>
   )
 }

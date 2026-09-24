@@ -1,33 +1,22 @@
 import { describe, expect, it } from 'vitest'
 
+import { en } from '@/i18n/en'
+
 import { KEYBIND_ACTIONS } from './actions'
 
-const defaultsFor = (id: string): readonly string[] => KEYBIND_ACTIONS.find(action => action.id === id)?.defaults ?? []
+// Relationship checks between the action table and its consumers, not the
+// specific chord or wording any one action ships with.
+describe('KEYBIND_ACTIONS', () => {
+  it('has unique ids (a duplicate would shadow a row in the shortcuts panel)', () => {
+    const ids = KEYBIND_ACTIONS.map(action => action.id)
 
-describe('keybind defaults', () => {
-  it('ships the model picker bound to ⌘⇧M', () => {
-    // The chord shipped EMPTY while universal had no picker surface to raise.
-    // `app/model-picker-overlay` is that surface, so an unbound action here
-    // means ⌘⇧M silently does nothing — the whole point of the shortcut.
-    expect(defaultsFor('composer.modelPicker')).toEqual(['mod+shift+m'])
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('gives no two built-in actions the same default combo', () => {
-    const owners = new Map<string, string>()
-    const clashes: string[] = []
+  it('gives every built-in action an English label so it renders in the shortcuts panel', () => {
+    const labels = en.keybinds.actions as Record<string, string>
+    const missing = KEYBIND_ACTIONS.filter(action => !labels[action.id]).map(action => action.id)
 
-    for (const action of KEYBIND_ACTIONS) {
-      for (const combo of action.defaults) {
-        const owner = owners.get(combo)
-
-        if (owner) {
-          clashes.push(`${combo}: ${owner} vs ${action.id}`)
-        } else {
-          owners.set(combo, action.id)
-        }
-      }
-    }
-
-    expect(clashes).toEqual([])
+    expect(missing).toEqual([])
   })
 })

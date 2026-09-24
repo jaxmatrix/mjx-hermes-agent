@@ -1,20 +1,17 @@
+import { atom, computed } from 'nanostores'
+
 import { $registryVersion } from '@/contrib/registry'
 import { allKeybindActions, defaultBindings, keybindAction, type KeybindBindings } from '@/lib/keybinds/actions'
 import { canonicalizeCombo } from '@/lib/keybinds/combo'
-import { readKey, writeKey } from '@/lib/persist'
-import { arraysEqual } from '@/lib/storage'
-import { atom, computed } from '@/store/atom'
+import { arraysEqual, persistString, storedString } from '@/lib/storage'
 
-// Ported verbatim from desktop `store/keybinds.ts`. Only seam: universal's
-// `lib/storage.ts` has no storedString/persistString, so the two reads/writes go
-// through `lib/persist.ts` (readKey/writeKey) — the same localStorage contract.
-const STORAGE_KEY = 'hermes.universal.keybinds'
+const STORAGE_KEY = 'hermes.desktop.keybinds'
 
 // The user's raw stored overrides. Kept verbatim so an action CONTRIBUTED
 // after module init (plugins register late) still resolves its saved rebind —
 // `bindingsFor` consults this before falling back to shipped defaults.
 function readStoredOverrides(): Record<string, string[]> {
-  const raw = readKey(STORAGE_KEY)
+  const raw = storedString(STORAGE_KEY)
 
   if (!raw) {
     return {}
@@ -68,7 +65,19 @@ function persistBindings(bindings: KeybindBindings): void {
     }
   }
 
-  writeKey(STORAGE_KEY, JSON.stringify(diff))
+  // Actions contributed after boot (plugins register late) are missing
+  // from the registry when the boot-time subscribe fires. Carry their
+  // stored overrides forward so the persist does not wipe them. Re-read
+  // storage rather than the module-init snapshot: an override written after
+  // boot (plugin registered → rebound → unloaded) is otherwise invisible here
+  // and the next persist of any other action drops it.
+  for (const [id, combos] of Object.entries(readStoredOverrides())) {
+    if (!(id in defaults)) {
+      diff[id] = combos
+    }
+  }
+
+  persistString(STORAGE_KEY, JSON.stringify(diff))
 }
 
 export const $bindings = atom<KeybindBindings>(loadBindings())
@@ -129,40 +138,6 @@ export function conflictsFor(actionId: string, combo: string): string[] {
   return allKeybindActions()
     .map(action => action.id)
     .filter(id => id !== actionId && bindingsFor(id, bindings).includes(combo))
-}
-
-// ── Dispatcher presence ─────────────────────────────────────────────────────
-// `useKeybinds` — the one window-wide combo dispatcher — mounts only in the main
-// shell (`app/mobile-controller.tsx`). Satellite roots (a detached tile, the
-// HUD, Quick Entry, an Android activity screen) render real content with no
-// dispatcher at all, so a surface that must stay keyboard-reachable THERE has to
-// install its own listener. Doing that is only correct while the global one is
-// absent, or one combo would be handled twice — so presence is announced here
-// rather than guessed at. It lives in this leaf store because importing
-// `use-keybinds` from a component would drag the entire dispatcher graph into
-// every satellite window.
-
-let dispatchers = 0
-
-/** Called by `useKeybinds` on mount; returns the release fn for its cleanup. */
-export function registerKeybindDispatcher(): () => void {
-  dispatchers += 1
-
-  let released = false
-
-  return () => {
-    if (released) {
-      return
-    }
-
-    released = true
-    dispatchers -= 1
-  }
-}
-
-/** True in a window whose root mounts the global combo dispatcher. */
-export function keybindDispatcherMounted(): boolean {
-  return dispatchers > 0
 }
 
 // ── Capture ─────────────────────────────────────────────────────────────────

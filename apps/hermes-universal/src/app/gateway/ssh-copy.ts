@@ -32,8 +32,9 @@ const ERROR_COPY: Record<SshErrorKind, (g: Gateway) => string> = {
   // The lockfile pointed at a backend that turned out not to be ours. Rust has
   // already cleaned up and will respawn, so this only surfaces if that failed too.
   'authenticated-stale': g => g.sshErrUnknown,
-  // A newer attempt took over. Never worth showing — the newer attempt owns the
-  // outcome — but mapped so the union stays exhaustive.
+  // A newer attempt threw away work this caller had finished — its own failure,
+  // so it IS surfaced. The quiet contract is the `quiet` flag, not this kind
+  // (MJXHRM-592): a caller that stays silent does so on the flag alone.
   superseded: g => g.sshErrUnknown,
   cancelled: g => g.sshErrUnknown,
   unknown: g => g.sshErrUnknown
@@ -65,6 +66,47 @@ export function sshErrorMessage(error: unknown, g: Gateway): string {
   }
 
   return typeof error === 'string' && error ? error : g.sshErrUnknown
+}
+
+/**
+ * The copy for a tunnel failure (MJXHRM-592). A tunnel error's `kind` is the
+ * tunnel's own, so the SSH kind it came from (`sshKind`) picks the copy first —
+ * the same words the configurator shows. The tunnel kinds with no SSH kind map
+ * onto existing copy; only a locked device has a string of its own. Rust's
+ * English message belongs in a notification's detail, never here.
+ */
+export function tunnelErrorMessage(error: unknown, g: Gateway): string {
+  const tunnel = (typeof error === 'object' && error !== null ? error : {}) as {
+    kind?: string
+    sshKind?: SshErrorKind
+  }
+
+  if (tunnel.sshKind && ERROR_COPY[tunnel.sshKind]) {
+    return ERROR_COPY[tunnel.sshKind](g)
+  }
+
+  switch (tunnel.kind) {
+    case 'locked':
+      return g.sshErrLocked
+
+    case 'credentials-needed':
+      return g.sshErrAuth
+
+    case 'host-key-changed':
+      return g.sshErrHostKey
+
+    case 'hermes-not-found':
+      return g.sshErrNotInstalled
+
+    case 'update-required':
+      return g.sshErrUpdateRequired
+
+    case 'unsupported-platform':
+      return g.sshErrPlatform
+
+    default:
+      return g.sshErrUnknown
+  }
 }
 
 function isSshErrorLike(value: unknown): value is { kind: SshErrorKind; message: string } {

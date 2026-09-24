@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useMemo, useState } from 'react'
+import { useContext, useMemo, useState } from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
@@ -30,16 +30,45 @@ import {
   resetBinding
 } from '@/store/keybinds'
 
-import { SettingsContent } from './primitives'
+import { HudModifierSettings } from './hud-modifier-settings'
+import { SettingsBreadcrumbContext, SettingsContent } from './primitives'
+import { ScreenshotSettings } from './screenshot-settings'
 
-export function KeybindSettings() {
+interface KeybindSettingsProps {
+  subpage?: string
+}
+
+export function KeybindSettings({ subpage }: KeybindSettingsProps = {}) {
+  if (subpage === 'hud-gesture') {
+    return (
+      <SettingsContent>
+        <HudModifierSettings />
+      </SettingsContent>
+    )
+  }
+
+  if (subpage === 'screen-capture') {
+    return (
+      <SettingsContent>
+        <ScreenshotSettings />
+      </SettingsContent>
+    )
+  }
+
+  return <ShortcutSettings includeScreenshot={subpage === undefined} />
+}
+
+function ShortcutSettings({ includeScreenshot }: { includeScreenshot: boolean }) {
   const { t } = useI18n()
+  const hasBreadcrumb = useContext(SettingsBreadcrumbContext)
   const bindings = useStore($bindings)
   const k = t.keybinds
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
-  // Subscribe so contributed actions appear/disappear live in the map.
-  useContributions(KEYBINDS_AREA)
-  const actionList = allKeybindActions()
+  // Subscribe so contributed actions appear/disappear live in the map. The
+  // snapshot feeds the list: under React Compiler an independently called
+  // allKeybindActions() stays memoized across that registration.
+  const contributions = useContributions(KEYBINDS_AREA)
+  const actionList = allKeybindActions(contributions)
   const [query, setQuery] = useState('')
 
   const openCombo = bindings[KEYBIND_PANEL_ACTION]?.[0]
@@ -97,7 +126,7 @@ export function KeybindSettings() {
     <SettingsContent>
       <div className="flex items-center justify-between gap-3 pb-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">{k.title}</h2>
+          {!hasBreadcrumb && <h2 className="text-sm font-semibold text-foreground">{k.title}</h2>}
           <p className="mt-0.5 text-[0.72rem] text-muted-foreground">
             {k.subtitle(openCombo ? formatCombo(openCombo) : '')}
           </p>
@@ -111,6 +140,11 @@ export function KeybindSettings() {
           {k.resetAll}
         </button>
       </div>
+
+      {includeScreenshot &&
+        (!isSearching || t.settings.screenshot.enabledTitle.toLowerCase().includes(query.toLowerCase())) && (
+          <ScreenshotSettings />
+        )}
 
       <div className="pb-3">
         <SearchField
@@ -173,11 +207,13 @@ export function KeybindSettings() {
 function CategoryHeader({ label, onToggle, open }: { label: string; onToggle: () => void; open: boolean }) {
   return (
     <button
-      className="group/kbd-cat flex w-fit items-center gap-1 px-2.5 pb-1 pt-3 text-start leading-none"
+      className="group/kbd-cat flex w-fit min-w-0 items-center gap-1 px-2.5 pb-1 pt-3 text-start leading-none"
       onClick={onToggle}
       type="button"
     >
-      <span className="text-[0.64rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">{label}</span>
+      <span className="min-w-0 truncate text-[0.64rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+        {label}
+      </span>
       <DisclosureCaret
         className="text-(--ui-text-tertiary) opacity-0 transition group-hover/kbd-cat:opacity-100"
         open={open}
@@ -209,21 +245,8 @@ function KeybindRow({ action }: { action: KeybindActionMeta }) {
     <div className="group flex items-center gap-2.5 rounded-lg px-2.5 py-1 transition-colors hover:bg-(--chrome-action-hover)">
       <span className="min-w-0 flex-1 truncate text-[0.82rem] text-foreground/90">{label}</span>
 
-      {/* The one property of a shortcut that reaches outside this app: the OS is
-          asked to reserve it machine-wide at startup, so no other application
-          can use it. The first-run notice says it once
-          (`lib/keybinds/global-shortcut.ts`); this is where a user who dismissed
-          it — or arrived months later — can still find out which rows do it. */}
-      {action.global && (
-        <Tip label={k.globalTagHint}>
-          <span className="shrink-0 rounded border border-(--ui-stroke-tertiary) px-1 py-px text-[0.6rem] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            {k.globalTag}
-          </span>
-        </Tip>
-      )}
-
       {conflict && (
-        <span className="flex size-4 items-center justify-center text-(--ui-yellow)/90" title={k.conflictWith(conflict)}>
+        <span className="flex size-4 items-center justify-center text-amber-500/90" title={k.conflictWith(conflict)}>
           <Codicon name="warning" size="0.8125rem" />
         </span>
       )}
@@ -254,7 +277,7 @@ function KeybindRow({ action }: { action: KeybindActionMeta }) {
         <Tip label={k.reset}>
           <button
             aria-label={k.reset}
-            className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground/70 opacity-0 transition-all hover:bg-(--ui-control-active-background) hover:text-foreground group-hover:opacity-100 coarse:opacity-100"
+            className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground/70 opacity-0 coarse:opacity-100 transition-all hover:bg-(--ui-control-active-background) hover:text-foreground group-hover:opacity-100"
             onClick={() => resetBinding(action.id)}
             type="button"
           >

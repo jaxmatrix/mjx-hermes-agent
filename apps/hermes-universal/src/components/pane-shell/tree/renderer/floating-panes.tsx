@@ -1,30 +1,29 @@
 /**
- * Floating tiles — the tree's non-tiling placement.
+ * Floating panes — the tree's non-tiling placement.
  *
- * `placement: 'floating'` opts a tile OUT of the layout tree: it never becomes
- * a track, never takes width from a zone, and never appears in a tab strip. The
- * tree renders it as a fixed card above itself, draggable by its header, with
- * position + collapse persisted per tile id. The geometry rules live in
+ * `placement: 'floating'` opts a pane OUT of the layout tree: it never becomes
+ * a track, never takes width from a zone, and never appears in a tab strip.
+ * The tree renders it as a fixed card above itself, draggable by its header,
+ * with position + collapse persisted per pane id. The geometry rules live in
  * floating-rect.ts.
- *
- * Ported from desktop `renderer/floating-panes.tsx`. Two universal changes:
- * it reads TILES (`useTiles` / `tileChrome`) rather than raw contributions,
- * and the reserved top chrome comes from the `--titlebar-height` CSS var —
- * universal has no `TITLEBAR_HEIGHT` constant, the same difference the pet's
- * roam-geometry carries.
  */
 
 import { useStore } from '@nanostores/react'
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef } from 'react'
 
 import { HUD_SURFACE } from '@/app/floating-hud'
+import { TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
+import { useOnboardingChatActive } from '@/components/onboarding-chat/assembly'
 import { Codicon } from '@/components/ui/codicon'
-import { ContribBoundary } from '@/contrib/react/boundary'
-import { readJson, writeJson } from '@/lib/storage'
+import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
+import { useContributions } from '@/contrib/react/use-contributions'
+import type { Contribution } from '@/contrib/types'
+import { LAYOUT_KEYS } from '@/lib/layout-persistence'
+import { Codecs } from '@/lib/persisted'
 import { cn } from '@/lib/utils'
+import { modeLayout } from '@/store/interface-mode'
 
-import { useTiles } from '../../tile/registry'
-import { type Tile, tileChrome, tileSizing } from '../../tile/types'
+import { hiddenPaneProps, PaneLifecycleContext, PaneVisibleContext } from '../../pane-visibility'
 import { $hiddenTreePanes } from '../store'
 
 import {
@@ -36,16 +35,10 @@ import {
   type FloatingViewport,
   reflowRect
 } from './floating-rect'
-
-// `hermes.layout.*`, not desktop's `hermes.desktop.floatingPanes.v1` — this is
-// a Tauri app, and the tree store already renamed its own keys that way. A new
-// key has nothing to migrate, so it starts in the right namespace.
-const POSITIONS_KEY = 'hermes.layout.floatingTiles.v1'
+import { PaneBody } from './pane-body'
+import { paneChrome } from './track-model'
 
 const DEFAULT_SIZE = { width: 240, height: 180 }
-
-// Matches the pet's fallback; the var is authored in rem on the app shell.
-const TITLEBAR_FALLBACK_PX = 34
 
 interface StoredRect {
   x: number
@@ -53,71 +46,69 @@ interface StoredRect {
   collapsed?: boolean
 }
 
-const readStored = (): Record<string, StoredRect> => readJson<Record<string, StoredRect>>(POSITIONS_KEY) ?? {}
-
-/** Reserved top chrome in px. Authored as a rem `--titlebar-height`, so resolve
- *  it against the root font size rather than parsing the number raw. */
-function titlebarInsetPx(): number {
-  if (typeof document === 'undefined') {
-    return TITLEBAR_FALLBACK_PX
-  }
-
-  const root = getComputedStyle(document.documentElement)
-  const raw = root.getPropertyValue('--titlebar-height').trim()
-
-  if (raw.endsWith('rem')) {
-    return (Number.parseFloat(raw) || 0) * (Number.parseFloat(root.fontSize) || 16)
-  }
-
-  return Number.parseFloat(raw) || TITLEBAR_FALLBACK_PX
-}
+const $positions = modeLayout.atom<Record<string, StoredRect>>(
+  LAYOUT_KEYS.floating,
+  () => ({}),
+  Codecs.json(value =>
+    value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, StoredRect>) : {}
+  ),
+  true
+)
 
 const viewportNow = (): FloatingViewport => ({
   width: window.innerWidth,
   height: window.innerHeight,
-  top: titlebarInsetPx()
+  top: TITLEBAR_HEIGHT
 })
 
-function FloatingTile({ tile }: { tile: Tile }) {
-  const anchor = tileChrome(tile).anchor ?? 'top-right'
-  // Universal splits chrome from sizing (desktop had one flat blob), so the
-  // card's dimensions come off `sizing` — the same `width`/`height` a tiling
-  // tile uses to make its zone a fixed track.
-  const sizing = tileSizing(tile)
+function FloatingPane({ pane }: { pane: Contribution }) {
+  const chrome = paneChrome(pane)
+  const anchor = chrome.anchor ?? 'top-right'
 
   const size = {
-    width: floatingPx(sizing.width, DEFAULT_SIZE.width),
-    height: floatingPx(sizing.height, DEFAULT_SIZE.height)
+    width: floatingPx(chrome.width, DEFAULT_SIZE.width),
+    height: floatingPx(chrome.height, DEFAULT_SIZE.height)
   }
 
-  const [rect, setRect] = useState<FloatingRect>(() => {
-    const stored = readStored()[tile.id]
-    const spawned = anchoredRect(anchor, size, viewportNow())
-
-    return stored ? { ...spawned, x: stored.x, y: stored.y } : spawned
-  })
-
-  const [collapsed, setCollapsed] = useState(() => readStored()[tile.id]?.collapsed ?? false)
-
+  const stored = useStore($positions)[pane.id]
+  const rect = { ...anchoredRect(anchor, size, viewportNow()), ...stored }
+  const collapsed = stored?.collapsed ?? false
   const drag = useRef<{ x: number; y: number } | null>(null)
   const viewport = useRef<FloatingViewport>(viewportNow())
 
-  const persist = useCallback(
-    (next: FloatingRect, nextCollapsed: boolean) => {
-      writeJson(POSITIONS_KEY, { ...readStored(), [tile.id]: { x: next.x, y: next.y, collapsed: nextCollapsed } })
+  const setRect = useCallback(
+    (update: (current: FloatingRect) => FloatingRect) => {
+      const positions = $positions.get()
+      const current = positions[pane.id]
+
+      const next = update({
+        ...anchoredRect(anchor, { width: size.width, height: size.height }, viewport.current),
+        ...current
+      })
+
+      $positions.set({ ...positions, [pane.id]: { x: next.x, y: next.y, collapsed: current?.collapsed } })
     },
-    [tile.id]
+    [pane.id, anchor, size.width, size.height]
   )
 
-  // Track the viewport so an edge-anchored card rides its edge on resize. The
-  // previous-size read lives in the handler (not a useEffect body): it's window
-  // geometry, not a mirrored reactive value.
+  const persist = useCallback(
+    (next: FloatingRect, nextCollapsed: boolean) => {
+      const positions = { ...$positions.get(), [pane.id]: { x: next.x, y: next.y, collapsed: nextCollapsed } }
+      $positions.set(positions)
+      modeLayout.write(LAYOUT_KEYS.floating, JSON.stringify(positions))
+    },
+    [pane.id]
+  )
+
+  // Track the viewport so an edge-anchored pane rides its edge on resize.
+  // The previous-size read lives in the handler (not a useEffect body): it's
+  // window geometry, not a mirrored reactive value.
   const handleResize = useCallback(() => {
     const next = viewportNow()
 
     setRect(current => reflowRect(current, anchor, viewport.current, next))
     viewport.current = next
-  }, [anchor])
+  }, [anchor, setRect])
 
   useEffect(() => {
     window.addEventListener('resize', handleResize)
@@ -135,22 +126,25 @@ function FloatingTile({ tile }: { tile: Tile }) {
     event.preventDefault()
   }, [])
 
-  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const from = drag.current
+  const onPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const from = drag.current
 
-    if (!from) {
-      return
-    }
+      if (!from) {
+        return
+      }
 
-    drag.current = { x: event.clientX, y: event.clientY }
+      drag.current = { x: event.clientX, y: event.clientY }
 
-    setRect(current =>
-      clampFloatingRect(
-        { ...current, x: current.x + event.clientX - from.x, y: current.y + event.clientY - from.y },
-        viewport.current
+      setRect(current =>
+        clampFloatingRect(
+          { ...current, x: current.x + event.clientX - from.x, y: current.y + event.clientY - from.y },
+          viewport.current
+        )
       )
-    )
-  }, [])
+    },
+    [setRect]
+  )
 
   const onPointerUp = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -160,26 +154,17 @@ function FloatingTile({ tile }: { tile: Tile }) {
 
       drag.current = null
       event.currentTarget.releasePointerCapture?.(event.pointerId)
-      setRect(current => {
-        persist(current, collapsed)
-
-        return current
-      })
+      persist({ ...rect, ...$positions.get()[pane.id] }, collapsed)
     },
-    [collapsed, persist]
+    [pane.id, rect, collapsed, persist]
   )
 
-  const toggleCollapsed = () =>
-    setCollapsed(current => {
-      persist(rect, !current)
-
-      return !current
-    })
+  const toggleCollapsed = () => persist(rect, !collapsed)
 
   return (
     <div
       className={cn('pointer-events-auto fixed z-45 flex flex-col overflow-hidden', HUD_SURFACE)}
-      data-floating-tile={tile.id}
+      data-floating-pane={pane.id}
       style={{
         left: rect.x,
         top: rect.y,
@@ -195,35 +180,42 @@ function FloatingTile({ tile }: { tile: Tile }) {
         onPointerUp={onPointerUp}
         style={{ touchAction: 'none' }}
       >
-        <span className="truncate font-medium">{tile.title}</span>
+        <span className="truncate font-medium">{pane.title ?? pane.id}</span>
         <button
           className="rounded p-0.5 text-(--ui-text-quaternary) transition-colors hover:text-(--ui-text-primary)"
           data-floating-no-drag=""
           onClick={toggleCollapsed}
           type="button"
         >
-          <Codicon name={collapsed ? 'chevron-down' : 'chevron-up'} size="0.75rem" />
+          <Codicon name={collapsed ? 'chevron-up' : 'chevron-down'} size="0.75rem" />
         </button>
       </header>
 
-      {!collapsed && (
-        <div className="min-h-0 flex-1 overflow-auto">
-          <ContribBoundary id={tile.id}>{tile.render()}</ContribBoundary>
-        </div>
+      {(!collapsed || chrome.lifecycleKeepAlive) && (
+        <PaneBody hidden={collapsed}>
+          <div className="h-full overflow-auto" inert={collapsed || undefined} {...hiddenPaneProps(collapsed)}>
+            <PaneLifecycleContext value={collapsed ? 'hot-hidden' : 'visible'}>
+              <PaneVisibleContext value={!collapsed}>
+                <ContribBoundary id={pane.id}>{pane.render && <ContribRender render={pane.render} />}</ContribBoundary>
+              </PaneVisibleContext>
+            </PaneLifecycleContext>
+          </div>
+        </PaneBody>
       )}
     </div>
   )
 }
 
-/** Every `placement: 'floating'` tile, rendered above the tree. */
-export function FloatingTiles() {
-  const tiles = useTiles()
+/** Every `placement: 'floating'` contribution, rendered above the tree. */
+export function FloatingPanes() {
+  const panes = useContributions('panes')
   const hidden = useStore($hiddenTreePanes)
 
-  // Reveal still applies: a floating tile's owner can hide it the same way it
-  // hides a tiled one. Presence (dismissal) can't — a floating tile is never in
-  // the tree to be dismissed FROM.
-  const floating = tiles.filter(tile => tile.placement === FLOATING_PLACEMENT && !hidden.has(tile.id))
+  const onboardingActive = useOnboardingChatActive()
+
+  const floating = onboardingActive
+    ? []
+    : panes.filter(pane => paneChrome(pane).placement === FLOATING_PLACEMENT && !hidden.has(pane.id))
 
   if (floating.length === 0) {
     return null
@@ -231,8 +223,8 @@ export function FloatingTiles() {
 
   return (
     <>
-      {floating.map(tile => (
-        <FloatingTile key={`${tile.source ?? 'core'}:${tile.id}`} tile={tile} />
+      {floating.map(pane => (
+        <FloatingPane key={`${pane.source ?? 'core'}:${pane.id}`} pane={pane} />
       ))}
     </>
   )

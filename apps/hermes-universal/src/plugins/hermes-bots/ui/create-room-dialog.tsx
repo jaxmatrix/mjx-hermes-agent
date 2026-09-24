@@ -7,17 +7,7 @@
  * member needs its own secondary socket and MJXHRM-446's pool holds five.
  */
 
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  Input,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, useValue } from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import { botHandle } from '../ids'

@@ -1,153 +1,294 @@
-import { type ReactNode, useCallback, useLayoutEffect, useRef } from 'react'
+import { useStore } from '@nanostores/react'
+import { type ReactNode, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router'
 
 import { blurComposerInput } from '@/app/chat/composer/focus'
-import { BillingBanner } from '@/components/chat/billing-banner'
+import { useComposerSurfaceId } from '@/app/chat/composer/scope'
+import { useSessionView } from '@/app/chat/session-view'
+import { AGENTS_ROUTE } from '@/app/routes'
+import type { SubmitTextOptions } from '@/app/session/hooks/use-prompt-actions/utils'
+import { BillingBanner } from '@/components/billing-banner'
 import { composerDockCard } from '@/components/chat/composer-dock'
 import { StatusSection } from '@/components/chat/status-section'
+import { FreeTierNoticeStrip, useFreeTierNoticeOwner } from '@/components/free-tier/notice-strip'
+import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
+import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { useI18n } from '@/i18n'
-import { IS_MOBILE } from '@/lib/platform'
-import { useStoreSelector } from '@/lib/use-session-slice'
+import { GlyphSpinner } from '@/components/ui/glyph-spinner'
+import { Tip, TipKeybindLabel } from '@/components/ui/tooltip'
+import { type Translations, useI18n } from '@/i18n'
+import { useSessionSlice, useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/store/atom'
 import { $billingBlock } from '@/store/billing-block'
-import { $previewStatusBySession, dismissPreviewArtifact, type PreviewArtifact } from '@/store/preview-status'
-import { $subagentsBySession, type SubagentProgress } from '@/store/subagents'
-import { sessionThreadScrolledUp } from '@/store/thread-scroll'
-import { canOpenSessionWindow, openSessionInNewWindow } from '@/store/windows'
+import {
+  $statusItemsBySession,
+  type ComposerStatusItem,
+  dismissBackgroundProcess,
+  groupStatusItems,
+  refreshBackgroundProcesses,
+  type StatusGroup,
+  stopBackgroundProcess
+} from '@/store/composer-status'
+import { $freeTierRoute, $freeTierStatus, freeTierStripPending } from '@/store/free-tier'
+import { $interfaceMode, shownInMode, type Tiered } from '@/store/interface-mode'
+import { $previewStatusBySession, dismissPreviewArtifact } from '@/store/preview-status'
+import { $sessionControlBySession, refreshSessionControl } from '@/store/session-control'
+import { $threadScrolledUpBySession } from '@/store/thread-scroll'
+import { openSessionInNewWindow } from '@/store/windows'
 
 import { PreviewStatusRow } from './preview-row'
+import { SessionControlSections } from './session-control'
+import { useSessionValue } from './session-control-utils'
 import { StatusItemRow } from './status-row'
+import { SubagentSection } from './subagent-section'
+import { useSubagentSnapshot } from './use-subagent-snapshot'
 
-// Adapted from apps/desktop/src/app/chat/composer/status-stack/index.tsx. The
-// desktop stack fuses todos + subagents + background processes + preview
-// artifacts + queue; universal wires the three feeds it has — subagents
-// ($subagentsBySession), preview artifacts ($previewStatusBySession) and the
-// queue — and renders only what carries data. Todos / background rows are
-// deferred (FLAG(chat-port)).
-//
-// Section order follows desktop: groups → preview → queue.
-//
-// One deliberate omission: desktop drops localhost preview rows once no
-// background process is running (its `isLocalhostPreview` filter), so a dead dev
-// server stops being offered. Universal has no background-process feed to gate
-// on, so every recorded artifact stays until dismissed — better than hiding rows
-// on a signal that never arrives. Revisit when the background feed lands.
+// Slow safety-net poll for silent exits (processes without notify_on_complete
+// emit no event when they die). Only armed while a running row is on screen.
+const BACKGROUND_POLL_MS = 5_000
 
-// Shared empties so an absent slice never yields a fresh array — a fresh array
-// would defeat the snapshot bail-out below and re-render on every store write,
-// which is the exact churn the narrowing exists to remove.
-const NO_SUBAGENTS: SubagentProgress[] = []
-const NO_PREVIEWS: PreviewArtifact[] = []
+// A localhost/loopback preview is only meaningful while its dev server is up, so
+// we tie it to a live background process rather than persisting dismissals or
+// letting dead URLs pile up. File previews (a real on-disk artifact) stand alone.
+const isLocalhostPreview = (target: string): boolean => /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0)\b/i.test(target)
+
+// Real codicons per group (no sparkles): a checklist for todos, the agent glyph
+// for subagents, a background process glyph for background tasks.
+const GROUP_ICON: Record<StatusGroup['type'], string> = {
+  goal: 'target',
+  todo: 'checklist',
+  subagent: 'agent',
+  background: 'server-process'
+}
+
+// Goals and todos are the plan the user is following; subagents and background
+// processes are how Hermes is executing it. Simple mode shows the plan only.
+const GROUP_TIER: Record<StatusGroup['type'], Tiered> = {
+  goal: {},
+  todo: {},
+  subagent: { tier: 'advanced' },
+  background: { tier: 'advanced' }
+}
+
+const groupLabel = (group: StatusGroup, s: Translations['statusStack']) => {
+  if (group.type === 'goal') {
+    const status = group.items[0]?.goalStatus
+
+    return status === 'paused'
+      ? s.goalPaused
+      : status === 'waiting'
+        ? s.goalWaiting
+        : status === 'done'
+          ? s.goalDone
+          : s.goalActive
+  }
+
+  if (group.type === 'todo') {
+    return s.todos(group.items.filter(i => i.todoStatus === 'completed').length, group.items.length)
+  }
+
+  return group.type === 'subagent' ? s.subagents(group.items.length) : s.background(group.items.length)
+}
+
+const hasRunningTodo = (group: StatusGroup) =>
+  group.type === 'todo' && group.items.some(item => item.todoStatus === 'in_progress' && item.state === 'running')
 
 interface ComposerStatusStackProps {
-  /** The queue chrome, built by the composer (it owns the queue callbacks). */
+  onSubmit?: (value: string, options?: SubmitTextOptions) => Promise<boolean> | boolean
+  /** The queue, built by the composer (it owns the queue's callbacks). */
   queue: ReactNode
   sessionId: null | string
 }
 
-export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackProps) {
+/**
+ * The status "sink" above the composer: one card (the queue's chrome) holding
+ * every session-scoped status — subagents, background tasks, queue — grouped by
+ * type and separated by light dividers. Collapses to nothing when empty.
+ */
+export function ComposerStatusStack({ onSubmit, queue, sessionId }: ComposerStatusStackProps) {
   const { t } = useI18n()
-  // Keyed per session (MJXHRM-381). This was a global boolean, and the stack
-  // mounts once per open tile — so scrolling one tile's transcript dimmed and
-  // re-rendered every other tile's status card, and closing a tile reset the
-  // flag out from under a tile that was still scrolled up.
-  const scrolledUp = useStore(sessionThreadScrolledUp(sessionId))
+  const navigate = useNavigate()
+  const storedSessionId = useStore(useSessionView().$storedId)
+  const interfaceMode = useStore($interfaceMode)
+  const shown = useMemo(() => shownInMode(interfaceMode), [interfaceMode])
+  // Hydrate always (delegate cards and session dots read the same store after
+  // a reload); keep POLLING only while the subagent group is on the shelf.
+  useSubagentSnapshot(sessionId, shown(GROUP_TIER.subagent))
+  // Subscribe to THIS session's slice only. Both maps churn on other
+  // sessions' activity (subagent ticks, background polls, preview updates in
+  // any tile); a whole-map `useStore` re-rendered every mounted stack — one
+  // per open tile — on all of it. The per-key arrays are referentially stable
+  // across unrelated writes, so the slice hook bails out unless OUR session's
+  // items actually changed.
+  const items = useSessionSlice($statusItemsBySession, sessionId)
+  const previews = useSessionSlice($previewStatusBySession, sessionId)
+  const controlEntry = useSessionValue($sessionControlBySession, sessionId)
 
-  // NARROWED (MJXHRM-381). The block is a single global slot but only ever
-  // renders on the session it names, so a whole-atom read meant a credit wall
-  // raised on one session re-rendered every other tile's stack. Selecting to
-  // `null` for every other session is what makes it quiet: their snapshots
-  // compare equal. Returns the store's OWN object when it matches, never a fresh
-  // one — a rebuilt object would defeat `useStoreSelector`'s `Object.is` bail.
-  const billing = useStoreSelector($billingBlock, block =>
-    block && sessionId && block.sessionId === sessionId ? block : null
+  const surfaceId = useComposerSurfaceId()
+  const scrollSessionId = sessionId ?? surfaceId
+
+  const scrolledUp = useStoreSelector($threadScrolledUpBySession, map =>
+    Boolean(scrollSessionId && map[scrollSessionId])
   )
 
-  // NARROWED TO THIS SESSION'S SLICE (MJXHRM-45). Both stores are
-  // `Record<sessionId, T[]>` written immutably per key, and this component
-  // mounts ONCE PER OPEN TILE — so reading the maps whole meant one session's
-  // subagent tick (which lands per tool/thinking chunk while an agent runs)
-  // re-rendered every other tile's status stack too. `delegate.tsx` and
-  // `micro-actions.tsx` already narrowed the identical stores with
-  // `useSessionSlice`; this file simply had not adopted it.
-  //
-  // `useStoreSelector` rather than `useSessionSlice`, deliberately: the subagent
-  // lookup falls back to the `active` bucket only when this session has NO entry
-  // at all, and an entry holding an empty list is not the same thing as a
-  // missing one. A per-key slice hook cannot tell those apart; the selector
-  // keeps the original `??` chain exactly. It returns the stored array's own
-  // reference (or a shared empty), so the snapshot comparison still bails.
-  const subagents = useStoreSelector($subagentsBySession, map =>
-    sessionId ? (map[sessionId] ?? map.active ?? NO_SUBAGENTS) : (map.active ?? NO_SUBAGENTS)
+  const billing = useStore($billingBlock)
+  const freeTierStatus = useStore($freeTierStatus)
+  const freeTierRoute = useStore($freeTierRoute)
+  // One claimed owner across every mounted composer, so a split view shows the
+  // notice once — and a non-owning stack adds no empty row to its card.
+  const ownsFreeTierNotice = useFreeTierNoticeOwner()
+  const freeTierNotice = ownsFreeTierNotice && freeTierStripPending(freeTierStatus, freeTierRoute)
+
+  const isStructuredSupported = controlEntry?.capability === 'supported'
+
+  // Every group, before the shelf decides what to SHOW: whether a dev server is
+  // running is a fact about the session (it keeps its localhost preview chip
+  // alive) even when Simple keeps the background group itself off screen.
+  const allGroups = useMemo(() => groupStatusItems(items), [items])
+
+  const hasRunningBackground = allGroups.some(g => g.type === 'background' && g.items.some(i => i.state === 'running'))
+
+  const groups = useMemo(
+    () => allGroups.filter(group => shown(GROUP_TIER[group.type]) && (group.type !== 'goal' || !isStructuredSupported)),
+    [allGroups, isStructuredSupported, shown]
   )
 
-  const previews = useStoreSelector($previewStatusBySession, map =>
-    sessionId ? (map[sessionId] ?? NO_PREVIEWS) : NO_PREVIEWS
-  )
+  // Seed from the registry on session open; event-driven refreshes (terminal /
+  // process tool completions) live in use-message-stream. This must NOT reset
+  // the gone-polling latch: a mount/remount is not proof of a fresh runtime
+  // binding (a boot-restored tile can remount repeatedly while still bound to
+  // a dead runtime id), so clearing it here re-arms an endless 4001 storm
+  // against that id. The latch is reset at the actual rebind seams instead —
+  // gateway reconnect and runtime re-mint (see resetBackgroundPollingGuard
+  // call sites in use-gateway-boot.ts and store/gateway.ts).
+  useEffect(() => {
+    if (sessionId) {
+      void refreshBackgroundProcesses(sessionId)
+      void refreshSessionControl(sessionId)
+    }
+  }, [sessionId])
 
-  // Stable handlers for the two memoized rows below. Built here rather than
-  // inline at the call sites, where a fresh arrow per row per render made both
-  // `memo()` boundaries inert (MJXHRM-45).
-  const dismissPreview = useCallback(
-    (id: string) => {
-      if (sessionId) {
-        dismissPreviewArtifact(sessionId, id)
+  // Drop localhost previews once no dev server is left running — that's what made
+  // dead `localhost:5174` chips stick around. On-disk file previews are kept.
+  const visiblePreviews = previews.filter(item => hasRunningBackground || !isLocalhostPreview(item.target))
+
+  // Keep-alive keeps every ever-active tab mounted, so without this gate each
+  // background tile's safety-net poll fires every 5s — N sessions means N
+  // gateway round-trips plus shared-map churn forever. Hidden tabs skip the
+  // poll (event-driven refreshes in use-message-stream still land through the
+  // store) and resume it on reveal via `paneVisible` in the dep array.
+  const paneVisible = usePaneVisible()
+
+  useEffect(() => {
+    if (!sessionId || !hasRunningBackground || !paneVisible) {
+      return
+    }
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void refreshBackgroundProcesses(sessionId)
       }
-    },
-    [sessionId]
-  )
+    }, BACKGROUND_POLL_MS)
 
-  // Watch a running subagent in its own native window (desktop only, and not
-  // from a pop-out; MJX-104). Child id via `child_session_id`.
-  const canOpenSubagentWindow = canOpenSessionWindow()
+    return () => clearInterval(timer)
+  }, [hasRunningBackground, sessionId, paneVisible])
 
-  const openSubagentWindow = useCallback((subagentSessionId: string) => {
-    void openSessionInNewWindow(subagentSessionId, { watch: true })
-  }, [])
+  const openAgents = () => navigate(AGENTS_ROUTE)
+
+  const openSubagent = (item: ComposerStatusItem) =>
+    item.sessionId ? void openSessionInNewWindow(item.sessionId, { watch: true }) : openAgents()
+
+  const previewRows =
+    visiblePreviews.length > 0 && sessionId
+      ? visiblePreviews.map(item => (
+          <PreviewStatusRow
+            item={item}
+            key={item.id}
+            onDismiss={id => dismissPreviewArtifact(sessionId, id, storedSessionId ?? sessionId)}
+          />
+        ))
+      : []
 
   const sections: { key: string; node: ReactNode }[] = []
 
   // Billing wall sits at the very top of the stack — it's the most important
   // thing above the composer when the account is out of credits. Rendered here
   // (not as a composer-disable) so slash commands stay usable.
-  // `billing` is already this session's or null — the selector above did the
-  // matching, so there is nothing left to compare here.
-  if (billing && sessionId) {
+  if (billing && sessionId && billing.sessionId === sessionId) {
     sections.push({ key: 'billing', node: <BillingBanner sessionId={sessionId} /> })
   }
 
-  if (subagents.length > 0) {
+  // Below the billing wall (a blocker outranks an offer), above everything the
+  // session itself is doing. The strip retires itself the moment any of its
+  // actions acks the notice.
+  if (freeTierNotice) {
+    sections.push({ key: 'free-tier', node: <FreeTierNoticeStrip /> })
+  }
+
+  const hasControlContent = Boolean(
+    controlEntry &&
+    (controlEntry.error ||
+      controlEntry.snapshot?.goal ||
+      controlEntry.snapshot?.loop ||
+      controlEntry.snapshot?.heartbeat)
+  )
+
+  if (sessionId && controlEntry && hasControlContent) {
     sections.push({
-      key: 'subagent',
-      node: (
-        <StatusSection
-          defaultCollapsed
-          icon={<Codicon className="text-muted-foreground/70" name="organization" size="0.8rem" />}
-          label={t.statusStack.subagents(subagents.length)}
-        >
-          {subagents.map(item => (
-            // `onOpen` / `canOpen` are hoisted and stable, so the row's memo
-            // can actually bail (MJXHRM-45). They used to be a fresh arrow per
-            // row per render, which made the memo inert.
-            <StatusItemRow canOpen={canOpenSubagentWindow} item={item} key={item.id} onOpen={openSubagentWindow} />
-          ))}
-        </StatusSection>
-      )
+      key: 'session-control',
+      node: <SessionControlSections entry={controlEntry} onSubmit={onSubmit} sessionId={sessionId} />
     })
   }
 
-  // Preview artifacts sit below the collapsible group sections and above the
-  // queue, so they stay visible even when a section collapses (desktop parity).
-  if (sessionId && previews.length > 0) {
+  for (const group of groups) {
+    if (group.type === 'subagent' && sessionId) {
+      sections.push({ key: group.type, node: <SubagentSection key={sessionId} sessionId={sessionId} /> })
+
+      continue
+    }
+
     sections.push({
-      key: 'preview',
+      key: group.type,
       node: (
-        <div className="px-1 py-0.5">
-          {previews.map(item => (
-            <PreviewStatusRow item={item} key={item.id} onDismiss={dismissPreview} />
+        <StatusSection
+          accessory={
+            group.type === 'subagent' ? (
+              <Tip label={<TipKeybindLabel actionId="nav.agents" text={t.statusStack.agents} />}>
+                <Button
+                  className="text-muted-foreground/75 hover:text-foreground/90"
+                  onClick={openAgents}
+                  size="micro"
+                  type="button"
+                  variant="text"
+                >
+                  {t.statusStack.agents}
+                </Button>
+              </Tip>
+            ) : undefined
+          }
+          collapsedIndicator={
+            hasRunningTodo(group) ? (
+              <GlyphSpinner
+                ariaLabel={t.statusStack.running}
+                className="text-[0.8rem] leading-none text-muted-foreground/80"
+                spinner="braille"
+              />
+            ) : undefined
+          }
+          defaultCollapsed={group.type !== 'todo'}
+          icon={<Codicon className="text-muted-foreground/70" name={GROUP_ICON[group.type]} size="0.8rem" />}
+          label={groupLabel(group, t.statusStack)}
+        >
+          {group.items.map(item => (
+            <StatusItemRow
+              item={item}
+              key={item.id}
+              onDismiss={sessionId ? id => dismissBackgroundProcess(sessionId, id) : undefined}
+              onOpen={() => openSubagent(item)}
+              onStop={sessionId ? id => void stopBackgroundProcess(sessionId, id) : undefined}
+            />
           ))}
-        </div>
+        </StatusSection>
       )
     })
   }
@@ -156,45 +297,21 @@ export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackPro
     sections.push({ key: 'queue', node: queue })
   }
 
+  // Artifact links stay visible at the bottom, nearest the composer, even when
+  // the queue or background group expands.
+  if (previewRows.length > 0) {
+    sections.push({ key: 'preview', node: <div className="status-artifacts">{previewRows}</div> })
+  }
+
+  // Micro actions are the TOP-MOST thing in the whole overlay lane — above the
+  // status card, above the billing wall, above everything. They're the only
+  // rows up here you press instead of read, so nothing may ever stack on top
+  // of them. Rendered outside the card (below) so the pills float.
   const visible = sections.length > 0
-  const stackRef = useRef<HTMLDivElement | null>(null)
 
-  // Desktop only. There the stack is out of flow (overlays the thread), so the
-  // composer's measured height never sees it — publish our own bucketed height
-  // so the thread's last-message clearance can add it and the stack never hides
-  // messages. On mobile the stack is IN flow, so it is already inside
-  // --composer-measured-height and adding it again would double-count, leaving
-  // a card-sized hole under the last message.
-  useLayoutEffect(() => {
-    const root = document.documentElement
-    const el = stackRef.current
-
-    if (!visible || !el || IS_MOBILE) {
-      root.style.removeProperty('--status-stack-measured-height')
-
-      return
-    }
-
-    let last = -1
-
-    const sync = () => {
-      const bucket = Math.round(el.getBoundingClientRect().height / 8) * 8
-
-      if (bucket !== last) {
-        last = bucket
-        root.style.setProperty('--status-stack-measured-height', `${bucket}px`)
-      }
-    }
-
-    const observer = new ResizeObserver(sync)
-    observer.observe(el)
-    sync()
-
-    return () => {
-      observer.disconnect()
-      root.style.removeProperty('--status-stack-measured-height')
-    }
-  }, [visible])
+  // No height to publish: the stack is an in-flow child of the composer dock,
+  // so the dock's own measurement (--composer-measured-height) already covers
+  // it and the thread clears both with one number.
 
   if (!visible) {
     return null
@@ -202,33 +319,45 @@ export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackPro
 
   return (
     <div
-      // Desktop: out of flow, hanging off the composer SURFACE, whose top edge
-      // is exactly where the card's fused bottom border belongs. (No
-      // `translate-y` nudge — it used to hang off the composer root and needed
-      // +8px to cross that box's `pt-2` gap; here that would slide it over the
-      // input.)
-      //
-      // Mobile: in flow, so it opens a real gap instead of growing upward over
-      // whatever is there. Out of flow it covered the parallel-chat rail, which
-      // sits in flow immediately above this same edge — the rail is navigation
-      // and has to stay on top, so a file the agent just made hid the way to
-      // switch chats. In flow the order reads top to bottom: rail, card, input.
-      className={cn('z-3 max-h-[40vh] overflow-y-auto', !IS_MOBILE && 'absolute inset-x-0 bottom-full')}
+      // In flow in the dock column, directly above the composer. The dock is
+      // bottom-anchored, so this grows upward over the thread without needing
+      // to be positioned — and it shares the dock's left edge for free.
+      className="flex max-h-[40vh] min-h-0 flex-col overflow-hidden"
+      data-slot="composer-status-stack"
       onPointerDownCapture={() => blurComposerInput()}
-      ref={stackRef}
     >
-      <div
-        className={cn(
-          composerDockCard('top'),
-          'mx-2 overflow-hidden rounded-b-none border-b border-b-transparent pt-0.5',
-          'transition-opacity duration-200 ease-out',
-          scrolledUp ? 'opacity-30 group-hover/composer:opacity-100' : 'opacity-100'
-        )}
-      >
-        {sections.map(section => (
-          <div key={section.key}>{section.node}</div>
-        ))}
-      </div>
+      {/* The card paints the shared --composer-fill (rest / scrolled / focused
+          all match the composer surface by construction); on scroll we only
+          ghost the CONTENT — element opacity on the card would kill the blur.
+          Rounded top, square bottom; the bottom border is TRANSPARENT — the
+          composer surface's visible top border (which sits at a higher z) is the
+          single shared seam, so the two read as one fused capsule. */}
+      {sections.length > 0 && (
+        <div
+          className={cn(
+            composerDockCard('top'),
+            // Inset (mx-2) so the stack reads slightly narrower than the composer
+            // surface below it — the original look.
+            'mx-2 flex min-h-0 max-h-[inherit] shrink flex-col overflow-hidden rounded-b-none border-b border-b-transparent'
+          )}
+        >
+          <div className="min-h-0 overflow-y-auto overscroll-y-contain" data-slot="status-stack-scroll">
+            <div
+              className={cn(
+                'transition-opacity duration-200 ease-out',
+                scrolledUp ? 'opacity-30 group-hover/composer:opacity-100' : 'opacity-100'
+              )}
+              data-slot="status-stack-content"
+            >
+              {sections.map(section => (
+                <div data-slot="status-stack-section" key={section.key}>
+                  {section.node}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

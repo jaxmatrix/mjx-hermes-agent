@@ -1,59 +1,46 @@
 import { describe, expect, it } from 'vitest'
 
-import { getServers, isServerShape, normalizeEntry } from './mcp-servers'
-
-describe('normalizeEntry', () => {
-  it('renames Cursor/Claude `type` to Hermes `transport`', () => {
-    expect(normalizeEntry({ type: 'sse', url: 'https://mcp.example/sse' })).toEqual({
-      transport: 'sse',
-      url: 'https://mcp.example/sse'
-    })
-  })
-
-  it('keeps an explicit `transport` and drops nothing else when both are present', () => {
-    expect(normalizeEntry({ transport: 'http', type: 'sse', url: 'https://x' })).toEqual({
-      transport: 'http',
-      type: 'sse',
-      url: 'https://x'
-    })
-  })
-
-  it('leaves a non-string `type` alone — it is not a transport', () => {
-    expect(normalizeEntry({ type: 3, url: 'https://x' })).toEqual({ type: 3, url: 'https://x' })
-  })
-
-  it('returns entries without `type` untouched', () => {
-    const entry = { args: ['-y', 'server-fs'], command: 'npx' }
-    expect(normalizeEntry(entry)).toBe(entry)
-  })
-})
-
-describe('isServerShape', () => {
-  it('accepts a stdio entry and an http entry', () => {
-    expect(isServerShape({ command: 'npx' })).toBe(true)
-    expect(isServerShape({ url: 'https://mcp.example/mcp' })).toBe(true)
-  })
-
-  it('rejects a name→config map (the wrapper, not an entry)', () => {
-    expect(isServerShape({ linear: { url: 'https://mcp.linear.app/mcp' } })).toBe(false)
-  })
-
-  it('rejects non-string command/url', () => {
-    expect(isServerShape({ command: 42 })).toBe(false)
-    expect(isServerShape({ url: null })).toBe(false)
-  })
-})
+import cases from './mcp-enabled-cases.json'
+import { getServers, serverEnabled } from './mcp-servers'
 
 describe('getServers', () => {
-  it('reads the mcp_servers map', () => {
-    const servers = { linear: { url: 'https://mcp.linear.app/mcp' } }
-    expect(getServers({ mcp_servers: servers })).toBe(servers)
-  })
-
-  it('degrades to {} for absent, null, array and scalar maps', () => {
+  it('returns empty when the map is absent or not a map', () => {
     expect(getServers(null)).toEqual({})
     expect(getServers({})).toEqual({})
-    expect(getServers({ mcp_servers: [] })).toEqual({})
-    expect(getServers({ mcp_servers: 'nope' })).toEqual({})
+    expect(getServers({ mcp_servers: null })).toEqual({})
+    expect(getServers({ mcp_servers: ['files'] })).toEqual({})
+    expect(getServers({ mcp_servers: 'files' })).toEqual({})
+  })
+
+  it('passes object entries through untouched', () => {
+    const servers = { docs: { url: 'https://example.com/mcp' }, files: { args: ['-y', 'pkg'], command: 'npx' } }
+
+    expect(getServers({ mcp_servers: servers })).toEqual(servers)
+  })
+
+  // Field-level junk is the readers' problem, not this filter's — they coerce
+  // and tolerate. Pinned so a later tightening of `isEntry` can't start
+  // dropping entries that merely carry a bad field.
+  it('keeps entries whose fields are junk', () => {
+    const servers = { files: { command: 42, enabled: 'yes' } }
+
+    expect(getServers({ mcp_servers: servers })).toEqual(servers)
+  })
+
+  // A key left without a value in config.yaml parses as `null`, and every
+  // reader (the `enabled` gate, the transport label, the probe) reaches
+  // straight into the entry — so one of these used to take the pane down.
+  it('drops non-object entries and keeps their siblings', () => {
+    const servers = { broken: null, list: ['a'], scalar: 3, working: { command: 'npx' } }
+
+    expect(getServers({ mcp_servers: servers })).toEqual({ working: { command: 'npx' } })
+  })
+})
+
+// The backend reads the same table (tests/tools/test_mcp_enabled_reader.py), so
+// the MCP page and the runtime cannot disagree about whether a server is on.
+describe('serverEnabled', () => {
+  it.each(cases)('%j', ({ on, ...entry }) => {
+    expect(serverEnabled({ command: 'x', ...entry })).toBe(on)
   })
 })

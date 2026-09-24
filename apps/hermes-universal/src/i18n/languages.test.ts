@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  DEFAULT_LOCALE,
-  isLocale,
-  isSupportedLocaleValue,
-  LOCALE_DIRECTION,
-  LOCALE_OPTIONS,
-  localeConfigValue,
-  localeDirection,
-  normalizeLocale
-} from './languages'
+import { DEFAULT_LOCALE, isLocale, isSupportedLocaleValue, normalizeLocale } from './languages'
 
 describe('desktop i18n languages', () => {
   it('normalizes supported locale aliases', () => {
@@ -24,6 +15,13 @@ describe('desktop i18n languages', () => {
     expect(normalizeLocale('zh_HK')).toBe('zh-hant')
     expect(normalizeLocale('ja')).toBe('ja')
     expect(normalizeLocale('ja-JP')).toBe('ja')
+    expect(normalizeLocale('ar')).toBe('ar')
+    expect(normalizeLocale('AR-SA')).toBe('ar')
+    expect(normalizeLocale(' ar_eg ')).toBe('ar')
+    expect(normalizeLocale('ru')).toBe('ru')
+    expect(normalizeLocale('RU-RU')).toBe('ru')
+    expect(normalizeLocale(' ru_ru ')).toBe('ru')
+    expect(normalizeLocale('Русский')).toBe('ru')
   })
 
   it('falls back to English for empty or unsupported values', () => {
@@ -36,43 +34,13 @@ describe('desktop i18n languages', () => {
     expect(isSupportedLocaleValue('zh-CN')).toBe(true)
     expect(isSupportedLocaleValue('zh-TW')).toBe(true)
     expect(isSupportedLocaleValue('ja-JP')).toBe(true)
+    expect(isSupportedLocaleValue('ru-RU')).toBe(true)
     expect(isSupportedLocaleValue('de')).toBe(false)
     expect(isLocale('zh-CN')).toBe(false)
     expect(isLocale('zh')).toBe(true)
     expect(isLocale('zh-hant')).toBe(true)
     expect(isLocale('ja')).toBe(true)
-  })
-
-  it('returns the persisted config value for supported locales', () => {
-    expect(localeConfigValue('en')).toBe('en')
-    expect(localeConfigValue('zh')).toBe('zh')
-    expect(localeConfigValue('zh-hant')).toBe('zh-hant')
-    expect(localeConfigValue('ja')).toBe('ja')
-  })
-})
-
-describe('Arabic locale', () => {
-  it('resolves every regional ar-* tag to the one Arabic catalogue', () => {
-    expect(normalizeLocale('ar')).toBe('ar')
-    expect(normalizeLocale('ar-EG')).toBe('ar')
-    expect(normalizeLocale('ar_SA')).toBe('ar')
-    expect(normalizeLocale('ar-MA')).toBe('ar')
     expect(isLocale('ar')).toBe(true)
-    expect(isLocale('ar-EG')).toBe(false)
-    expect(localeConfigValue('ar')).toBe('ar')
-  })
-
-  it('is the only right-to-left locale', () => {
-    expect(localeDirection('ar')).toBe('rtl')
-
-    for (const locale of ['en', 'ja', 'zh', 'zh-hant'] as const) {
-      expect(localeDirection(locale)).toBe('ltr')
-    }
-  })
-
-  it('gives every locale a direction — a missing one would silently read LTR', () => {
-    for (const option of LOCALE_OPTIONS) {
-      expect(LOCALE_DIRECTION[option.id]).toBeDefined()
-    }
+    expect(isLocale('ru')).toBe(true)
   })
 })

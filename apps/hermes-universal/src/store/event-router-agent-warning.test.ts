@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -19,7 +19,13 @@ vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 
 import { routeGatewayEvent } from '@/store/event-router'
 import { $notifications, clearNotifications } from '@/store/notifications'
-import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
+
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
 
 const event = (payload: Record<string, unknown>, sessionId = 's1'): GatewayEvent =>
   ({ type: 'status.update', session_id: sessionId, payload }) as GatewayEvent
@@ -46,10 +52,10 @@ const LEASE_TIMEOUT_WARNING =
 
 describe('event-router → agent warnings', () => {
   beforeEach(() => {
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
-    ensureSessionSlice('s1')
-    ensureSessionSlice('background')
+    ensureSessionSlice(localSite('s1'))
+    ensureSessionSlice(localSite('background'))
     clearNotifications()
   })
 
@@ -127,6 +133,6 @@ describe('event-router → agent warnings', () => {
     routeGatewayEvent(event({ kind: 'status', text: 'thinking...' }))
     routeGatewayEvent(event({ kind: 'warn', text: OVERFLOW_WARNING }))
 
-    expect($sessionStates.get().s1?.statusLine).toBe(OVERFLOW_WARNING)
+    expect($sessionKeyStates.get().s1?.statusLine).toBe(OVERFLOW_WARNING)
   })
 })

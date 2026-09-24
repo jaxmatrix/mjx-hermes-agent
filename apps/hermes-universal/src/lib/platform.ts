@@ -125,3 +125,25 @@ export const LOCAL_MODE_SUPPORTED = !IS_MOBILE
 // ~/.ssh/config host dropdown are desktop-only, and mobile pastes a PEM into the
 // OS keystore instead.
 export const SSH_LOCAL_FILES_SUPPORTED = !IS_MOBILE
+
+// ---------------------------------------------------------------------------
+// Host-OS predicates, carried over from desktop's lib/platform.ts so its ported
+// code (keybind glyphs, terminal shortcuts, glass) resolves unchanged. Desktop
+// sniffs `navigator` because an Electron renderer has no `process.platform`;
+// here `PLATFORM` already knows, and asking the Tauri runtime beats parsing a
+// user-agent string. They fall back to the sniff only when there is no runtime
+// to ask — plain-browser dev and vitest — which is exactly when PLATFORM is
+// 'unknown' and desktop's original behaviour is the right answer.
+
+const uaMatches = (re: RegExp): boolean =>
+  typeof navigator !== 'undefined' && re.test(navigator.platform || navigator.userAgent || '')
+
+export const isMacPlatform = (): boolean => (IS_TAURI ? IS_MAC : uaMatches(/mac/i))
+
+// Not `/win/i` — that matches the substring inside `darwin`, which is jsdom's
+// default userAgent. Win32 / Windows NT are the real tokens.
+export const isWindowsPlatform = (): boolean =>
+  IS_TAURI ? PLATFORM === 'windows' : uaMatches(/win32|windows/i)
+
+export const isLinuxPlatform = (): boolean =>
+  IS_TAURI ? PLATFORM === 'linux' : uaMatches(/linux/i)

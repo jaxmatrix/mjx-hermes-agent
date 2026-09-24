@@ -75,9 +75,9 @@ export const MobileWithBubbles: Story = {
   decorators: [
     Story => {
       $chatBubbles.set([
-        { storedSessionId: 'session-a' },
-        { storedSessionId: 'session-b' },
-        { storedSessionId: 'session-c' }
+        { connectionId: 'local', profile: 'default', storedSessionId: 'session-a', tabKey: 'session-a' },
+        { connectionId: 'local', profile: 'default', storedSessionId: 'session-b', tabKey: 'session-b' },
+        { connectionId: 'local', profile: 'default', storedSessionId: 'session-c', tabKey: 'session-c' }
       ])
 
       return <Story />

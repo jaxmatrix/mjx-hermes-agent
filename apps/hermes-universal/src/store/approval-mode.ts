@@ -1,9 +1,4 @@
-import { atom } from '@/store/atom'
-
-// Ported from apps/desktop/src/store/approval-mode.ts. Backed by the gateway's
-// `config.get`/`config.set` RPCs (key `approvals.mode`) — same gateway backend.
-// The `profile` argument keys the local cache only (the config is gateway-global);
-// callers pass the active profile so a switch shows the right mode.
+import { atom } from 'nanostores'
 
 export type ApprovalMode = 'manual' | 'off' | 'smart'
 export type ApprovalModeRequester = (method: string, params?: Record<string, unknown>) => Promise<unknown>

@@ -1,165 +1,93 @@
-import { type ReactNode, useEffect } from 'react'
+import { type CSSProperties, type ReactNode, useEffect } from 'react'
 
+import { TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
+import { TitlebarIcon } from '@/app/shell/titlebar-icon'
 import { Button } from '@/components/ui/button'
-import { Codicon } from '@/components/ui/codicon'
+import { translateNow } from '@/i18n'
+import { ESCAPE_PRIORITY, isTopEscapeLayer, pushEscapeLayer } from '@/lib/escape-layers'
 import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
 
-// Ported from apps/desktop/src/app/overlays/overlay-view.tsx. The full-screen
-// modal card that hosts an overlay view (settings, …). Adapted for Tauri: the
-// titlebar strip uses `data-tauri-drag-region` instead of the Electron
-// `-webkit-app-region` classes, and haptics/close-label come from the universal
-// seams.
-
-// `overlay` (default) is the floating modal card over the chat backdrop.
-// `fullscreen` fills its parent with no backdrop / inset / card chrome / close
-// button — used when the view IS the whole surface (a native activity screen on
-// Android, see `app/activity-screen.tsx`), which supplies its own top bar + Home.
-// `fullbleed` fills the whole window edge-to-edge (no backdrop / inset / card) but
-// KEEPS the close button + Esc — used on iOS, where Settings/Command Center open
-// as a full-screen surface on top of the primary window (iPadOS can't present a
-// native UIScene modally on top, so this in-app surface delivers that UX; MJX-176).
-export type OverlayVariant = 'fullscreen' | 'overlay' | 'fullbleed'
+// Shared top clearance for overlay content that sits *beside* the floating
+// close button (which is absolute at `0.1875rem + titlebar/2`, -translate-y-1/2,
+// so it costs no layout space): a Panel's header and the split layout's left
+// sidebar links. They ride up next to the X on the same line across every
+// overlay (settings, system, agents, cron, …) — change it here, not per-surface.
+// Main content sits *under* the X (top-right) and keeps its own taller pad.
+export const OVERLAY_TOP_CLEARANCE = 'pt-[calc(var(--titlebar-height)/2-0.4375rem)]'
 
 interface OverlayViewProps {
   children: ReactNode
   onClose: () => void
   closeLabel?: string
   contentClassName?: string
+  /** Chrome pinned to the card's top edge, horizontally centered and riding
+   *  the border half-in half-out (e.g. the Settings search pill). Rendered
+   *  beside the card, not inside it — the card clips its own overflow. */
+  edgeBadge?: ReactNode
   headerContent?: ReactNode
   rootClassName?: string
-  variant?: OverlayVariant
+  /** Controls rendered on the close button's row, to its left. They ride the
+   *  titlebar strip, so keep them titlebar-sized and quiet. */
+  titlebarActions?: ReactNode
 }
 
 export function OverlayView({
   children,
   onClose,
-  closeLabel = 'Close',
+  closeLabel = translateNow('common.close'),
   contentClassName,
+  edgeBadge,
   headerContent,
   rootClassName,
-  variant = 'overlay'
+  titlebarActions
 }: OverlayViewProps) {
-  // Settings, the palette, the agents tree: every one of these is drawn ABOVE
-  // the in-app browser's guest, which the compositor paints above the whole DOM
-  // (MJXHRM-447).
-  useGuestOcclusion('overlay')
-
-  const fullscreen = variant === 'fullscreen'
-  const fullBleed = variant === 'fullbleed'
-
   const closeOverlay = () => {
-    void triggerHaptic('selection')
+    triggerHaptic('close')
     onClose()
   }
 
-  // Esc dismisses the overlay. Nested Radix dialogs stop propagation themselves,
-  // so opening (e.g.) a select inside Settings still closes the popover first.
+  // Esc dismisses every OverlayView-based overlay. Nested Radix dialogs
+  // stop propagation themselves, so opening (e.g.) the model picker inside
+  // Settings still closes the picker first instead of the underlying overlay.
   useEffect(() => {
+    const releaseLayer = pushEscapeLayer(ESCAPE_PRIORITY.overlay)
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) {
+      if (event.key !== 'Escape' || event.defaultPrevented || !isTopEscapeLayer(ESCAPE_PRIORITY.overlay)) {
         return
       }
 
       event.preventDefault()
-      void triggerHaptic('selection')
+      triggerHaptic('close')
       onClose()
     }
 
     window.addEventListener('keydown', onKeyDown)
 
-    return () => window.removeEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      releaseLayer()
+    }
   }, [onClose])
-
-  // Fullscreen: no backdrop, inset, card chrome, drag strip or close button —
-  // just fill the parent. The hosting activity screen draws its own top bar +
-  // Home button, so the split-layout columns still clear the (mobile) titlebar
-  // height the same way and their backgrounds run flush to the top.
-  if (fullscreen) {
-    return (
-      <div
-        className={cn('flex h-full min-h-0 flex-col overflow-hidden bg-(--ui-chat-surface-background)', rootClassName)}
-      >
-        <div className={cn('min-h-0 flex flex-1 flex-col', contentClassName)}>{children}</div>
-      </div>
-    )
-  }
-
-  // Full-bleed: edge-to-edge over the whole window (no backdrop, inset or card
-  // chrome) but keeps a Back button + Esc, so it reads as a full-screen surface on
-  // top of the primary window that dismisses back to it. Honours the device safe
-  // areas (status-bar / notch / home-indicator) the same way the Android activity
-  // screen does (`app/activity-screen.tsx`): the header clears the top inset, the
-  // content clears top + bottom, and the root clears the horizontal (landscape)
-  // insets. `--safe-area-inset-*` are published to :root by `lib/safe-area.ts`.
-  if (fullBleed) {
-    return (
-      <div
-        className={cn(
-          'fixed inset-0 z-50 flex h-full min-h-0 flex-col overflow-hidden bg-(--ui-chat-surface-background)',
-          rootClassName
-        )}
-        style={{
-          paddingLeft: 'var(--safe-area-inset-left)',
-          paddingRight: 'var(--safe-area-inset-right)'
-        }}
-      >
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-10"
-          data-tauri-drag-region
-          style={{ height: 'calc(var(--safe-area-inset-top) + var(--titlebar-height) + 0.1875rem)' }}
-        >
-          {headerContent && (
-            <div
-              // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left
-              className="pointer-events-auto absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
-              style={{ top: 'calc(var(--safe-area-inset-top) + 0.5rem + var(--titlebar-height) / 2)' }}
-            >
-              {headerContent}
-            </div>
-          )}
-
-          {/* Full-bleed has no close ✕ — a Back chevron returns to the route you
-              came from, which is what `onClose` actually does here
-              (`closeOverlayToPreviousRoute`), and what every other phone surface
-              puts in this corner. Icon-only: the coarse-pointer floor in
-              styles.css keeps it a 44px target, and the star map's timeline
-              scrubber shares this band. */}
-          <Button
-            aria-label={closeLabel}
-            className="pointer-events-auto absolute start-3 -translate-y-1/2 text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
-            onClick={closeOverlay}
-            size="sm"
-            style={{ top: 'calc(var(--safe-area-inset-top) + 0.1875rem + var(--titlebar-height) / 2)' }}
-            variant="ghost"
-          >
-            <Codicon className="rtl:-scale-x-100" name="chevron-left" size="1.4rem" />
-          </Button>
-        </div>
-
-        <div
-          className={cn('min-h-0 flex flex-1 flex-col', contentClassName)}
-          style={{
-            paddingTop: 'var(--safe-area-inset-top)',
-            paddingBottom: 'var(--safe-area-inset-bottom)'
-          }}
-        >
-          {children}
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div
       className={cn(
         'fixed inset-0 z-50 bg-black/22 backdrop-blur-[0.125rem]',
-        // Equidistant inset on every side, driven by the titlebar height so the
-        // card clears the OS traffic-lights vertically.
+        // Equidistant inset on every side. The top value is driven by the
+        // titlebar height so the card clears the OS traffic-lights vertically;
+        // since the card top already sits below them, the left needs no extra
+        // inset — keeping all sides equal so the card is ~full-width at any size.
         'p-[calc(var(--titlebar-height)+0.625rem)]',
         'sm:p-[calc(var(--titlebar-height)+0.875rem)]'
       )}
+      // Every OverlayView-based overlay (settings, command-center, agents, cron,
+      // profiles, star map, …) covers the chat while the composer stays mounted
+      // beneath it. This marker tells `composerFocusBlockedBySurface` to stand
+      // the global type-to-focus / soft `/` / Enter down, so keystrokes don't
+      // leak into the hidden composer (and the overlay's own bare-key shortcuts,
+      // e.g. star map's Space, keep working).
       data-overlay-surface=""
       onClick={event => {
         if (event.target === event.currentTarget) {
@@ -167,42 +95,56 @@ export function OverlayView({
         }
       }}
       role="presentation"
+      // Window-level chrome: overlays always clear the real titlebar. The
+      // contrib shell zeroes --titlebar-height for CONTENT areas (panes sit
+      // below its in-flow title bar), and CSS vars inherit through the DOM —
+      // so a fixed overlay mounted inside a zone would read 0 and bleed to
+      // the edges. Re-pin the real height at the overlay root.
+      style={{ '--titlebar-height': `${TITLEBAR_HEIGHT}px` } as CSSProperties}
     >
-      <div
-        className={cn(
-          'relative flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-(--ui-stroke-secondary) bg-(--ui-chat-surface-background) shadow-md',
-          rootClassName
-        )}
-        // Raised above the field: it may thin with the tint but never past
-        // reading, or Settings and the Command Center go see-through over the
-        // transcript at high tints.
-        data-glass-raised=""
-      >
+      <div className="relative h-full min-h-0">
         <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(var(--titlebar-height)+0.1875rem)]"
-          data-tauri-drag-region
-        >
-          {headerContent && (
-            // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left
-            <div className="pointer-events-auto absolute left-1/2 top-[calc(0.5rem+var(--titlebar-height)/2)] -translate-x-1/2 -translate-y-1/2">
-              {headerContent}
-            </div>
+          className={cn(
+            'relative flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-(--ui-stroke-secondary) bg-(--ui-chat-surface-background) shadow-md',
+            rootClassName
           )}
+          // Marks the card as a RAISED surface for window glass: while the field
+          // behind it thins to show the desktop, this card stays near-opaque
+          // (see the [data-glass-raised] rules in styles.css). Inert otherwise.
+          data-glass-raised=""
+        >
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(var(--titlebar-height)+0.1875rem)] [-webkit-app-region:drag]">
+            {headerContent && (
+              <div className="pointer-events-auto absolute start-1/2 top-[calc(0.5rem+var(--titlebar-height)/2)] -translate-x-1/2 -translate-y-1/2 [-webkit-app-region:no-drag]">
+                {headerContent}
+              </div>
+            )}
 
-          <Button
-            aria-label={closeLabel}
-            className="pointer-events-auto absolute end-3 top-[calc(0.1875rem+var(--titlebar-height)/2)] -translate-y-1/2 text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
-            onClick={closeOverlay}
-            size="icon-titlebar"
-            variant="ghost"
-          >
-            <Codicon name="close" size="1rem" />
-          </Button>
+            <div className="pointer-events-auto absolute end-3 top-[calc(0.1875rem+var(--titlebar-height)/2)] flex -translate-y-1/2 items-center gap-1.5 [-webkit-app-region:no-drag]">
+              {titlebarActions}
+
+              <Button
+                aria-label={closeLabel}
+                className="text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
+                onClick={closeOverlay}
+                size="icon-titlebar"
+                variant="ghost"
+              >
+                <TitlebarIcon name="close" />
+              </Button>
+            </div>
+          </div>
+
+          {/* No top padding here: the split-layout columns own their own
+              titlebar clearance so their backgrounds run flush to the card top
+              (otherwise the card surface shows as a gap above the sidebar). */}
+          <div className={cn('min-h-0 flex flex-1 flex-col', contentClassName)}>{children}</div>
         </div>
 
-        {/* No top padding here: the split-layout columns own their own titlebar
-            clearance so their backgrounds run flush to the card top. */}
-        <div className={cn('min-h-0 flex flex-1 flex-col', contentClassName)}>{children}</div>
+        {/* Sibling of the card, not a child: the card clips its own overflow
+            (rounded corners), and the badge deliberately straddles the top
+            border — half above, half below. */}
+        {edgeBadge && <div className="absolute start-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">{edgeBadge}</div>}
       </div>
     </div>
   )

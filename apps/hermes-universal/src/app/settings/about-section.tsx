@@ -20,7 +20,7 @@ import {
   $appUpdateProgress,
   runUpdateCheck,
   runUpdateInstall
-} from '@/store/updates'
+} from '@/store/tauri-app-update'
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
 

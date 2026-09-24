@@ -64,6 +64,7 @@ mod tests {
             "instance-2",
             "tile-abc123",
             "tile-session-uuid_1",
+            "browser-url-browser-abc",
             "sat-hud",
             "screen",
         ] {

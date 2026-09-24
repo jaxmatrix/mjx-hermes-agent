@@ -3,8 +3,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { artifactContentHash, type ArtifactDetection, type ArtifactKind, artifactSlug } from '@/lib/artifact-detect'
 import { IS_TAURI } from '@/lib/platform'
 import { atom } from '@/store/atom'
+import { LOCAL_SESSION_SCOPE, parseSessionKey } from '@/store/session-state-types'
 
-import { closeArtifactPreviewTabs, openArtifactPreviewTab } from './preview'
+import { closeArtifactPreviewTabs, openPreview, type PreviewTarget } from './preview'
 
 /**
  * ARTIFACT REGISTRY — substantial generated content (HTML pages, large SVGs,
@@ -203,7 +204,13 @@ export function upsertArtifact(
   return { artifactId: record.id, record, versionAdded: true }
 }
 
-/** Open an artifact in the right pane at `versionIndex` (default: newest).
+/** A rail tab for an artifact references the registry by id rather than
+ *  carrying content, so an open tab follows the artifact as it gains versions. */
+export function artifactPreviewTarget(record: ArtifactRecord): PreviewTarget {
+  return { kind: 'artifact', label: record.title, source: record.id, url: record.id }
+}
+
+/** Open an artifact in the right rail at `versionIndex` (default: newest).
  *  User-initiated only (card click) — never called from streaming, per the
  *  no-hijack rule. */
 export function openArtifact(artifactId: string, versionIndex?: number) {
@@ -214,7 +221,7 @@ export function openArtifact(artifactId: string, versionIndex?: number) {
   }
 
   selectArtifactVersion(artifactId, versionIndex ?? record.versions.length - 1)
-  openArtifactPreviewTab(record.id, record.title)
+  openPreview(artifactPreviewTarget(record))
 }
 
 export function selectArtifactVersion(artifactId: string, versionIndex: number) {
@@ -278,5 +285,38 @@ export async function releaseStagedArtifact(documentId: string): Promise<void> {
 export function clearArtifactRegistry() {
   $artifactRegistry.set({})
   $artifactVersionSelection.set({})
+  closeArtifactPreviewTabs()
+}
+
+/**
+ * Drop one connection's artifacts, keeping the ones an open tab still shows
+ * (MJXHRM-591, invariant 37).
+ *
+ * The registry is keyed by the SCOPED session key, so "whose are these?" is a
+ * question the key answers. A switch used to clear the lot, which was the only
+ * honest thing to do while the key was a bare stored id that another backend
+ * could recycle — and which cost every bound tab the artifacts it was showing.
+ */
+export function dropArtifactsForConnection(connectionId: null | string, keep: ReadonlySet<string>): void {
+  const leaving = connectionId ?? LOCAL_SESSION_SCOPE
+  const registry = $artifactRegistry.get()
+  const kept: ArtifactRegistry = {}
+  let dropped = false
+
+  for (const [sessionKey, records] of Object.entries(registry)) {
+    if (!keep.has(sessionKey) && parseSessionKey(sessionKey).connectionId === leaving) {
+      dropped = true
+
+      continue
+    }
+
+    kept[sessionKey] = records
+  }
+
+  if (!dropped) {
+    return
+  }
+
+  $artifactRegistry.set(kept)
   closeArtifactPreviewTabs()
 }

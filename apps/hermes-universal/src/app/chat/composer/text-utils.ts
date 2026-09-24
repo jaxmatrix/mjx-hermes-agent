@@ -4,10 +4,10 @@ import { $reactionsEnabled } from '@/store/reactions-enabled'
 import { serializeTextBefore } from './rich-editor'
 
 export interface TriggerState {
-  /** True for a `/` typed mid-message — an inline skill reference in prose
-   *  rather than a command invocation. Arg completion doesn't apply. */
+  /** True for a `/` typed mid-message — an inline skill/command reference in
+   *  prose rather than a command invocation. Arg completion doesn't apply. */
   inline?: boolean
-  kind: ':' | '@' | '/'
+  kind: '@' | '/' | ':'
   query: string
   /** The `@kind:` prefix the user scoped the browse to, when there is one. */
   scope?: DirectiveScope
@@ -26,45 +26,48 @@ export type DirectiveScope = (typeof DIRECTIVE_SCOPES)[number]
 // after it is the value being browsed. Parsing that prefix off the query is
 // what lets the rest of the composer treat it as the BROWSE MODE it is rather
 // than characters the user has to maintain by hand — Tab-descending has to
-// carry it down, Backspace has to drop it whole, and a paste landing on it has
+// carry it down, Backspace has to drop it whole, and a chip landing on it has
 // to consume it.
 const AT_SCOPE_RE = new RegExp(`^(${DIRECTIVE_SCOPES.join('|')}):(.*)$`)
 
 // `@` triggers stop at the first whitespace — `@file:path` and `@diff` are
-// single tokens, and a path is part of that token: `@./src/`, `@~/Desktop/`
+// single tokens, and a path is part of that token: `@./src/`, `@~/Desktop/`,
 // and `@file:src/foo` all have to keep the popover live while the user walks
-// into subdirectories. Excluding `/` from the query class ended the token at
-// the first separator, which is exactly the "can't browse into a folder" bug.
-// `/` triggers keep going so the popover stays live while the user types args
-// (`/personality alic` → arg completer suggests `alice`). Restricting the
-// slash command name to `[a-zA-Z][\w-]*` avoids matching file paths like
-// `src/foo/bar`.
+// into subdirectories. Excluding `/` from the query class would end the token
+// at the first separator, which is exactly the "can't browse into a folder"
+// bug. Restricting the slash command name to `[a-zA-Z][\w-]*` avoids
+// matching file paths like `src/foo/bar`.
 //
-// A `/` fires in two shapes, because a slash means two different things
+// `/` triggers fire in two shapes, because a slash means two different things
 // depending on where it sits:
 //
-//  - At position 0 it is a COMMAND invocation the app executes (the backend's
-//    own matcher is `^`-anchored too). The popover stays live past the command
-//    name so arg completion works (`/personality alic` → `alice`).
-//  - After whitespace it is an inline REFERENCE dropped into prose ("clean this
-//    up with /clean"). The text submits as an ordinary message, so there are no
-//    args to complete — the trigger is a single token ending at the next space,
-//    exactly like `@`. The completion source filters to SKILLS there: a
-//    built-in like `/new` acts on the app and means nothing mid-sentence.
+//  - At position 0 it's a COMMAND invocation the app executes (SLASH_COMMAND_RE
+//    is `^`-anchored, and so is the backend's). The popover stays live past the
+//    command name so arg completion works (`/personality alic` → `alice`).
+//  - After whitespace it's an inline REFERENCE the user is dropping into prose
+//    ("clean this up with /clean"). The text submits as an ordinary message, so
+//    there are no args to complete — the trigger is a single token that ends at
+//    the next space, exactly like `@`.
 //
 // Only the FIRST slash can be an invocation, so the inline shape is tested
 // first: the command regex's argument tail (`(?:\s+\S*)*`) happily swallows a
-// later `/skill` as if it were an argument, which would kill completion for
-// every slash after a leading command (`/work /cle` → nothing).
+// later `/skill` as if it were an argument, which killed completion for every
+// slash after a leading command (`/work /cle` → nothing).
 //
-// `\uFFFC` is the object-replacement character a chip serializes to, so a
-// trigger typed straight after a chip still detects.
+// The inline shape is what makes skills reachable anywhere in a prompt. Both
+// shapes need the trailing `$`: detection runs against the text BEFORE the
+// caret, so the match must end where the user is typing.
+//
+// U+FFFC is the placeholder textBeforeCaret emits for a committed chip. A chip
+// edge is a token boundary just like whitespace (upstream assistant-ui's
+// Lexical DirectivePlugin gets the same semantics from node boundaries), so
+// `@` or `/` typed immediately after a pill still opens the popover.
 const AT_TRIGGER_RE = /(?:^|[\s\uFFFC])(@)([^\s@\uFFFC]*)$/
-const SLASH_TRIGGER_RE = /^(\/)((?:[a-zA-Z][\w-]*(?:\s+\S*)*)?)$/
+const SLASH_COMMAND_TRIGGER_RE = /^(\/)((?:[a-zA-Z][\w-]*(?:\s+\S*)*)?)$/
 const SLASH_INLINE_TRIGGER_RE = /[\s\uFFFC](\/)([a-zA-Z][\w-]*)?$/
-// `:joy` — two characters minimum, so a bare `:` (or a `12:30`) never opens the
-// popover. `\uFFFC` is the object-replacement character a chip serializes to,
-// which is what lets `@file:x :jo` still trigger after a chip.
+// `:joy` → emoji completions, Slack-style. Boundary-anchored so a mid-word
+// colon (`localhost:8080`, `note:`) never fires; two chars minimum so a bare
+// `:` or `:D` smiley doesn't open a popover the user didn't ask for.
 const EMOJI_TRIGGER_RE = /(?:^|[\s\uFFFC])(:)([a-zA-Z0-9_+-]{2,})$/
 
 const INLINE_IMAGE_SRC_RE = /<img\b[^>]*?\bsrc\s*=\s*["'](data:image\/[^"']+)["']/gi
@@ -153,13 +156,14 @@ export function extractClipboardImageBlobs(clipboard: DataTransfer): Blob[] {
 /** Caret-anchored text before the cursor, or null if the selection isn't a
  *  collapsed caret inside `editor`.
  *
- *  Serialized, not `Range.toString()`: the raw string leaks each chip's LABEL
- *  text into what the trigger regexes see, and a `/work` pill whose label
- *  serialized into this text made the `^`-anchored command regex treat
- *  everything after it as that command's argument — silencing the `@` popover
- *  for the rest of the message. Each chip contributes an object-replacement
- *  placeholder instead, and <br> a newline, so a trigger at the start of a
- *  wrapped line still detects. */
+ *  Chips are ATOMIC to trigger detection: a committed pill must not leak its
+ *  label text into the string the trigger regexes see. A `/work` pill whose
+ *  label serialized into this text made the `^`-anchored command regex treat
+ *  everything after it as that command's argument — which silenced the `@`
+ *  popover for the rest of the message (`/work @Desk` → no trigger → the
+ *  typed path never chips and submits as plain text). Each chip contributes
+ *  an object-replacement placeholder instead, and <br> contributes a newline
+ *  so a trigger at the start of a wrapped line still detects. */
 export function textBeforeCaret(editor: HTMLDivElement): string | null {
   const sel = window.getSelection()
   const range = sel?.rangeCount ? sel.getRangeAt(0) : null
@@ -180,33 +184,9 @@ export function openDirectiveScope(editor: HTMLDivElement): number {
   return trigger?.kind === '@' && trigger.scope && !trigger.value ? trigger.tokenLength : 0
 }
 
-/**
- * Cheap precondition for `detectTrigger`: could this text hold a trigger at all?
- *
- * The caret-anchored detection above costs a recursive chip-aware walk plus DOM
- * range work, so callers screen the editor's raw `textContent` first. That
- * screen is knowledge about WHICH characters can start a trigger, and it lives
- * here — beside the regexes — because the copy that used to live in the caller
- * listed only `@` and `/`. When `:` joined `TriggerState` the screen was never
- * widened, so every emoji completion was discarded before `detectTrigger` ran:
- * the feature was reachable only in a draft that happened to contain an
- * unrelated `@` or `/`.
- *
- * `:` is admitted only while the emoji surface is on, so the default (flag off)
- * pays exactly the same two `includes` as before — a colon is far too common in
- * prose to widen the screen for a feature that cannot fire.
- */
-export function mayContainTrigger(rawText: string): boolean {
-  if (rawText.includes('@') || rawText.includes('/')) {
-    return true
-  }
-
-  return rawText.includes(':') && $reactionsEnabled.get()
-}
-
 export function detectTrigger(textBefore: string): TriggerState | null {
   // An inline `/skill` is a reference dropped into prose, so it carries no args
-  // and the whole match is the token the chip replaces. Checked BEFORE the
+  // and the whole match is the token the chip replaces. Checked before the
   // anchored command shape so a second slash isn't mistaken for the first
   // command's argument.
   const inline = SLASH_INLINE_TRIGGER_RE.exec(textBefore)
@@ -217,10 +197,10 @@ export function detectTrigger(textBefore: string): TriggerState | null {
     return { inline: true, kind: '/', query, tokenLength: 1 + query.length, value: query }
   }
 
-  const slash = SLASH_TRIGGER_RE.exec(textBefore)
+  const command = SLASH_COMMAND_TRIGGER_RE.exec(textBefore)
 
-  if (slash) {
-    return { kind: '/', query: slash[2], tokenLength: 1 + slash[2].length, value: slash[2] }
+  if (command) {
+    return { kind: '/', query: command[2], tokenLength: 1 + command[2].length, value: command[2] }
   }
 
   const at = AT_TRIGGER_RE.exec(textBefore)
@@ -239,8 +219,8 @@ export function detectTrigger(textBefore: string): TriggerState | null {
   }
 
   // After `@` so a directive starter's colon (`@file:`) stays an `@` query.
-  // Rides the reactions opt-in (Settings → Appearance): the picker and the
-  // completions are one "emoji features" surface, off by default together.
+  // Rides the reactions opt-in (Settings → Appearance) — both are one
+  // "emoji features" surface, off by default.
   const emoji = $reactionsEnabled.get() ? EMOJI_TRIGGER_RE.exec(textBefore) : null
 
   if (emoji) {

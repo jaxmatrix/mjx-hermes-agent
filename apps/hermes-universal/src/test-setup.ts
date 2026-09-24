@@ -2,14 +2,27 @@
 // toHaveClass, …) to Vitest's expect.
 import '@testing-library/jest-dom/vitest'
 
-import { configureQueryClientForTests } from '@/lib/query-client'
+import { queryClient } from '@/lib/query-client'
 
 // A dozen test files render against the app's SHARED React Query client — they
 // have to, because the cache writers close over that instance. Its production
 // defaults carry React Query's retry ladder, which stretches any REJECTED query
 // to ~7s and blows Vitest's 5s testTimeout, so no test could assert a
 // failed-load state. Disabled once here, where no file can forget it.
-configureQueryClientForTests()
+//
+// Applied inline rather than through a `configureQueryClientForTests` helper in
+// lib/query-client.ts: that module is desktop's, byte-identical, and has no such
+// export — the helper was universal's and the resync overwrote it. Keeping the
+// override in this file (which is universal's own) is what stops query-client.ts
+// becoming a merge target forever over four lines of test config.
+queryClient.setDefaultOptions({
+  queries: {
+    refetchOnWindowFocus: false,
+    // The whole point: surface the rejection on the first attempt.
+    retry: false,
+    staleTime: 60_000
+  }
+})
 
 // Node 26 defines its own `localStorage` accessor on the global object, which
 // returns `undefined` unless the process was started with --localstorage-file
@@ -80,4 +93,21 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     observe() {}
     unobserve() {}
   } as unknown as typeof ResizeObserver
+}
+
+// Same story for IntersectionObserver — sticky-prompt clip and pet thumbs
+// construct one in a layout effect. Tests that need real intersection delivery
+// stub their own callbacks; ordinary mounts only need the lifecycle.
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = class {
+    readonly root = null
+    readonly rootMargin = '0px'
+    readonly thresholds = [0]
+    disconnect() {}
+    observe() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+    unobserve() {}
+  } as unknown as typeof IntersectionObserver
 }

@@ -27,11 +27,11 @@ import { DRAFT_TILE_KEY } from '@/lib/pane-ids'
 import { IS_MOBILE } from '@/lib/platform'
 import { navigateTo } from '@/lib/route-nav'
 import { newChatBubble } from '@/store/chat-bubbles'
-import { NEW_SESSION_FLASH_EVENT } from '@/store/layout'
+import { NEW_SESSION_FLASH_EVENT } from '@/store/pane-geometry'
 import { normalizeProfileKey } from '@/store/profile'
 import { setActiveProfile } from '@/store/profiles'
-import { newSession, startSessionInWorkspace } from '@/store/session'
-import { focusWorkspaceSession, newSessionTab } from '@/store/session-states'
+import { focusWorkspaceSession, newSessionTab } from '@/store/session-key-states'
+import { newSession, startSessionInWorkspace } from '@/store/session-lifecycle'
 
 /**
  * Land on the chat that was just created: route to it, front its pane and claim

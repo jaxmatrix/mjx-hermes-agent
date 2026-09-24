@@ -2,16 +2,16 @@ import { atom } from '@/store/atom'
 
 import { $connectionReady } from './connection-ready'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from './profile'
+import { focusOpenSession, openSessionTab } from './session-key-states'
 import {
   adoptLiveSession,
-  knownSessionProfile,
+  knownSessionProfileFor,
   markPluginOwnedSession,
   openSession,
   rememberSessionProfile,
   resolveSessionProfile
-} from './session'
-import { $sessionStates, runtimeKeyForStoredSession } from './session-state-types'
-import { focusOpenSession, openSessionTab } from './session-states'
+} from './session-lifecycle'
+import { $sessionKeyStates, runtimeKeyForStoredSession } from './session-state-types'
 import { awaitSessionPainted, SessionWakeError } from './transcript-cache-sync'
 
 /**
@@ -148,7 +148,7 @@ export async function warmProfile(profile: null | string, timeoutMs = PROFILE_SW
 function canonicalStoredId(storedSessionId: string): string {
   const key = runtimeKeyForStoredSession(storedSessionId)
 
-  return (key ? $sessionStates.get()[key]?.storedSessionId : null) ?? storedSessionId
+  return (key ? $sessionKeyStates.get()[key]?.storedSessionId : null) ?? storedSessionId
 }
 
 export async function openPluginSession(
@@ -180,7 +180,7 @@ export async function openPluginSession(
   }
 
   const owner =
-    options.profile ?? knownSessionProfile(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))
+    options.profile ?? knownSessionProfileFor(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))
 
   if (owner && normalizeProfileKey(owner) !== $activeGatewayProfile.get() && !(await warmProfile(owner))) {
     return { error: 'profile-unavailable', ok: false }

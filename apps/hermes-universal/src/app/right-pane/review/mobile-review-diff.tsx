@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { FileDiffPanel } from '@/components/chat/diff-lines'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
@@ -6,13 +8,7 @@ import type { HermesReviewFile } from '@/global'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import {
-  $reviewDiff,
-  $reviewDiffLoading,
-  $reviewDiffWrap,
-  selectReviewFile,
-  toggleReviewDiffWrap
-} from '@/store/review'
+import { $reviewDiff, $reviewDiffLoading, selectReviewFile } from '@/store/review'
 
 // The full-screen diff. On a phone the list and the diff can't share a viewport,
 // so this is a detail view over the list rather than the desktop's stacked panel.
@@ -50,7 +46,7 @@ export function MobileReviewDiff({
   const m = t.mobileReview
   const diff = useStore($reviewDiff)
   const loading = useStore($reviewDiffLoading)
-  const wrap = useStore($reviewDiffWrap)
+  const [wrap, setWrap] = useState(false)
 
   const index = files.findIndex(entry => entry.path === file.path)
   const previous = index > 0 ? files[index - 1] : null
@@ -106,7 +102,7 @@ export function MobileReviewDiff({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className={cn('min-h-0 flex-1 overflow-hidden', wrap && '[&_pre]:whitespace-pre-wrap [&_pre]:break-all')}>
         {loading && !diff ? (
           <div className="p-4 text-xs text-muted-foreground">{m.loadingDiff}</div>
         ) : diff ? (
@@ -121,7 +117,6 @@ export function MobileReviewDiff({
             path={file.path}
             showLineNumbers
             virtualized
-            wrap={wrap}
           />
         ) : (
           <div className="p-4 text-xs text-muted-foreground">{c.noDiff}</div>
@@ -140,15 +135,11 @@ export function MobileReviewDiff({
           <FooterAction icon="discard" label={c.revert} onClick={() => onRevert(file)} tone="danger" />
           <FooterAction icon="go-to-file" label={c.openFile} onClick={() => onOpenInEditor(file)} />
           <FooterAction icon="comment-discussion" label={m.askHermes} onClick={() => onAskHermes(file)} />
-          {/* Wrap belongs beside the actions rather than in the header: it is
-              something you reach for mid-read, having just hit a line that runs
-              off the screen, and the header is at the other end of the phone
-              from your thumb. */}
           <FooterAction
             active={wrap}
             icon="word-wrap"
             label={wrap ? m.unwrap : m.wrap}
-            onClick={toggleReviewDiffWrap}
+            onClick={() => setWrap(value => !value)}
           />
         </div>
       </footer>

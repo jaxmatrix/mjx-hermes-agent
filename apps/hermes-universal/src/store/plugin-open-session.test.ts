@@ -23,21 +23,21 @@ vi.mock('./transcript-cache-sync', async importOriginal => {
   return { ...actual, awaitSessionPainted: (...args: unknown[]) => awaitSessionPainted(...args) }
 })
 
-vi.mock('./session', () => ({
+vi.mock('./session-lifecycle', () => ({
   adoptLiveSession: (input: unknown) => adoptLiveSession(input),
-  knownSessionProfile: (id: string) => knownSessionProfile(id),
+  knownSessionProfileFor: (id: string) => knownSessionProfile(id),
   markPluginOwnedSession: (id: string) => markPluginOwnedSession(id),
   openSession: (id: string) => openSession(id),
   rememberSessionProfile: (id: string, owner: string) => rememberSessionProfile(id, owner),
   resolveSessionProfile: () => resolveSessionProfile()
 }))
 
-vi.mock('./session-states', () => ({
+vi.mock('./session-key-states', () => ({
   focusOpenSession: (id: string) => focusOpenSession(id),
   openSessionTab: (id: string, focus?: boolean) => openSessionTab(id, focus)
 }))
 
-// PARTIAL, deliberately: `transcript-cache-sync` subscribes to `$sessionStates`
+// PARTIAL, deliberately: `transcript-cache-sync` subscribes to `$sessionKeyStates`
 // at module scope and other modules read `$activeSessionKey` from here, so a
 // wholesale mock would silently remove them (recipe 6.4's trap).
 vi.mock('./session-state-types', async importOriginal => ({
@@ -53,6 +53,8 @@ vi.mock('./profile', async () => {
 
   return {
     $activeGatewayProfile,
+    // layout.ts reads this at import when preview pulls the pane tree.
+    $showAllProfiles: atom(false),
     normalizeProfileKey: (name?: null | string) => (name ?? '').trim() || 'default',
     selectProfile: (name: string) => {
       selectProfile(name)

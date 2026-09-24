@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
 
+import { SETTINGS_ROUTE } from '@/app/routes'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -7,11 +9,14 @@ import {
   getActionStatus,
   getToolsetConfig,
   getToolsetModels,
+  pollOAuthSession,
+  type ProfileScope,
   revealEnvVar,
   runToolsetPostSetup,
   selectToolsetModel,
   selectToolsetProvider,
-  setEnvVar
+  setEnvVar,
+  startOAuthLogin
 } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { Check, Loader2, Save, Terminal } from '@/lib/icons'
@@ -23,18 +28,25 @@ import type {
   ActionStatusResponse,
   ToolEnvVar,
   ToolProvider,
+  ToolProviderStatus,
   ToolsetConfig,
   ToolsetModelsResponse
 } from '@/types/hermes'
 
 import { EnvVarActionsMenu, EnvVarActionsTrigger, EnvVarContextMenu } from './env-var-actions-menu'
+import { prettyName } from './helpers'
 import { Pill } from './primitives'
+import { VoiceProviderFields } from './voice-provider-fields'
 
 interface ToolsetConfigPanelProps {
   toolset: string
   /** Called after a key is saved/cleared or a provider chosen, so the parent
    *  can refresh the "Configured / Needs keys" pill. */
   onConfiguredChange?: () => void
+  /** Capabilities profile-scope override: configure THIS profile instead of the
+   *  app-wide active one. Omitted (every other caller) → app-wide active
+   *  profile, so behavior is unchanged. Threaded into every fetch below. */
+  profile?: ProfileScope
 }
 
 /** Toolsets whose backends expose a selectable model catalog (mirrors the
@@ -42,26 +54,19 @@ interface ToolsetConfigPanelProps {
 const MODEL_CATALOG_TOOLSETS = new Set(['image_gen', 'video_gen'])
 
 /**
- * The in-use model id when it was typed by hand rather than picked, else null.
- *
- * A hand-entered id is absent from the catalog by definition, so without its
- * own row the panel would render every catalog entry as unselected and look
- * like nothing is configured. Only backends that accept custom ids can have
- * one — for the rest, an id outside the catalog is stale config the gateway
- * already resolves back to the default.
+ * `useNavigate` throws when there is no react-router context. Inside Settings
+ * (the panel's original home) there always is one, so behavior is unchanged;
+ * embedded in a plugin dialog OUTSIDE the router there is none, and this
+ * degrades to `null` instead of crashing the whole panel. Router presence is
+ * stable for a mounted instance's lifetime, so the try/catch never changes the
+ * hook count between renders (rules-of-hooks safe).
  */
-export function customSelectedModel(catalog: ToolsetModelsResponse): string | null {
-  if (catalog.accepts_custom_model !== true) {
+function useOptionalNavigate(): null | ReturnType<typeof useNavigate> {
+  try {
+    return useNavigate()
+  } catch {
     return null
   }
-
-  const selected = catalog.current ?? catalog.default
-
-  if (selected === null || catalog.models.some(m => m.id === selected)) {
-    return null
-  }
-
-  return selected
 }
 
 function providerConfigured(provider: ToolProvider, envState: Record<string, boolean>): boolean {
@@ -72,20 +77,50 @@ function providerConfigured(provider: ToolProvider, envState: Record<string, boo
   return provider.env_vars.every(ev => envState[ev.key])
 }
 
+/**
+ * Resolve the readiness pill state for a provider row. Prefers the honest
+ * server-computed `status` (keys ∧ Nous entitlement ∧ post-setup install
+ * state). Older backends don't send `status` — fall back to the legacy
+ * env-var heuristic, mapped onto the same state space (`ready` /
+ * `needs_keys`), so the pill still renders against an outdated runtime.
+ */
+function providerStatus(provider: ToolProvider, envState: Record<string, boolean>): ToolProviderStatus {
+  if (provider.status) {
+    // Env-var edits patch envState locally without a refetch — a stale
+    // server `status` must not keep saying "needs keys" (or "ready") after
+    // the user just saved (or cleared) a key in this panel.
+    if (provider.env_vars.length > 0) {
+      return provider.env_vars.every(ev => envState[ev.key]) ? 'ready' : 'needs_keys'
+    }
+
+    return provider.status
+  }
+
+  return providerConfigured(provider, envState) ? 'ready' : 'needs_keys'
+}
+
 interface EnvVarFieldProps {
   envVar: ToolEnvVar
   isSet: boolean
   onSaved: (key: string) => void
   onCleared: (key: string) => void
+  profile?: ProfileScope
 }
 
-function EnvVarField({ envVar, isSet, onSaved, onCleared }: EnvVarFieldProps) {
+function EnvVarField({ envVar, isSet, onSaved, onCleared, profile }: EnvVarFieldProps) {
   const { t } = useI18n()
   const copy = t.settings.toolsets
+  const navigate = useOptionalNavigate()
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState('')
   const [revealed, setRevealed] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // Internal route change to Settings → API Keys (tools sub-view) with the
+  // deep-link param keys-settings consumes to scroll + flash this key's card.
+  // No-op when there is no router (embedded outside Settings, e.g. a plugin
+  // dialog): the "Manage keys" affordance simply doesn't navigate there.
+  const openInKeys = () => navigate?.(`${SETTINGS_ROUTE}?tab=keys&key=${encodeURIComponent(envVar.key)}`)
 
   async function handleSave() {
     if (!value) {
@@ -95,7 +130,7 @@ function EnvVarField({ envVar, isSet, onSaved, onCleared }: EnvVarFieldProps) {
     setBusy(true)
 
     try {
-      await setEnvVar(envVar.key, value)
+      await setEnvVar(envVar.key, value, profile)
       setEditing(false)
       setValue('')
       onSaved(envVar.key)
@@ -115,7 +150,7 @@ function EnvVarField({ envVar, isSet, onSaved, onCleared }: EnvVarFieldProps) {
     setBusy(true)
 
     try {
-      await deleteEnvVar(envVar.key)
+      await deleteEnvVar(envVar.key, profile)
       setRevealed(null)
       onCleared(envVar.key)
       notify({ kind: 'success', title: copy.removedTitle, message: copy.removedMessage(envVar.key) })
@@ -134,7 +169,7 @@ function EnvVarField({ envVar, isSet, onSaved, onCleared }: EnvVarFieldProps) {
     }
 
     try {
-      const result = await revealEnvVar(envVar.key)
+      const result = await revealEnvVar(envVar.key, profile)
       setRevealed(result.value)
     } catch (err) {
       notifyError(err, copy.failedReveal(envVar.key))
@@ -149,6 +184,7 @@ function EnvVarField({ envVar, isSet, onSaved, onCleared }: EnvVarFieldProps) {
     label: envVar.key,
     onClear: () => void handleClear(),
     onEdit: () => setEditing(true),
+    onManageKeys: openInKeys,
     onReveal: () => void handleReveal()
   }
 
@@ -170,7 +206,7 @@ function EnvVarField({ envVar, isSet, onSaved, onCleared }: EnvVarFieldProps) {
           </div>
           {!editing && (
             <EnvVarActionsMenu {...actionProps}>
-              <EnvVarActionsTrigger label={envVar.key} onClick={event => event.stopPropagation()} />
+              <EnvVarActionsTrigger onClick={event => event.stopPropagation()} />
             </EnvVarActionsMenu>
           )}
         </div>
@@ -209,9 +245,14 @@ interface PostSetupRunnerProps {
   toolset: string
   /** The provider's post_setup hook key (e.g. "camofox", "ddgs"). */
   postSetupKey: string
+  /** True when the server reports the install side-effect already satisfied
+   *  (provider status === 'ready') — renders the resting "Installed" state
+   *  with a low-key re-run affordance instead of the primary CTA. */
+  installed?: boolean
   /** Refresh the parent config after the install finishes (a backend may now
    *  report itself configured). */
   onComplete?: () => void
+  profile?: ProfileScope
 }
 
 /**
@@ -219,8 +260,13 @@ interface PostSetupRunnerProps {
  * `/api/tools/toolsets/{name}/post-setup` spawn-action and tails the resulting
  * log inline — the GUI equivalent of the install step `hermes tools` runs
  * after you pick a backend that needs extra dependencies.
+ *
+ * Idempotent UX: when the backend's readiness status says the install is
+ * already satisfied, the primary "Run setup" CTA is replaced by an
+ * "Installed" pill plus a small "Re-run setup" text button, so clicking
+ * around the panel doesn't look like it keeps reinstalling.
  */
-function PostSetupRunner({ toolset, postSetupKey, onComplete }: PostSetupRunnerProps) {
+function PostSetupRunner({ toolset, postSetupKey, installed = false, onComplete, profile }: PostSetupRunnerProps) {
   const { t } = useI18n()
   const copy = t.settings.toolsets
   const [running, setRunning] = useState(false)
@@ -228,6 +274,7 @@ function PostSetupRunner({ toolset, postSetupKey, onComplete }: PostSetupRunnerP
   // Guard against overlapping polls / state updates after unmount.
   const activeRef = useRef(false)
 
+   
   useEffect(() => {
     return () => {
       activeRef.current = false
@@ -240,7 +287,7 @@ function PostSetupRunner({ toolset, postSetupKey, onComplete }: PostSetupRunnerP
     activeRef.current = true
 
     try {
-      const started = await runToolsetPostSetup(toolset, postSetupKey)
+      const started = await runToolsetPostSetup(toolset, postSetupKey, profile)
 
       // The spawn endpoint reports ok:false if it couldn't launch the action
       // (e.g. unknown key, server-side spawn failure). Don't poll a status
@@ -263,7 +310,7 @@ function PostSetupRunner({ toolset, postSetupKey, onComplete }: PostSetupRunnerP
           break
         }
 
-        const polled = await getActionStatus(started.name, 300)
+        const polled = await getActionStatus(started.name, 300, profile)
         last = polled
         setStatus(polled)
         upsertDesktopActionTask(polled)
@@ -283,7 +330,16 @@ function PostSetupRunner({ toolset, postSetupKey, onComplete }: PostSetupRunnerP
                 title: copy.postSetupCompleteTitle,
                 message: copy.postSetupCompleteMessage(postSetupKey)
               }
-            : { kind: 'error', title: copy.postSetupErrorTitle, message: copy.postSetupErrorMessage(postSetupKey) }
+            : {
+                kind: 'error',
+                title: copy.postSetupErrorTitle,
+                message: copy.postSetupErrorMessage(prettyName(postSetupKey)),
+                action: {
+                  label: copy.postSetupOpenLogs,
+                  onClick: () => void window.hermesDesktop?.revealLogs?.().catch(() => undefined)
+                },
+                secondaryAction: { label: copy.postSetupRunAgain, onClick: () => void run() }
+              }
         )
         onComplete?.()
       }
@@ -296,18 +352,33 @@ function PostSetupRunner({ toolset, postSetupKey, onComplete }: PostSetupRunnerP
         setRunning(false)
       }
     }
-  }, [toolset, postSetupKey, onComplete, copy])
+  }, [toolset, postSetupKey, onComplete, copy, profile])
 
   return (
     <div className="grid gap-2 rounded-lg bg-background/55 p-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[0.72rem] text-muted-foreground">{copy.postSetupHint(postSetupKey)}</p>
+          <p className="text-[0.72rem] text-muted-foreground">
+            {installed ? copy.postSetupInstalledHint : copy.postSetupHint(postSetupKey)}
+          </p>
         </div>
-        <Button disabled={running} onClick={() => void run()} size="sm">
-          {running ? <Loader2 className="size-3.5 animate-spin" /> : <Terminal className="size-3.5" />}
-          {running ? copy.postSetupRunning : copy.postSetupRun}
-        </Button>
+        {installed ? (
+          <span className="flex items-center gap-2">
+            <Pill tone="primary">
+              <Check className="size-3" />
+              {copy.postSetupInstalled}
+            </Pill>
+            <Button disabled={running} onClick={() => void run()} size="sm" variant="text">
+              {running ? <Loader2 className="size-3.5 animate-spin" /> : <Terminal className="size-3.5" />}
+              {running ? copy.postSetupRunning : copy.postSetupRerun}
+            </Button>
+          </span>
+        ) : (
+          <Button disabled={running} onClick={() => void run()} size="sm">
+            {running ? <Loader2 className="size-3.5 animate-spin" /> : <Terminal className="size-3.5" />}
+            {running ? copy.postSetupRunning : copy.postSetupRun}
+          </Button>
+        )}
       </div>
 
       {status && (status.lines.length > 0 || status.running) && (
@@ -329,6 +400,7 @@ interface ModelCatalogPickerProps {
   /** True when this provider is the one written to config — selecting a model
    *  only makes sense for the active backend. */
   isActiveBackend: boolean
+  profile?: ProfileScope
 }
 
 /**
@@ -338,20 +410,18 @@ interface ModelCatalogPickerProps {
  * radio-card list and persists the choice to `image_gen.model` /
  * `video_gen.model`.
  */
-function ModelCatalogPicker({ toolset, providerName, isActiveBackend }: ModelCatalogPickerProps) {
+function ModelCatalogPicker({ toolset, providerName, isActiveBackend, profile }: ModelCatalogPickerProps) {
   const { t } = useI18n()
   const copy = t.settings.toolsets
   const [catalog, setCatalog] = useState<ToolsetModelsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
-  const [customId, setCustomId] = useState('')
-  const customFieldId = useId()
 
   useEffect(() => {
     let cancelled = false
 
     setLoading(true)
-    getToolsetModels(toolset, providerName)
+    getToolsetModels(toolset, providerName, profile)
       .then(next => {
         if (!cancelled) {
           setCatalog(next)
@@ -371,23 +441,17 @@ function ModelCatalogPicker({ toolset, providerName, isActiveBackend }: ModelCat
       })
 
     return () => void (cancelled = true)
-  }, [toolset, providerName])
+  }, [toolset, providerName, profile])
 
-  const pick = async (modelId: string): Promise<boolean> => {
+  const pick = async (modelId: string) => {
     setSaving(modelId)
 
     try {
-      await selectToolsetModel(toolset, modelId, providerName)
+      await selectToolsetModel(toolset, modelId, providerName, profile)
       setCatalog(current => (current ? { ...current, current: modelId } : current))
       notify({ kind: 'success', title: copy.modelSelectedTitle, message: copy.modelSelectedMessage(modelId) })
-
-      return true
     } catch (err) {
-      // The gateway rejects ids a closed-catalog backend can't route — keep the
-      // typed value in the field so it can be corrected rather than retyped.
       notifyError(err, copy.failedSelectModel(modelId))
-
-      return false
     } finally {
       setSaving(null)
     }
@@ -402,14 +466,11 @@ function ModelCatalogPicker({ toolset, providerName, isActiveBackend }: ModelCat
     )
   }
 
-  const acceptsCustom = catalog?.accepts_custom_model === true
-
-  if (!catalog || (!acceptsCustom && (!catalog.has_models || catalog.models.length === 0))) {
+  if (!catalog || !catalog.has_models || catalog.models.length === 0) {
     return null
   }
 
   const selected = catalog.current ?? catalog.default
-  const customSelected = customSelectedModel(catalog)
 
   return (
     <div className="grid gap-1.5">
@@ -419,18 +480,6 @@ function ModelCatalogPicker({ toolset, providerName, isActiveBackend }: ModelCat
       </div>
       {!isActiveBackend && <p className="px-0.5 text-[0.68rem] text-muted-foreground">{copy.modelInactiveHint}</p>}
       <div className="grid gap-1">
-        {customSelected && (
-          <div className="grid gap-0.5 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-tertiary) px-2.5 py-2">
-            <span className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs font-medium">{customSelected}</span>
-              <Pill tone="primary">
-                <Check className="size-3" />
-                {copy.modelInUse}
-              </Pill>
-              <Pill>{copy.modelCustomBadge}</Pill>
-            </span>
-          </div>
-        )}
         {catalog.models.map(model => {
           const isSelected = selected === model.id
           const isDefault = catalog.default === model.id
@@ -470,71 +519,41 @@ function ModelCatalogPicker({ toolset, providerName, isActiveBackend }: ModelCat
           )
         })}
       </div>
-      {acceptsCustom && (
-        <form
-          className="grid gap-1 px-0.5"
-          onSubmit={event => {
-            event.preventDefault()
-            const next = customId.trim()
-
-            if (next) {
-              void pick(next).then(ok => {
-                if (ok) {
-                  setCustomId('')
-                }
-              })
-            }
-          }}
-        >
-          <label className="text-[0.68rem] text-muted-foreground" htmlFor={customFieldId}>
-            {copy.modelCustomLabel}
-          </label>
-          <div className="flex items-center gap-1.5">
-            <Input
-              autoComplete="off"
-              className="h-7 font-mono text-xs"
-              disabled={saving !== null || !isActiveBackend}
-              id={customFieldId}
-              onChange={event => setCustomId(event.target.value)}
-              placeholder={copy.modelCustomPlaceholder}
-              spellCheck={false}
-              value={customId}
-            />
-            <Button
-              disabled={saving !== null || !isActiveBackend || customId.trim() === ''}
-              size="sm"
-              type="submit"
-              variant="secondary"
-            >
-              {saving !== null && saving === customId.trim() ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <Save className="size-3" />
-              )}
-              {copy.modelCustomSave}
-            </Button>
-          </div>
-        </form>
-      )}
     </div>
   )
 }
 
-export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfigPanelProps) {
+export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: ToolsetConfigPanelProps) {
   const { t } = useI18n()
   const copy = t.settings.toolsets
   const [cfg, setCfg] = useState<ToolsetConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [selecting, setSelecting] = useState<string | null>(null)
-  const [activeProvider, setActiveProvider] = useState<string | null>(null)
+  // Which provider row is EXPANDED in the panel (purely presentational —
+  // distinct from the backend-active provider in cfg.active_provider).
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
   // Live per-key set/unset state, seeded from the endpoint then patched locally.
   const [envState, setEnvState] = useState<Record<string, boolean>>({})
+  // Default-provider selection and a user click race just after config arrives:
+  // a stale initialization effect must never replace an explicit choice.
+  const providerChoiceClaimedRef = useRef(false)
+  // Guard the Nous Portal sign-in poll loop against unmount/state updates.
+  const mountedRef = useRef(true)
+
+   
+  useEffect(() => {
+    mountedRef.current = true
+
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     setLoading(true)
 
     try {
-      const next = await getToolsetConfig(toolset)
+      const next = await getToolsetConfig(toolset, profile)
       setCfg(next)
       const seeded: Record<string, boolean> = {}
 
@@ -550,7 +569,7 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfi
     } finally {
       setLoading(false)
     }
-  }, [copy.failedLoad, toolset])
+  }, [copy.failedLoad, toolset, profile])
 
   useEffect(() => {
     void refresh()
@@ -563,8 +582,9 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfi
   // first fully-configured provider, else the first provider. Without this the
   // panel highlighted the first keyless provider (e.g. Nous Portal) even when
   // the user had already selected another (e.g. DuckDuckGo).
+   
   useEffect(() => {
-    if (activeProvider || providers.length === 0) {
+    if (providerChoiceClaimedRef.current || expandedProvider || providers.length === 0) {
       return
     }
 
@@ -574,15 +594,24 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfi
       providers.find(p => providerConfigured(p, envState)) ??
       providers[0]
 
-    setActiveProvider(selected.name)
-  }, [activeProvider, providers, envState, cfg])
+    // Claim before enqueueing the state update. Effects can run with a stale
+    // expandedProvider closure after a user click, so state alone is too late
+    // to protect that choice.
+    providerChoiceClaimedRef.current = true
+    setExpandedProvider(selected.name)
+  }, [expandedProvider, providers, envState, cfg])
 
   async function handleSelect(provider: ToolProvider) {
-    setActiveProvider(provider.name)
+    if (selecting !== null) {
+      return
+    }
+
+    providerChoiceClaimedRef.current = true
+    setExpandedProvider(provider.name)
     setSelecting(provider.name)
 
     try {
-      await selectToolsetProvider(toolset, provider.name)
+      const result = await selectToolsetProvider(toolset, provider.name, undefined, profile)
       // Mirror the backend write locally so dependent UI (model catalog
       // enablement) tracks the new active backend without a refetch.
       setCfg(current =>
@@ -594,6 +623,22 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfi
             }
           : current
       )
+
+      if (result.needs_nous_auth) {
+        // Managed Nous row selected without Portal entitlement: the config
+        // keys are written but the backend won't activate until the user
+        // signs in (the CLI runs this gate inline; the GUI surfaces it as a
+        // sign-in action). Reuses the existing Nous Portal device-code flow.
+        notify({
+          kind: 'warning',
+          title: copy.nousAuthNeededTitle,
+          message: copy.nousAuthNeededMessage(provider.name),
+          action: { label: copy.nousAuthSignIn, onClick: () => void signInToNousPortal() }
+        })
+
+        return
+      }
+
       notify({ kind: 'success', title: copy.selectedTitle, message: copy.selectedMessage(provider.name) })
       onConfiguredChange?.()
     } catch (err) {
@@ -603,9 +648,107 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfi
     }
   }
 
+  // Drive the existing Nous Portal OAuth device-code flow (the same session
+  // machinery onboarding uses: start → open verification URL → poll), then
+  // refetch the toolset config so is_active / status flip once entitled.
+  async function signInToNousPortal() {
+    try {
+      const start = await startOAuthLogin('nous', profile)
+
+      if (start.flow !== 'device_code') {
+        notifyNousAuthFailed(`unexpected flow: ${start.flow}`)
+
+        return
+      }
+
+      const url = start.verification_url
+
+      if (window.hermesDesktop?.openExternal) {
+        try {
+          await window.hermesDesktop.openExternal(url)
+        } catch {
+          window.open(url, '_blank', 'noopener,noreferrer')
+        }
+      } else {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      }
+
+      // Poll until the device-code session resolves (~5s cadence, bounded).
+      for (let attempt = 0; attempt < 120 && mountedRef.current; attempt += 1) {
+        await new Promise(resolve => window.setTimeout(resolve, 5000))
+
+        if (!mountedRef.current) {
+          return
+        }
+
+        const polled = await pollOAuthSession('nous', start.session_id, profile)
+
+        if (polled.status === 'approved') {
+          notify({ kind: 'success', title: copy.nousAuthDoneTitle, message: copy.nousAuthDoneMessage })
+          await refresh()
+          onConfiguredChange?.()
+
+          return
+        }
+
+        if (polled.status !== 'pending') {
+          notifyNousAuthFailed(polled.error_message || `Sign-in ${polled.status}`)
+
+          return
+        }
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        notifyNousAuthFailed(err instanceof Error ? err.message : String(err))
+      }
+    }
+  }
+
+  // Plain failure copy with the raw poll status under Details and a one-click
+  // retry of the same sign-in flow (desktop-26).
+  function notifyNousAuthFailed(detail: string) {
+    notify({
+      kind: 'error',
+      title: copy.nousAuthFailed,
+      message: copy.nousAuthFailedMessage,
+      detail,
+      action: { label: copy.nousAuthTryAgain, onClick: () => void signInToNousPortal() }
+    })
+  }
+
   function patchEnv(key: string, isSet: boolean) {
     setEnvState(c => ({ ...c, [key]: isSet }))
     onConfiguredChange?.()
+  }
+
+  async function handleSelectCapability(provider: ToolProvider, capability: 'search' | 'extract') {
+    setSelecting(provider.name)
+
+    try {
+      await selectToolsetProvider(toolset, provider.name, capability, profile)
+      // Mirror the backend write locally so the Search:/Extract: badges track
+      // the new per-capability backend without a refetch.
+      setCfg(current =>
+        current
+          ? {
+              ...current,
+              ...(capability === 'search'
+                ? { active_search_backend: provider.web_backend ?? provider.name }
+                : { active_extract_backend: provider.web_backend ?? provider.name })
+            }
+          : current
+      )
+      notify({
+        kind: 'success',
+        title: copy.selectedTitle,
+        message: copy.webCapabilitySelectedMessage(provider.name, capability)
+      })
+      onConfiguredChange?.()
+    } catch (err) {
+      notifyError(err, copy.failedSelectCapability(provider.name))
+    } finally {
+      setSelecting(null)
+    }
   }
 
   if (loading) {
@@ -633,37 +776,112 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfi
 
   return (
     <div className="grid gap-2">
+      {toolset === 'web' && cfg.active_search_backend !== undefined && (
+        // The runtime dispatches web_search and web_extract independently
+        // (web.search_backend / web.extract_backend) — show which backend
+        // each capability resolves to right now.
+        <div className="flex flex-wrap items-center gap-2 px-1">
+          <Pill>{copy.webSearchActive(cfg.active_search_backend || copy.webCapabilityUnset)}</Pill>
+          <Pill>{copy.webExtractActive(cfg.active_extract_backend || copy.webCapabilityUnset)}</Pill>
+        </div>
+      )}
       {providers.map(provider => {
-        const isActive = activeProvider === provider.name
-        const configured = providerConfigured(provider, envState)
+        const isExpanded = expandedProvider === provider.name
+        const isBackendActive = provider.is_active || cfg?.active_provider === provider.name
+        const status = providerStatus(provider, envState)
+        const webCaps = toolset === 'web' ? (provider.capabilities ?? []) : []
+        const isSearchBackend = Boolean(provider.web_backend && cfg.active_search_backend === provider.web_backend)
+        const isExtractBackend = Boolean(provider.web_backend && cfg.active_extract_backend === provider.web_backend)
 
         return (
           <div className="overflow-hidden rounded-xl bg-background/60" key={provider.name}>
             <button
-              aria-pressed={isActive}
+              aria-expanded={isExpanded}
               className={cn(
                 'flex w-full items-center justify-between gap-3 px-3 py-2.5 text-start transition hover:bg-accent/50',
-                isActive && 'bg-accent/40'
+                isExpanded && 'bg-accent/40'
               )}
-              onClick={() => void handleSelect(provider)}
+              onClick={() => {
+                // Row click only expands/collapses — activating a backend is
+                // the explicit "Use this backend" button below, so browsing
+                // provider details never silently rewrites config.
+                providerChoiceClaimedRef.current = true
+                setExpandedProvider(current => (current === provider.name ? null : provider.name))
+              }}
               type="button"
             >
               <span className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-sm font-medium">{provider.name}</span>
                 {provider.badge && <Pill>{provider.badge}</Pill>}
-                {configured && (
+                {isBackendActive && (
+                  <Pill tone="primary">
+                    <Check className="size-3" />
+                    {copy.activeBackend}
+                  </Pill>
+                )}
+                {status === 'ready' && !isBackendActive && (
                   <Pill tone="primary">
                     <Check className="size-3" />
                     {copy.ready}
                   </Pill>
                 )}
+                {status === 'needs_auth' && <Pill tone="warn">{copy.needsSignIn}</Pill>}
+                {status === 'needs_setup' && <Pill tone="warn">{copy.needsSetup}</Pill>}
+                {isSearchBackend && <Pill tone="primary">{copy.webUsedForSearch}</Pill>}
+                {isExtractBackend && <Pill tone="primary">{copy.webUsedForExtract}</Pill>}
               </span>
               {selecting === provider.name && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
             </button>
 
-            {isActive && (
+            {isExpanded && (
               <div className="grid gap-2 bg-muted/20 p-3">
                 {provider.tag && <p className="text-[0.72rem] text-muted-foreground">{provider.tag}</p>}
+                {(toolset !== 'web' || webCaps.length === 0) && (
+                  // Explicit activation — the old row-click-selects UX gave no
+                  // signal about which backend was actually in use and made
+                  // reading a row's details indistinguishable from choosing it.
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isBackendActive ? (
+                      <Pill tone="primary">
+                        <Check className="size-3" />
+                        {copy.activeBackendHint}
+                      </Pill>
+                    ) : (
+                      <Button disabled={selecting !== null} onClick={() => void handleSelect(provider)} size="sm">
+                        {selecting === provider.name ? <Loader2 className="size-3.5 animate-spin" /> : <Check />}
+                        {copy.useBackend}
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {webCaps.length > 0 && (
+                  // Per-capability assignment: writes web.search_backend /
+                  // web.extract_backend without touching the shared
+                  // web.backend key. Hidden for capabilities the backend
+                  // can't serve (e.g. ddgs is search-only).
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {webCaps.includes('search') && (
+                      <Button
+                        disabled={selecting !== null || isSearchBackend}
+                        onClick={() => void handleSelectCapability(provider, 'search')}
+                        size="xs"
+                        variant="text"
+                      >
+                        {copy.webUseForSearch}
+                      </Button>
+                    )}
+                    {webCaps.includes('extract') && (
+                      <Button
+                        disabled={selecting !== null || isExtractBackend}
+                        onClick={() => void handleSelectCapability(provider, 'extract')}
+                        size="xs"
+                        variant="text"
+                      >
+                        {copy.webUseForExtract}
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {provider.requires_nous_auth && (
                   <p className="text-[0.72rem] text-muted-foreground">{copy.nousIncluded}</p>
                 )}
@@ -677,19 +895,32 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange }: ToolsetConfi
                       key={ev.key}
                       onCleared={key => patchEnv(key, false)}
                       onSaved={key => patchEnv(key, true)}
+                      profile={profile}
                     />
                   ))
                 )}
                 {provider.post_setup && (
                   <PostSetupRunner
+                    installed={provider.status === 'ready'}
                     onComplete={() => void refresh()}
                     postSetupKey={provider.post_setup}
+                    profile={profile}
                     toolset={toolset}
                   />
+                )}
+                {toolset === 'tts' && provider.tts_provider && (
+                  // Voice/model settings for this backend (tts.<key>.*) —
+                  // the same fields Settings → Voice renders, inline so the
+                  // Capabilities panel is a complete setup surface. Profile
+                  // threaded like every other fetch in this panel: unscoped,
+                  // these fields read AND autosaved the ACTIVE profile's
+                  // config while the panel claimed to configure another.
+                  <VoiceProviderFields profile={profile} providerKey={provider.tts_provider} section="tts" />
                 )}
                 {MODEL_CATALOG_TOOLSETS.has(toolset) && (
                   <ModelCatalogPicker
                     isActiveBackend={provider.is_active || cfg?.active_provider === provider.name}
+                    profile={profile}
                     providerName={provider.name}
                     toolset={toolset}
                   />

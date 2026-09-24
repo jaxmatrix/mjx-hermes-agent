@@ -16,9 +16,8 @@ import { CopyButton } from '@/components/ui/copy-button'
 import { DiffCount } from '@/components/ui/diff-count'
 import type { HermesGitBranch } from '@/global'
 import { useI18n } from '@/i18n'
-import { useStoreSelector } from '@/lib/use-session-slice'
+import { displayPath } from '@/lib/display-path'
 import { openWorktreeDialog, registerRepoStatusCwd, repoStatusForCwd, repoWorktreesForCwd } from '@/store/coding-status'
-import { useDisplayPath } from '@/store/display-home'
 import { notifyError } from '@/store/notifications'
 import { $pullRequestsByBranch, branchPrKey, refreshPullRequests } from '@/store/pull-requests'
 
@@ -29,7 +28,7 @@ interface CodingStatusRowProps {
   /** Branch the current draft off into a fresh worktree + session, based on
    *  `base` (a branch name; omitted = current HEAD). The composer owns the
    *  draft, so it supplies the orchestration; the row just collects the new
-   *  branch name + base. Omitted hides the affordance. */
+   *  branch name + base. Omitted (e.g. remote backend) hides the affordance. */
   onBranchOff?: (branch: string, base?: string) => Promise<void>
   /** Check an existing branch out into a fresh worktree + session (no new
    *  branch). Drives the dialog's "convert a branch" picker. */
@@ -50,15 +49,13 @@ interface CodingStatusRowProps {
  * The always-on coding-context row, the BASE of the composer status stack:
  * current branch, dirty summary (+/-), and ahead/behind. A touch more prominent
  * than the per-turn rows above it (larger branch label, accent glyph), and the
- * entry point to the review pane. Hidden when the active session isn't in a git
- * repo (the probe returns null).
- *
- * Ported from desktop. `onListBranches` is accepted but unused here — the dialog
- * loads branches itself; the prop stays so the composer's wiring matches desktop.
+ * entry point to the review pane. Hidden when the active session isn't in a
+ * local git repo (the probe returns null).
  */
 export const CodingStatusRow = memo(function CodingStatusRow({
   onBranchOff,
   onConvertBranch,
+  onListBranches,
   onOpen,
   onOpenWorktree,
   onSwitchBranch,
@@ -69,17 +66,17 @@ export const CodingStatusRow = memo(function CodingStatusRow({
   const p = t.sidebar.projects
   const fileMenu = t.fileMenu
   const resolvedRepoPath = repoPath?.trim() || undefined
-  // Bound to the GATEWAY's home — the worktree lives on its filesystem.
-  const displayPath = useDisplayPath()
-
-  // THIS rail's worktree, never the sidebar's. The composer mounts once per
-  // tile, so a global status painted the primary repo's branch and ± onto every
-  // rail; each one reads the cwd it was handed instead.
+  // This surface's OWN worktree, always — never the primary's. The row used to
+  // fall back to the global `$repoStatus` for a blank repoPath, which painted
+  // the main pane's branch/± onto a tile whose cwd hadn't resolved yet. That
+  // fallback bought nothing (the primary's computed is keyed to `$currentCwd`,
+  // which is blank in exactly the same case) and cost a wrong-tree rail.
   const status = useStore(repoStatusForCwd(resolvedRepoPath))
   const worktrees = useStore(repoWorktreesForCwd(resolvedRepoPath))
 
-  // Keep this worktree in the refresh set while the rail is mounted, so its
-  // counts move when ITS agent touches the tree — not only the primary's.
+  // While mounted, keep this worktree in the coding-status refresh set so the
+  // turn-settle / tool-complete / focus edges re-probe it too (tiles otherwise
+  // only refreshed when the MAIN cwd probe happened to cover them).
   useEffect(() => registerRepoStatusCwd(resolvedRepoPath), [resolvedRepoPath])
 
   // The branch's PR, so the rail links to it instead of leaving you to go find
@@ -93,16 +90,8 @@ export const CodingStatusRow = memo(function CodingStatusRow({
     }
   }, [resolvedRepoPath, prBranch])
 
-  // A selector, not a plain `useStore` (MJXHRM-45) — the same call the sidebar's
-  // `session-row.tsx` already makes for this atom, with the same reasoning. A
-  // repo's PRs land as a single whole-map write and are polled on EVERY window
-  // focus, so reading the map whole re-rendered every open tile's coding rail on
-  // a refocus, including tiles on unrelated repos. The `memo()` on this
-  // component cannot help: the re-render comes from its own subscription, not
-  // from a prop.
-  const pr = useStoreSelector($pullRequestsByBranch, prs =>
-    resolvedRepoPath && prBranch ? prs[branchPrKey(resolvedRepoPath, prBranch)] : undefined
-  )
+  const pr =
+    useStore($pullRequestsByBranch)[resolvedRepoPath && prBranch ? branchPrKey(resolvedRepoPath, prBranch) : '']
 
   const switchToBranch = async (branch: string) => {
     if (!onSwitchBranch) {
@@ -116,10 +105,11 @@ export const CodingStatusRow = memo(function CodingStatusRow({
     }
   }
 
-  // ⌘⇧B is handled globally by useKeybinds, through openWorktreeDialog. ONE
-  // dialog is mounted in the sidebar, so N mounted rails can no longer each open
-  // their own copy. These menu items only publish the intent, pinning the repo of
-  // THIS rail so a tile's kebab targets that tile's worktree.
+  // useKeybinds now handles the ⌘⇧B hotkey globally, through
+  // openWorktreeDialog. One dialog is mounted in the sidebar, so N mounted
+  // rails can no longer each open their own copy. The menu items below only
+  // publish the intent. They pin the repo of THIS rail, so the kebab of a tile
+  // targets the worktree of that tile.
   const startBranch = (base: string | undefined) => {
     void openWorktreeDialog({ base, repoPath: resolvedRepoPath })
   }
@@ -156,22 +146,17 @@ export const CodingStatusRow = memo(function CodingStatusRow({
   // Other worktrees to jump into — everything except the one we're already in
   // (matched by its checked-out branch) and the bare/main placeholder entry.
   const otherWorktrees = onOpenWorktree
-    ? worktrees.filter(
-        worktree => worktree.path && !worktree.detached && worktree.branch && worktree.branch !== current
-      )
+    ? worktrees.filter(w => w.path && !w.detached && w.branch && w.branch !== current)
     : []
 
   const hasLineDelta = status.added > 0 || status.removed > 0
   // Untracked files carry no line delta vs HEAD, so surface them as a count when
   // they're the only change (otherwise +/- tells the story).
   const untrackedOnly = !hasLineDelta && status.untracked > 0
-  // The +/- (or untracked count) only takes over right-alignment when no
-  // ahead/behind chip is there to claim it.
-  const noTrackingDelta = status.ahead === 0 && status.behind === 0
 
-  // The branch actions, rendered identically by the kebab dropdown and the row's
-  // right-click menu so the two never drift. `onBranchOff` gates the whole menu,
-  // matching the kebab.
+  // The branch actions, rendered identically by the kebab dropdown and the
+  // row's right-click menu so the two never drift. `onBranchOff` gates the
+  // whole menu (omitted = remote backend), matching the kebab.
   const renderBranchItems = (kit: MenuKit) => {
     const branchItems: ActionItemSpec[] = branchTargets.map(target => ({
       key: target.base ?? '__head__',
@@ -199,7 +184,7 @@ export const CodingStatusRow = memo(function CodingStatusRow({
         <kit.Label className={MENU_SECTION}>{s.worktrees}</kit.Label>
         {worktreeItems.map(item => renderActionItem(kit, item))}
         {/* Create a fresh worktree off the current HEAD (the generic "spin up a
-            worktree here"). */}
+            worktree here", mirroring the sidebar's + button). */}
         {renderActionItem(kit, {
           key: '__start__',
           label: <span className="truncate">{p.startWork}</span>,
@@ -226,35 +211,39 @@ export const CodingStatusRow = memo(function CodingStatusRow({
           // once `status` exists, so a spinner here only ever fired on *refreshes*
           // of an already-loaded repo (window focus, turn settle), reading as an
           // annoying icon "blip" with no first-load value. Refreshes are silent.
-          leading={<Codicon className="text-(--ui-green)" name="git-branch" size="0.8rem" />}
-          onActivate={onOpen}
+          // It's a button (not the whole row) so the glyph opens the review pane
+          // while the strip around it stays inert; size-3.5 fills the slot exactly.
+          leading={
+            <button className="flex size-3.5 items-center justify-center" onClick={onOpen} type="button">
+              <Codicon className="text-(--ui-green)" name="git-branch" size="0.8rem" />
+            </button>
+          }
         >
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            <span
-              className="min-w-0 truncate text-xs font-normal text-muted-foreground/92 transition-colors group-hover/status-row:text-foreground/90"
-              title={branchLabel}
-            >
-              {branchLabel}
-            </span>
+            {/* PR number first, right against the leading git glyph — the chip
+                borrows that icon instead of carrying a second one of its own
+                (`showIcon={false}`), so the row reads glyph → #number → branch. */}
+            {pr && <PrTag pr={pr} showIcon={false} />}
 
-            {pr && <PrTag pr={pr} />}
+            {/* Branch name — the other half of the review-pane target. `contents`
+                so the button lays out nothing of its own: the label stays the
+                same flex child it always was, and the hit area is the text. */}
+            <button className="contents" onClick={onOpen} type="button">
+              <span className="min-w-0 truncate text-xs font-normal text-muted-foreground/92" title={branchLabel}>
+                {branchLabel}
+              </span>
+            </button>
 
-            {/* Worktree path + copy — plain muted text, not a chip. Always in
-                the flex so hover doesn't reflow the row; opacity alone reveals
-                the pair. The path sizes to its content (the `flex-1` lives on
-                the wrapper) so the glyph sits against the end of the text
-                instead of drifting to the far edge. `displayPath` collapses
-                home to ~; the copy still takes the real absolute path, and it's
-                the shared CopyButton so it confirms with the same inline
+            {/* Worktree path + copy — plain muted text, not a chip. Always in the
+                flex so hover doesn't reflow the row; opacity alone reveals the
+                pair. The path sizes to its content (the `flex-1` lives on the
+                wrapper) so the glyph sits against the end of the text instead of
+                drifting to the far edge of the row. `displayPath` collapses
+                home → ~; the copy still takes the real absolute path, and it's
+                the shared `CopyButton` so it confirms with the same inline
                 checkmark as every other copy in the app. */}
             {resolvedRepoPath && (
-              // The touch companion goes on the WRAPPER, not just the button:
-              // an `opacity-0` parent hides its children whatever their own
-              // classes say, so `CopyButton`'s internal `coarse:` reveal could
-              // never fire from in here. Matches the branch kebab further down
-              // this same row, which has always been permanently visible on
-              // touch.
-              <div className="flex min-w-0 flex-1 items-center gap-0.5 opacity-0 transition-opacity coarse:opacity-100 group-focus-within/status-row:opacity-100 group-hover/status-row:opacity-100">
+              <div className="flex min-w-0 flex-1 items-center gap-0.5 opacity-0 transition-opacity group-hover/status-row:opacity-100 group-focus-within/status-row:opacity-100">
                 <span
                   className="min-w-0 truncate font-mono text-[0.62rem] leading-4 text-muted-foreground/50"
                   data-slot="coding-status-cwd"
@@ -264,7 +253,7 @@ export const CodingStatusRow = memo(function CodingStatusRow({
                 <CopyButton
                   appearance="icon"
                   buttonSize="icon-xs"
-                  className="pointer-events-none size-4 shrink-0 text-muted-foreground/50 coarse:pointer-events-auto group-focus-within/status-row:pointer-events-auto group-hover/status-row:pointer-events-auto hover:text-foreground"
+                  className="pointer-events-none size-4 shrink-0 text-muted-foreground/50 hover:text-foreground group-hover/status-row:pointer-events-auto group-focus-within/status-row:pointer-events-auto"
                   iconClassName="size-3"
                   label={fileMenu.copyPath}
                   side="top"
@@ -274,11 +263,10 @@ export const CodingStatusRow = memo(function CodingStatusRow({
               </div>
             )}
 
-            {/* Branch actions kebab. ALWAYS laid out; only its opacity flips on
-                hover/focus/open, so revealing it never reflows the row (no layout
-                shift). pointer-events follow opacity so the invisible trigger
-                isn't clickable at rest — which on a coarse pointer meant the
-                kebab was not merely invisible but inert, so both flip there. */}
+            {/* Branch actions kebab — same pattern as the session/worktree rows.
+                ALWAYS laid out; only its opacity flips on hover/focus/open, so
+                revealing it never reflows the row (no layout shift). pointer-events
+                follow opacity so the invisible trigger isn't clickable at rest. */}
             {onBranchOff && (
               <ActionsMenu
                 align="end"
@@ -290,15 +278,7 @@ export const CodingStatusRow = memo(function CodingStatusRow({
               >
                 <Button
                   aria-label={s.newBranch}
-                  className="pointer-events-none size-4 shrink-0 text-muted-foreground/60 opacity-0 transition coarse:pointer-events-auto coarse:opacity-100 group-focus-within/status-row:pointer-events-auto group-focus-within/status-row:opacity-100 group-hover/status-row:pointer-events-auto group-hover/status-row:opacity-100 hover:text-foreground data-[state=open]:pointer-events-auto data-[state=open]:opacity-100"
-                  onClick={event => event.stopPropagation()}
-                  onKeyDown={event => {
-                    // The row's onActivate also fires on Enter/Space; keep it from
-                    // opening the review pane when the kebab is the focus target.
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.stopPropagation()
-                    }
-                  }}
+                  className="pointer-events-none size-4 shrink-0 text-muted-foreground/60 opacity-0 coarse:opacity-100 transition hover:text-foreground group-hover/status-row:pointer-events-auto group-hover/status-row:opacity-100 group-focus-within/status-row:pointer-events-auto group-focus-within/status-row:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100"
                   size="icon-xs"
                   variant="ghost"
                 >
@@ -308,34 +288,43 @@ export const CodingStatusRow = memo(function CodingStatusRow({
             )}
           </div>
 
-          {(status.ahead > 0 || status.behind > 0) && (
-            <span className="ms-auto flex shrink-0 items-center gap-1.5 text-[0.68rem] leading-4 text-muted-foreground/75 tabular-nums">
-              {status.ahead > 0 && (
-                <span className="flex items-center gap-0.5" title={s.ahead(status.ahead)}>
-                  <span aria-hidden>↑</span>
-                  {status.ahead}
+          {/* The counts describe what's in the review pane, so clicking them
+              opens it. `contents` again: the two spans stay direct flex children
+              of the row, keeping their gap and `ml-auto` behaviour untouched. */}
+          {(status.ahead > 0 || status.behind > 0 || hasLineDelta || untrackedOnly) && (
+            <button className="contents" onClick={onOpen} type="button">
+              {(status.ahead > 0 || status.behind > 0) && (
+                <span className="ms-auto flex shrink-0 items-center gap-1.5 text-[0.68rem] leading-4 text-muted-foreground/75 tabular-nums">
+                  {status.ahead > 0 && (
+                    <span className="flex items-center gap-0.5" title={s.ahead(status.ahead)}>
+                      <span aria-hidden>↑</span>
+                      {status.ahead}
+                    </span>
+                  )}
+                  {status.behind > 0 && (
+                    <span className="flex items-center gap-0.5" title={s.behind(status.behind)}>
+                      <span aria-hidden>↓</span>
+                      {status.behind}
+                    </span>
+                  )}
                 </span>
               )}
-              {status.behind > 0 && (
-                <span className="flex items-center gap-0.5" title={s.behind(status.behind)}>
-                  <span aria-hidden>↓</span>
-                  {status.behind}
-                </span>
-              )}
-            </span>
-          )}
 
-          {hasLineDelta ? (
-            <DiffCount
-              added={status.added}
-              className={`text-[0.72rem] leading-4 ${noTrackingDelta ? 'ms-auto' : ''}`}
-              removed={status.removed}
-            />
-          ) : untrackedOnly ? (
-            <span className={`shrink-0 text-[0.72rem] leading-4 text-(--ui-yellow)/90 ${noTrackingDelta ? 'ms-auto' : ''}`}>
-              {s.changed(status.untracked)}
-            </span>
-          ) : null}
+              {hasLineDelta ? (
+                <DiffCount
+                  added={status.added}
+                  className={`text-[0.72rem] leading-4 ${status.ahead === 0 && status.behind === 0 ? 'ms-auto' : ''}`}
+                  removed={status.removed}
+                />
+              ) : untrackedOnly ? (
+                <span
+                  className={`shrink-0 text-[0.72rem] leading-4 text-amber-500/90 ${status.ahead === 0 && status.behind === 0 ? 'ms-auto' : ''}`}
+                >
+                  {s.changed(status.untracked)}
+                </span>
+              ) : null}
+            </button>
+          )}
         </StatusRow>
       </ActionsContextMenu>
     </>

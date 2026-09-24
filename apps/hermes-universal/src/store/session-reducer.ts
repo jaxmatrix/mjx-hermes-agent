@@ -16,6 +16,10 @@
  */
 
 import type { GatewayEvent } from '@/gateway'
+import { coerceThinkingText } from '@/lib/chat-runtime'
+import { type GatewayToolPayload, upsertToolPart } from '@/lib/chat-tool-parts'
+import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
+import { isLiveTailRow } from '@/lib/live-tail'
 import {
   appendAssistantTextPart,
   appendSealedReasoning,
@@ -27,15 +31,11 @@ import {
   patchActive,
   sealOpenToolParts,
   withActiveAssistant
-} from '@/lib/chat-messages'
-import { coerceThinkingText } from '@/lib/chat-runtime'
-import { type GatewayToolPayload, upsertToolPart } from '@/lib/chat-tool-parts'
-import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
-import { isLiveTailRow } from '@/lib/live-tail'
-import { type ClientSessionState } from '@/store/session-state-types'
+} from '@/lib/session-key-messages'
+import { type SessionKeyState } from '@/store/session-state-types'
 import type { UsageStats } from '@/types/hermes'
 
-const patchLastAssistant = (state: ClientSessionState, patch: (m: ChatMessage) => ChatMessage): ClientSessionState => ({
+const patchLastAssistant = (state: SessionKeyState, patch: (m: ChatMessage) => ChatMessage): SessionKeyState => ({
   ...state,
   messages: patchActive(state.messages, patch)
 })
@@ -59,10 +59,10 @@ const numeric = (value: unknown): number | undefined =>
  * another session's tool rows land.
  */
 function applyToolEvent(
-  state: ClientSessionState,
+  state: SessionKeyState,
   payload: GatewayToolPayload,
   phase: 'complete' | 'running'
-): ClientSessionState {
+): SessionKeyState {
   const messages = state.messages
   const last = messages[messages.length - 1]
   const settledAssistant = !state.busy && last?.role === 'assistant' && !last.pending
@@ -117,11 +117,11 @@ function applyToolEvent(
  *
  * Returns the SAME state object when nothing changed. `session.info` is emitted
  * on every turn boundary and on every config write, so an unconditional spread
- * would republish `$sessionStates` — and re-render every chat surface — for
+ * would republish `$sessionKeyStates` — and re-render every chat surface — for
  * events that carry no news.
  */
-function applySessionInfo(state: ClientSessionState, payload: Record<string, unknown>): ClientSessionState {
-  const patch: Partial<ClientSessionState> = {}
+function applySessionInfo(state: SessionKeyState, payload: Record<string, unknown>): SessionKeyState {
+  const patch: Partial<SessionKeyState> = {}
 
   const adoptText = (key: 'cwd' | 'model' | 'provider', raw: unknown): void => {
     if (typeof raw === 'string' && raw && raw !== state[key]) {
@@ -176,7 +176,7 @@ export const EMPTY_USAGE: UsageStats = { calls: 0, input: 0, output: 0, total: 0
  * the compressor has no real current-window occupancy to report (#50421), so an
  * assignment would blank a gauge an earlier tick had legitimately painted.
  */
-function applySessionUsage(state: ClientSessionState, payload: Record<string, unknown>): ClientSessionState {
+function applySessionUsage(state: SessionKeyState, payload: Record<string, unknown>): SessionKeyState {
   const usage = payload.usage
 
   if (!usage || typeof usage !== 'object' || Array.isArray(usage)) {
@@ -188,10 +188,10 @@ function applySessionUsage(state: ClientSessionState, payload: Record<string, un
 
 /** Reduce ONE gateway event into ONE session's state slice. Pure. */
 export function reduceSessionState(
-  state: ClientSessionState,
+  state: SessionKeyState,
   event: GatewayEvent,
   payload: Record<string, unknown>
-): ClientSessionState {
+): SessionKeyState {
   switch (event.type) {
     case 'message.start':
       return {

@@ -1,5 +1,3 @@
-import { writeClipboardText } from '@/lib/clipboard'
-
 // Rasterise an SVG string to PNG and copy it to the clipboard. Self-contained
 // SVGs only (inline styles) — mermaid output qualifies. Falls back to copying
 // the SVG markup as text where image clipboard writes aren't permitted.
@@ -8,7 +6,7 @@ import { writeClipboardText } from '@/lib/clipboard'
 // intrinsic size: the zoom overlay's shrink-to-fit grid can collapse it, and
 // parseFloat("100%") makes a 100px PNG. Replace percentage attrs with the
 // viewBox pixels; leave explicit pixel attrs alone. No-op when nothing to do.
-function isPercentLength(raw: null | string): boolean {
+function isPercentLength(raw: string | null): boolean {
   return Boolean(raw?.trim().endsWith('%'))
 }
 
@@ -53,7 +51,7 @@ export function normalizeSvgSize(svg: string): string {
   return new XMLSerializer().serializeToString(el)
 }
 
-function parseSvgLength(raw: null | string): null | number {
+function parseSvgLength(raw: string | null): number | null {
   if (!raw || isPercentLength(raw)) {
     return null
   }
@@ -108,13 +106,8 @@ export async function copySvgAsPng(svg: string): Promise<void> {
   try {
     const blob = await svgToPngBlob(svg)
 
-    // The image branch has no OS seam: `clipboard-manager:allow-write-image` is
-    // deliberately NOT granted (see src-tauri/capabilities/default.json), so an
-    // image write is the web API or nothing. On WebKitGTK that is "nothing" —
-    // which is exactly why the text fallback below has to go through the seam
-    // rather than repeating the call that just failed (MJXHRM-415).
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
   } catch {
-    await writeClipboardText(svg)
+    await navigator.clipboard.writeText(svg)
   }
 }

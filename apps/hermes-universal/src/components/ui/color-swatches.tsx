@@ -9,8 +9,8 @@ interface ColorSwatchesProps {
   swatchLabel?: (color: string) => string
 }
 
-// Shared swatch grid + clear row used by the profile rail, so color picking looks
-// and behaves identically everywhere. Ported verbatim from desktop.
+// Shared swatch grid + clear row used by the profile rail and the project
+// dialog, so color picking looks and behaves identically everywhere.
 export function ColorSwatches({
   swatches,
   value,
@@ -25,15 +25,7 @@ export function ColorSwatches({
         {swatches.map(swatch => (
           <button
             aria-label={swatchLabel?.(swatch) ?? swatch}
-            // The grow-on-hover is a MOUSE affordance. A finger has no hover to
-            // trigger it, and where this grid sits in the top drawer the panel
-            // CLIPS (`overflow: hidden` on `[data-top-drawer]`), so a sticky
-            // hover on the edge column only pushes a swatch under the frame.
-            // Scoped with `fine:` rather than undone with `coarse:` — the two
-            // queries are exclusive, so there is no source-order fight, and
-            // jsdom (which matches neither) sees the touch behaviour. See the
-            // coarse/fine block at the top of `styles.css`.
-            className="size-5 rounded-full transition-transform fine:hover:scale-110"
+            className="size-5 rounded-full transition-transform hover:scale-110"
             key={swatch}
             onClick={() => onChange(swatch)}
             style={{

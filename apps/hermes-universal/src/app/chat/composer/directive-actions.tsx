@@ -7,51 +7,24 @@
  * reference. Instead, hovering a chip whose kind has an action floats a small
  * pill above it that runs it.
  *
- * The kind → action table lives HERE rather than beside the transcript chip,
- * which is where desktop keeps it. Desktop's `DIRECTIVE_ACTIONS` feeds two
- * surfaces; universal's transcript chips (`components/assistant-ui/
- * directive-content.tsx`) already own their own click behaviour directly, so a
- * shared table would have exactly one consumer and would drag `open-session`
- * and `external-link` into `directive-text.ts` — a module the composer's rich
- * editor imports on its hot path.
+ * The kind → action table (`DIRECTIVE_ACTIONS`) lives in `directive-text`, so
+ * it is shared with the sent-message chip: one entry lights up both surfaces.
  */
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import { openSessionRef } from '@/app/open-session'
+import { DIRECTIVE_ACTIONS, type DirectiveAction } from '@/components/assistant-ui/directive-text'
 import { composerFloatingPill } from '@/components/chat/composer-dock'
 import { Codicon } from '@/components/ui/codicon'
-import { type I18nContextValue, useI18n } from '@/i18n'
-import { openExternalLink } from '@/lib/external-link'
-import { parseSessionRefValue } from '@/lib/session-refs'
+import { useI18n } from '@/i18n'
+import { wantsNativeBrowser } from '@/lib/external-link'
 import { cn } from '@/lib/utils'
 
 /** Moving between the chip and the pill crosses a gap where neither is hovered.
- *  Short enough that it still reads as instant on the way out. */
-const HIDE_DELAY_MS = 120
-
-/** What activating a directive of a given kind does. A kind with no entry is
- *  inert — no pill appears over it at all. */
-interface DirectiveAction {
-  icon: string
-  label: (t: I18nContextValue['t']) => string
-  run: (value: string) => void
-}
-
-const DIRECTIVE_ACTIONS: Record<string, DirectiveAction> = {
-  session: {
-    icon: 'link-external',
-    label: t => t.composer.openDirective,
-    // `tab`, not `in-place`: opening the referenced session must not steal the
-    // main pane out from under the chat whose composer you are typing into.
-    run: value => openSessionRef(parseSessionRefValue(value).sessionId, 'tab')
-  },
-  url: {
-    icon: 'link-external',
-    label: t => t.composer.openDirective,
-    run: value => void openExternalLink(value)
-  }
-}
+ *  Long enough that a pointer travelling diagonally across that gap reaches the
+ *  pill's own hover before the grace window closes; still reads as instant when
+ *  leaving the chip for good. */
+const HIDE_DELAY_MS = 500
 
 /** The actionable directive chip under `target` that also belongs to `editor`,
  *  if there is one. */
@@ -97,7 +70,6 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
   const { t } = useI18n()
   const [anchor, setAnchor] = useState<Anchor | null>(null)
   const hideTimerRef = useRef<number | undefined>(undefined)
-  const pillRef = useRef<HTMLDivElement | null>(null)
 
   const cancelHide = useCallback(() => {
     window.clearTimeout(hideTimerRef.current)
@@ -108,30 +80,8 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
     hideTimerRef.current = window.setTimeout(() => setAnchor(null), HIDE_DELAY_MS)
   }, [cancelHide])
 
-  const hideNow = useCallback(() => {
-    cancelHide()
-    setAnchor(null)
-  }, [cancelHide])
-
-  /** The pill is a second hover surface, not a bystander — these listeners are
-   *  on `document`, so they see its internals too. */
-  const insidePill = useCallback(
-    (node: EventTarget | null) => node instanceof Node && !!pillRef.current?.contains(node),
-    []
-  )
-
   useEffect(() => {
     const onPointerOver = (event: PointerEvent) => {
-      // Arriving on the pill (or crossing between its own children) cancels the
-      // hide that leaving the chip queued. Without this the wrapper's
-      // `mouseenter` is the only cancel, and that fires exactly once — on the
-      // way in — so the very next boundary inside the pill dismissed it.
-      if (insidePill(event.target)) {
-        cancelHide()
-
-        return
-      }
-
       const editor = editorRef.current
       const chip = editor && actionableChipAt(event.target, editor)
 
@@ -144,48 +94,17 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
     }
 
     const onPointerOut = (event: PointerEvent) => {
-      // `pointerout` fires at every element boundary, the pill's own included
-      // (wrapper → button, icon → label). Only a move that actually leaves it
-      // counts.
-      if (insidePill(event.target)) {
-        if (!insidePill(event.relatedTarget)) {
-          hideSoon()
-        }
-
-        return
-      }
-
       const editor = editorRef.current
       const chip = editor && actionableChipAt(event.target, editor)
 
-      // A move within the same chip (its icon → its label) is not a leave.
-      if (chip && editor && chip === actionableChipAt(event.relatedTarget, editor)) {
-        return
-      }
-
-      // A finger does not hover: on touch these events bracket the TAP, so this
-      // is the finger lifting off the chip it just revealed the pill over.
-      // Hiding here would take the pill away 120ms later, every time, and the
-      // action would be unreachable on a phone. A touch-opened pill stays until
-      // it is used or something else is pressed (below).
-      if (event.pointerType === 'touch') {
+      // Only this editor's chip departures start the grace window. The pill
+      // owns its own boundary; internal pill or unrelated document transitions
+      // must neither dismiss a hovered action nor postpone an existing leave.
+      if (!chip || !editor || chip === actionableChipAt(event.relatedTarget, editor)) {
         return
       }
 
       hideSoon()
-    }
-
-    // Press anywhere that is neither the pill nor an actionable chip and the
-    // pill is done — the dismissal a touch-opened pill has instead of a hover
-    // ending, and the one that clears a stale pill a mouse left behind.
-    const onPointerDown = (event: PointerEvent) => {
-      const editor = editorRef.current
-
-      if (insidePill(event.target) || (editor && actionableChipAt(event.target, editor))) {
-        return
-      }
-
-      hideNow()
     }
 
     // The chip can move or vanish under a parked pointer: the editor scrolls,
@@ -194,19 +113,17 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
 
     document.addEventListener('pointerover', onPointerOver)
     document.addEventListener('pointerout', onPointerOut)
-    document.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('scroll', reanchor, true)
     window.addEventListener('resize', reanchor)
 
     return () => {
       document.removeEventListener('pointerover', onPointerOver)
       document.removeEventListener('pointerout', onPointerOut)
-      document.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('scroll', reanchor, true)
       window.removeEventListener('resize', reanchor)
       window.clearTimeout(hideTimerRef.current)
     }
-  }, [cancelHide, editorRef, hideNow, hideSoon, insidePill])
+  }, [cancelHide, editorRef, hideSoon])
 
   if (!anchor) {
     return null
@@ -217,13 +134,25 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
       className="fixed z-(--z-over-modal) -translate-y-full pb-1"
       data-slot="composer-directive-action"
       data-value={anchor.value}
-      ref={pillRef}
+      onMouseEnter={cancelHide}
+      onMouseLeave={hideSoon}
       style={{ left: anchor.left, top: anchor.top }}
     >
       <button
         className={cn(composerFloatingPill, 'shadow-nous')}
-        onClick={() => {
-          anchor.action.run(anchor.value)
+        // The pill is the composer's stand-in for clicking the link, so it
+        // honours the same convention: ⌘/Ctrl-click escapes to the system
+        // browser instead of the in-app pane.
+        onAuxClick={event => {
+          // Middle-click never fires `click`; it's the other half of the
+          // open-elsewhere convention.
+          if (event.button === 1) {
+            anchor.action.run(anchor.value, { native: true })
+            setAnchor(null)
+          }
+        }}
+        onClick={event => {
+          anchor.action.run(anchor.value, { native: wantsNativeBrowser(event.nativeEvent) })
           setAnchor(null)
         }}
         // Never let the press reach the editor: mousedown inside a

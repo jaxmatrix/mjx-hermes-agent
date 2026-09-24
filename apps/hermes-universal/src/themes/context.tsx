@@ -1,65 +1,52 @@
 /**
- * Mobile theme context.
+ * Desktop theme context.
  *
- * Applies the active theme as CSS custom properties on :root so every Tailwind
- * utility that references a color token picks up the change automatically. Mode
- * (light/dark/system) controls brightness; skin controls accent — each persisted
- * independently.
+ * Applies the active theme as CSS custom properties on :root so every
+ * Tailwind utility that references a color or font-family token picks up
+ * the change automatically.
  *
- * Adapted from apps/desktop/src/themes/context.tsx. Dropped for mobile: the
- * per-profile skin/mode machinery (single global skin+mode via persistentAtom
- * instead), the native-chrome bridges (titlebar / nativeTheme / hermes-boot-*),
- * and font-URL injection (mobile fonts are fixed in styles.css). The color math,
- * skin derivation, and the seed→CSS applyTheme are ported faithfully.
+ * Mode (light/dark/system) controls brightness; skin controls accent.
+ * The two are persisted independently. Shift+X toggles light/dark.
  */
 
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from 'react'
+import { ensureContrast, mix, parseColor } from '@hermes/shared/color'
+import { useStore } from '@nanostores/react'
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
 import { $registryVersion } from '@/contrib/registry'
 import { matchesQuery, useMediaQuery } from '@/hooks/use-media-query'
-import { Codecs, persistentAtom } from '@/lib/persisted'
-import { atom } from '@/store/atom'
-import { useStore } from '@/store/atom'
-import { setGlassAppearance } from '@/store/translucency'
+import { persistString, persistStringRecord, storedString, storedStringRecord } from '@/lib/storage'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { setAppearance } from '@/store/translucency'
 
 import { $accentOverride } from './accent-override'
 import { $backendThemes, $pendingSkinApply } from './backend-sync'
-import { harmonize, hexToRgb, mix, readableOn } from './color'
+import { $chatFontFamily, resolveChatFontFamily } from './chat-font'
+import { harmonize, readableInk } from './color'
 import { BUILTIN_THEME_LIST, DEFAULT_SKIN_NAME, DEFAULT_TYPOGRAPHY, nousTheme } from './presets'
 import { retintTheme } from './retint'
 import type { DesktopTheme, DesktopThemeColors } from './types'
 import { $userThemes, listAllThemes, resolveTheme } from './user-themes'
 
+// Legacy global skin (pre per-profile themes). Still the inheritance fallback
+// for any profile without its own assignment, so single-profile users and old
+// installs are unaffected.
+const SKIN_KEY = 'hermes-desktop-theme-v2'
+const MODE_KEY = 'hermes-desktop-mode-v1'
+// Per-profile skin + light/dark mode assignments: { [profileKey]: value }. A
+// profile inherits the global default until it's given its own appearance.
+const PROFILE_SKINS_KEY = 'hermes-desktop-profile-themes-v1'
+const PROFILE_MODES_KEY = 'hermes-desktop-profile-modes-v1'
+// Last active profile, recorded so the boot-time paint can pick that profile's
+// theme before the gateway reports which profile actually launched.
+const LAST_PROFILE_KEY = 'hermes-desktop-active-profile-v1'
+// Skins that no longer exist. A profile still pointing at one falls back to
+// DEFAULT_SKIN_NAME rather than painting a name nothing resolves.
 const RETIRED_SKINS = new Set(['nous-light', 'default', 'gold'])
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 
-// Global skin + mode. Mobile has no per-profile appearance (that's a desktop
-// multi-window concern); one persisted choice drives the whole app.
-//
-// Exported for non-React readers/writers — `store/profile-share` snapshots them
-// into a shared profile bundle and assigns them back on import. Everything in a
-// component should go through `useTheme()` instead.
-export const $skin = persistentAtom<string>('hermes.skin', DEFAULT_SKIN_NAME, Codecs.text)
-export const $mode = persistentAtom<string>('hermes.mode', 'system', Codecs.text)
-
-/**
- * A theme the app is PAINTING but has not adopted — what the ⌘K highlight
- * shows you while you arrow through the theme list.
- *
- * Deliberately a plain atom next to two persistentAtoms: a preview must leave
- * nothing behind. Nothing writes `$skin`/`$mode` until a row is actually chosen,
- * so a palette dismissed mid-browse restores the committed look with no undo.
- */
-export const $themePreview = atom<null | { mode: 'light' | 'dark'; name: string }>(null)
-
-export function previewTheme(name: string, mode: 'light' | 'dark'): void {
-  $themePreview.set({ mode, name })
-}
-
-export function clearThemePreview(): void {
-  $themePreview.set(null)
-}
+const INJECTED_FONT_URLS = new Set<string>()
 
 const resolveMode = (mode: ThemeMode, systemDark = matchesQuery('(prefers-color-scheme: dark)')): 'light' | 'dark' =>
   mode === 'system' ? (systemDark ? 'dark' : 'light') : mode
@@ -67,10 +54,58 @@ const resolveMode = (mode: ThemeMode, systemDark = matchesQuery('(prefers-color-
 const normalizeSkin = (name: string | null): string =>
   name && resolveTheme(name) && !RETIRED_SKINS.has(name) ? name : DEFAULT_SKIN_NAME
 
+/**
+ * A stored mode, or `system` when there isn't one.
+ *
+ * A fresh profile follows the OS. Defaulting to `light` meant someone whose
+ * desktop is dark got a white window on first launch and had to go find the
+ * setting — and with per-appearance translucency it also handed them light's
+ * much heavier tint, tuned for a bright desktop they don't have.
+ */
 const normalizeMode = (value: string | null): ThemeMode =>
   value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
 
+// ─── Per-profile appearance persistence ─────────────────────────────────────
+// Skin and mode are each stored per profile. "default" isn't a real profile —
+// it *is* the legacy global slot, so it reads/writes the global directly. Named
+// profiles get their own entry and fall back to that global until assigned, so
+// unassigned profiles and pre-per-profile installs stay on the global value.
+const profilePref = <T extends string>(record: string, legacy: string, normalize: (v: string | null) => T) => {
+  const stored = (profile: string): string | null => storedStringRecord(record)[profile] ?? storedString(legacy)
+
+  return {
+    /** The pick as written, un-normalized. */
+    stored,
+    resolve: (profile: string): T => normalize(stored(profile)),
+    assign: (profile: string, value: T): void => {
+      if (profile === 'default') {
+        persistString(legacy, value)
+      } else {
+        persistStringRecord(record, { ...storedStringRecord(record), [profile]: value })
+      }
+    }
+  }
+}
+
+export const skinPref = profilePref(PROFILE_SKINS_KEY, SKIN_KEY, normalizeSkin)
+export const modePref = profilePref(PROFILE_MODES_KEY, MODE_KEY, normalizeMode)
+
+// Provider state keeps the raw pick so a name nothing resolves YET (a backend
+// skin the gateway hasn't seeded on this launch) isn't flattened to the default
+// for the rest of the session — it paints as soon as the registry can resolve it.
+const storedSkin = (profile: string): string => skinPref.stored(profile) ?? DEFAULT_SKIN_NAME
+
+/** Everything a peer window could change that this one has to repaint for. */
+const APPEARANCE_KEYS = new Set([SKIN_KEY, PROFILE_SKINS_KEY, MODE_KEY, PROFILE_MODES_KEY])
+
+// Last active profile — lets the boot paint pick its appearance before the
+// gateway reports which profile actually launched.
+const readBootProfileKey = () => normalizeProfileKey(storedString(LAST_PROFILE_KEY))
+const rememberActiveProfileKey = (profile: string) => persistString(LAST_PROFILE_KEY, profile)
+
 // ─── Color math (for synthesised light variants of dark-only skins) ────────
+// mix / ensureContrast live in @hermes/shared/color (shared with the TUI);
+// readableInk in ./color pins the desktop's near-black ink.
 
 function synthLightColors(seed: DesktopTheme): DesktopThemeColors {
   const accent = seed.colors.ring || seed.colors.primary
@@ -89,7 +124,7 @@ function synthLightColors(seed: DesktopTheme): DesktopThemeColors {
     popover: '#ffffff',
     popoverForeground: '#161616',
     primary: accent,
-    primaryForeground: readableOn(accent),
+    primaryForeground: readableInk(accent),
     secondary: soft,
     secondaryForeground: mix('#2a2a2a', accent, 0.34),
     accent: soft,
@@ -98,7 +133,7 @@ function synthLightColors(seed: DesktopTheme): DesktopThemeColors {
     input: mix('#e2e2e6', accent, 0.18),
     ring: accent,
     midground,
-    midgroundForeground: readableOn(midground),
+    midgroundForeground: readableInk(midground),
     destructive: '#b94a3a',
     destructiveForeground: '#ffffff',
     sidebarBackground: mix('#fafafa', accent, 0.05),
@@ -137,7 +172,7 @@ function deriveTheme(skinName: string, mode: 'light' | 'dark'): DesktopTheme {
  * the actual background luminance.
  */
 function renderedModeFor(colors: DesktopThemeColors, mode: 'light' | 'dark'): 'light' | 'dark' {
-  const rgb = hexToRgb(colors.background)
+  const rgb = parseColor(colors.background)
 
   if (!rgb) {
     return mode
@@ -151,7 +186,19 @@ function renderedModeFor(colors: DesktopThemeColors, mode: 'light' | 'dark'): 'l
 // ─── CSS application ────────────────────────────────────────────────────────
 
 // Per-mode mix knobs. Light/dark fallbacks live in styles.css `:root` /
-// `:root.dark`; setting them inline keeps active-skin overrides in force.
+// `:root.dark`; setting them inline keeps active-skin overrides surviving
+// the boot-time paint.
+// styles.css --theme-neutral-chrome — keep in sync.
+const NEUTRAL_CHROME = { light: '#f3f3f3', dark: '#0d0d0e' } as const
+
+// The one foreground --dt-primary-solid is built to carry. Fixed rather than
+// measured: the surface is derived to suit IT, not the other way round.
+// styles.css --dt-primary-solid-foreground fallback — keep in sync.
+const PRIMARY_SOLID_FOREGROUND = '#fcfcfc'
+
+const chromeBackground = (background: string, isDark: boolean) =>
+  mix(background, NEUTRAL_CHROME[isDark ? 'dark' : 'light'], isDark ? 0.26 : 0.08)
+
 const mixesFor = (isDark: boolean): Record<string, string> => ({
   '--theme-mix-chrome': isDark ? '74%' : '92%',
   '--theme-mix-sidebar': '100%',
@@ -160,15 +207,13 @@ const mixesFor = (isDark: boolean): Record<string, string> => ({
   '--theme-mix-bubble': isDark ? '46%' : '0%'
 })
 
-function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
+function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily = $chatFontFamily.get()) {
   if (typeof document === 'undefined') {
     return
   }
 
   const root = document.documentElement
   const c = theme.colors
-  // nous typography is the shared base, so every skin inherits its Courier Prime
-  // mono unless it overrides — matches desktop.
   const typo = { ...DEFAULT_TYPOGRAPHY, ...nousTheme.typography, ...theme.typography }
   const rendered = renderedModeFor(c, mode)
   const isDark = rendered === 'dark'
@@ -179,23 +224,20 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
   root.dataset.hermesTheme = skinName
   root.dataset.hermesMode = rendered
   root.classList.toggle('dark', isDark)
-  // The tint answers to the PIXELS, not to the preference: a skin that keeps a
-  // bright background under `mode: 'dark'` renders light and must be tinted like
-  // light. `renderedModeFor` above is that measurement.
-  setGlassAppearance(rendered)
 
-  // Brand seeds feed every surface + shadcn token via `color-mix()` in styles.css.
+  // Translucency is tuned per appearance, and "appearance" means the palette
+  // actually painted — a skin that keeps a bright surface in "dark" wants
+  // light's tint. Publishing from here covers the boot paint too, so the very
+  // first resolved state main is told about is already the right one.
+  setAppearance(rendered)
+
+  // Brand seeds feed every glass + shadcn token via `color-mix()` in styles.css.
   const seeds: Record<string, string> = {
     '--theme-foreground': c.foreground,
     '--theme-primary': c.primary,
     '--theme-secondary': c.secondary,
     '--theme-accent-soft': c.accent,
     '--theme-midground': midground,
-    // Semantic success, bent toward the accent so it settles into the palette
-    // instead of clashing with it. A green accent barely moves it (see
-    // `harmonize`); a blue one turns the sidebar's finished dots teal rather
-    // than leaving eight emerald spots fighting the theme.
-    '--ui-success': harmonize('#10b981', midground, 0.25),
     '--theme-warm': c.primary,
     '--theme-background-seed': c.background,
     '--theme-sidebar-seed': c.sidebarBackground ?? c.background,
@@ -213,13 +255,28 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
     '--dt-input': c.input,
     '--dt-ring': c.ring,
     '--dt-muted': c.muted,
-    '--dt-midground-foreground': c.midgroundForeground ?? readableOn(midground),
+    '--dt-midground-foreground': c.midgroundForeground ?? readableInk(midground),
+    // A LOUD fill of the brand colour, for the rare surface that has to read as
+    // the app speaking rather than as chrome. `primary` alone can't do that job:
+    // a pale accent (imported VS Code themes love a pastel pink) is a perfectly
+    // valid primary, and the honest `primaryForeground` for it is near-black —
+    // so the "loud" surface comes out a pastel card with dark text on it,
+    // whispering. Deepening the hue until the LIGHT foreground clears AA keeps
+    // one look across every theme: no-ops on an accent that is already deep,
+    // and only ever darkens, so the hue survives.
+    '--dt-primary-solid': ensureContrast(c.primary, PRIMARY_SOLID_FOREGROUND, 4.5),
+    '--dt-primary-solid-foreground': PRIMARY_SOLID_FOREGROUND,
     '--dt-composer-ring': c.composerRing ?? midground,
     '--dt-destructive': c.destructive,
     '--dt-destructive-foreground': c.destructiveForeground,
     '--dt-sidebar-border': c.sidebarBorder ?? c.border,
     '--dt-user-bubble-border': c.userBubbleBorder ?? c.border,
-    '--dt-font-sans': typo.fontSans,
+    // Semantic success, bent toward the accent so it settles into the palette
+    // instead of clashing with it. A green accent barely moves it (see
+    // `harmonize`); a blue one turns the sidebar's finished dots teal rather
+    // than leaving eight emerald spots fighting the theme.
+    '--ui-success': harmonize('#10b981', midground, 0.25),
+    '--dt-font-sans': resolveChatFontFamily(chatFontFamily, typo.fontSans),
     '--dt-font-mono': typo.fontMono,
     '--noise-opacity-mul': isDark ? 'calc(0.04 / 0.21)' : 'calc(0.34 / 0.21)'
   }
@@ -227,13 +284,52 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
   for (const [k, v] of Object.entries({ ...seeds, ...mixesFor(isDark), ...palette })) {
     root.style.setProperty(k, v)
   }
+
+  const chromeBg = chromeBackground(c.background, isDark)
+
+  window.hermesDesktop?.setTitleBarTheme?.({
+    background: chromeBg,
+    foreground: c.foreground
+  })
+
+  // Raw (non-JSON) keys read by the inline pre-paint script in index.html —
+  // they let a brand-new window paint the themed background on its very first
+  // frame, before this module has even loaded.
+  try {
+    window.localStorage.setItem('hermes-boot-background', chromeBg)
+    window.localStorage.setItem('hermes-boot-color-scheme', rendered)
+  } catch {
+    // Storage may be unavailable (private mode / quota); the inline script
+    // falls back to prefers-color-scheme.
+  }
+
+  if (typo.fontUrl && !INJECTED_FONT_URLS.has(typo.fontUrl)) {
+    const link = document.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = typo.fontUrl
+    link.dataset.hermesThemeFont = 'true'
+    document.head.appendChild(link)
+    INJECTED_FONT_URLS.add(typo.fontUrl)
+  }
 }
 
-// Boot-time paint to avoid a flash before <ThemeProvider> mounts.
+// Pin Electron's nativeTheme to the app's mode so the NATIVE window chrome
+// (macOS vibrancy material, titlebar, pre-paint background) matches the app
+// theme instead of the OS appearance. An explicit light/dark pick is forced;
+// 'system' stays 'system' so prefers-color-scheme keeps tracking the OS.
+const syncNativeTheme = (pref: ThemeMode, rendered: 'light' | 'dark') =>
+  window.hermesDesktop?.setNativeTheme?.(pref === 'system' ? 'system' : rendered)
+
+// Boot-time paint to avoid a flash before <ThemeProvider> mounts. Use the last
+// active profile's appearance so a non-default profile relaunch paints its own
+// skin + light/dark mode.
 if (typeof window !== 'undefined') {
-  const pref = normalizeMode($mode.get())
+  const profile = readBootProfileKey()
+  const pref = modePref.resolve(profile)
   const resolved = resolveMode(pref)
-  applyTheme(deriveTheme(normalizeSkin($skin.get()), resolved), resolved)
+  const theme = deriveTheme(skinPref.resolve(profile), resolved)
+  applyTheme(theme, resolved)
+  syncNativeTheme(pref, renderedModeFor(theme.colors, resolved))
 }
 
 // ─── Context ────────────────────────────────────────────────────────────────
@@ -242,14 +338,23 @@ interface ThemeContextValue {
   theme: DesktopTheme
   themeName: string
   mode: ThemeMode
-  /** The light/dark switch the user picked (before luminance override). */
+  /** The light/dark switch the user picked. */
   resolvedMode: 'light' | 'dark'
-  /** The mode actually painted, from the active background's luminance. */
+  /**
+   * The mode actually painted, derived from the active background's luminance.
+   * Differs from `resolvedMode` for skins that keep a bright surface in "dark"
+   * (or vice-versa). Surface-bound UI (e.g. the terminal palette) should key off
+   * this so it matches what's on screen instead of inverting.
+   */
   renderedMode: 'light' | 'dark'
   availableThemes: Array<{ name: string; label: string; description: string }>
   setTheme: (name: string) => void
   setMode: (mode: ThemeMode) => void
-  /** Paint `name`/`mode` without adopting it (⌘K highlight preview). */
+  /**
+   * Paint a theme with an explicit light/dark, without persistence. This is
+   * the highlight preview for the palette. A commit (`setTheme`) or
+   * `clearThemePreview` repaints the committed appearance.
+   */
   previewTheme: (name: string, mode: 'light' | 'dark') => void
   clearThemePreview: () => void
 }
@@ -259,7 +364,7 @@ const SKIN_LIST = BUILTIN_THEME_LIST.map(({ name, label, description }) => ({ na
 const ThemeContext = createContext<ThemeContextValue>({
   theme: nousTheme,
   themeName: DEFAULT_SKIN_NAME,
-  mode: 'system',
+  mode: 'light',
   resolvedMode: 'light',
   renderedMode: 'light',
   availableThemes: SKIN_LIST,
@@ -270,14 +375,17 @@ const ThemeContext = createContext<ThemeContextValue>({
 })
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // Built-ins + user-installed + backend skins + registry-contributed themes.
-  // Reactive so an install, a plugin registration, or a skin Hermes just authored
-  // shows up live in the picker and `/skin` without a reload.
+  // Skin + mode are assigned per profile; the active profile drives which
+  // appearance shows. Single-profile users only ever see "default", so their
+  // behavior is unchanged.
+  const profileKey = normalizeProfileKey(useStore($activeGatewayProfile))
+
+  // Built-ins + user-installed + registry-contributed themes. Reactive so an
+  // import or a plugin registration shows up live in the palette, settings
+  // grid, and `/skin` without a reload.
   const userThemes = useStore($userThemes)
   const backendThemes = useStore($backendThemes)
   const registryVersion = useStore($registryVersion)
-  const themeName = normalizeSkin(useStore($skin))
-  const mode = normalizeMode(useStore($mode))
 
   const availableThemes = useMemo(
     () =>
@@ -291,15 +399,62 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     [userThemes, backendThemes, registryVersion]
   )
 
+  const [themeName, setThemeNameState] = useState(() =>
+    typeof window === 'undefined' ? DEFAULT_SKIN_NAME : storedSkin(readBootProfileKey())
+  )
+
+  const [mode, setModeState] = useState<ThemeMode>(() =>
+    typeof window === 'undefined' ? 'system' : modePref.resolve(readBootProfileKey())
+  )
+
+  // Follow profile switches: paint the profile's assigned skin + mode and
+  // remember it for the next boot's first paint.
+  useEffect(() => {
+    rememberActiveProfileKey(profileKey)
+    setThemeNameState(storedSkin(profileKey))
+    setModeState(modePref.resolve(profileKey))
+  }, [profileKey])
+
+  // Appearance is per-profile localStorage, and every desktop window is another
+  // renderer on the same origin — so a switch made in the HUD (or any peer
+  // window) only ever repainted the window it was made in. `storage` fires in
+  // the OTHER windows, which is exactly the set that needs to catch up.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key && !APPEARANCE_KEYS.has(event.key)) {
+        return
+      }
+
+      const live = normalizeProfileKey($activeGatewayProfile.get())
+
+      setThemeNameState(storedSkin(live))
+      setModeState(modePref.resolve(live))
+    }
+
+    window.addEventListener('storage', onStorage)
+
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)')
   const resolvedMode = resolveMode(mode, systemDark)
 
-  // A preview overrides what is PAINTED but never what is reported: `themeName`
-  // and `mode` stay the committed choice, so the pickers keep their check on the
-  // real selection while the browse is in flight.
-  const preview = useStore($themePreview)
-  const paintedName = preview?.name ?? themeName
-  const paintedMode = preview?.mode ?? resolvedMode
+  // Transient highlight preview (palette theme picker). It is never
+  // persisted. A commit or an explicit clear returns the paint to the
+  // committed appearance.
+  const [preview, setPreview] = useState<{ name: string; mode: 'light' | 'dark' } | null>(null)
+
+  // The committed skin, resolved against the CURRENT registry — so a stored
+  // backend skin that failed to resolve at boot paints once the gateway seeds it.
+  const committedName = useMemo(
+    () => normalizeSkin(themeName),
+    // normalizeSkin resolves through the merged registry; the stores are its reactivity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [themeName, userThemes, backendThemes, registryVersion]
+  )
+
+  const paintedName = preview ? preview.name : committedName
+  const paintedMode = preview ? preview.mode : resolvedMode
 
   const activeTheme = useMemo(
     () => deriveTheme(paintedName, paintedMode),
@@ -310,10 +465,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     [paintedName, paintedMode, userThemes, backendThemes, registryVersion]
   )
 
-  // Accent retint. `null` — the state the app boots in, and the only one it is
-  // ever in unless a plugin moves it — returns the theme untouched, and
-  // retintTheme is an identity when the seed already matches, so this costs
-  // nothing until it is actually used. Never persisted: see accent-override.ts.
+  // Dev-only accent retint. `null` (always, in production) returns the theme
+  // untouched, and retintTheme is an identity when the seed already matches —
+  // so the picker costs nothing until it's actually moved off the default.
   const accentOverride = useStore($accentOverride)
 
   const paintedTheme = useMemo(
@@ -324,23 +478,42 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // What actually gets painted (matches the `.dark` class applyTheme toggles).
   const renderedMode = useMemo(() => renderedModeFor(paintedTheme.colors, paintedMode), [paintedTheme, paintedMode])
 
-  useEffect(() => applyTheme(paintedTheme, paintedMode), [paintedTheme, paintedMode])
+  // The chat face rides on the theme paint: the config-backed family is layered
+  // in front of the theme's own stack, so an empty value is exactly the theme.
+  const chatFontFamily = useStore($chatFontFamily)
 
-  // Committing drops the preview: leaving it up would keep painting the row the
-  // highlight happens to be on rather than the one that was just chosen.
+  useEffect(() => applyTheme(paintedTheme, paintedMode, chatFontFamily), [paintedTheme, paintedMode, chatFontFamily])
+
+  // Keep the native window appearance pinned to the app theme (vibrancy
+  // material, titlebar, new-window pre-paint background).
+  useEffect(() => syncNativeTheme(mode, renderedMode), [mode, renderedMode])
+
+  // Assign to whichever profile is live right now (read fresh so the callbacks
+  // stay stable across profile switches).
+  const liveProfile = () => normalizeProfileKey($activeGatewayProfile.get())
+
   const setTheme = useCallback((name: string) => {
-    clearThemePreview()
-    $skin.set(normalizeSkin(name))
+    const next = normalizeSkin(name)
+    setPreview(null)
+    setThemeNameState(next)
+    skinPref.assign(liveProfile(), next)
   }, [])
 
   const setMode = useCallback((next: ThemeMode) => {
-    clearThemePreview()
-    $mode.set(next)
+    setPreview(null)
+    setModeState(next)
+    modePref.assign(liveProfile(), next)
   }, [])
 
+  const previewTheme = useCallback((name: string, previewMode: 'light' | 'dark') => {
+    setPreview(resolveTheme(name) ? { name, mode: previewMode } : null)
+  }, [])
+
+  const clearThemePreview = useCallback(() => setPreview(null), [])
+
   // Drain a backend-driven skin switch (Hermes authoring/activating a skin from a
-  // prompt, or `/skin` on another surface). setTheme persists it, so the choice
-  // sticks like any manual pick.
+  // prompt, or `/skin` on another surface). setTheme persists it per profile, so
+  // the choice sticks like any manual pick.
   const pendingSkin = useStore($pendingSkinApply)
 
   useEffect(() => {
@@ -350,10 +523,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [pendingSkin, setTheme])
 
+  // The light/dark toggle (Shift+X by default) is owned by the keybind runtime
+  // (`appearance.toggleMode`) so it shows up in the hotkey map and is rebindable.
+
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme: paintedTheme,
-      themeName,
+      themeName: committedName,
       mode,
       resolvedMode,
       renderedMode,
@@ -363,7 +539,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       previewTheme,
       clearThemePreview
     }),
-    [paintedTheme, themeName, mode, resolvedMode, renderedMode, availableThemes, setTheme, setMode]
+    [
+      paintedTheme,
+      committedName,
+      mode,
+      resolvedMode,
+      renderedMode,
+      availableThemes,
+      setTheme,
+      setMode,
+      previewTheme,
+      clearThemePreview
+    ]
   )
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

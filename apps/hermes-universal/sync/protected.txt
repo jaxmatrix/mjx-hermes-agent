@@ -1,0 +1,217 @@
+# Paths where UNIVERSAL's version wins, even though desktop is the reference.
+#
+# Everything not listed here takes desktop's file verbatim. A path listed here
+# is never overwritten by the sync script:
+#
+#   - present in both, contents differ  -> MERGE  (a human folds desktop's
+#                                                  changes into universal's file)
+#   - present in both, identical        -> SKIP   (nothing to do)
+#   - desktop-only                      -> REVIEW (not copied; a desktop file
+#                                                  landing inside a protected
+#                                                  subsystem needs a decision)
+#
+# Globs are relative to `src/` and support `*` (no slash) and `**` (any).
+# Scope is `src/` only — package.json, tsconfig.json and vite.config.ts are
+# aligned by hand in phase 1, and vite.config.ts must survive verbatim because
+# it carries the observability transforms and the Tauri aliases.
+
+# ---------------------------------------------------------------------------
+# Universal-exclusive subsystems. Desktop has no counterpart at all; a desktop
+# file appearing under one of these is a naming collision, not a port.
+# ---------------------------------------------------------------------------
+observability/**
+voice/**
+transport/**
+gateway/**
+dev/**
+lib/billing/**
+lib/browser/**
+lib/browser-act/**
+lib/hermes-desktop/**
+lib/mic-permission.ts
+lib/clipboard-tauri.*
+lib/window-drag.*
+boot.ts
+global.ts
+components/layout/**
+components/pane-shell/tile/**
+plugins/accent/**
+app/browser/**
+assets/brand/**
+fonts/**
+
+# ---------------------------------------------------------------------------
+# The connection / tab / tunnel layer (MJXHRM-591, MJXHRM-592).
+#
+# Universal factored connection scoping into its own modules bound to Rust
+# `src-tauri/src/tunnels.rs`; desktop scopes connections inline in session.ts
+# and gateway.ts. The two designs are not compatible, and universal's is the
+# one the Rust side talks to.
+# ---------------------------------------------------------------------------
+store/active-connection.*
+store/connection.*
+store/connection-*.*
+store/connections.*
+store/tab-connection.*
+store/tab-ref.*
+# Desktop's registry atom is a different concern from universal's connection
+# scoping — it records the topology Electron publishes, which the Tauri shim
+# fills from the Rust roster instead. Eight imported files need it, and nothing
+# in universal's layer competes with it, so desktop owns this one.
+!store/connection-registry-state.ts
+store/event-router*.*
+# Universal's JSON-RPC wire client (connect/close, request, the event tap, the
+# active-profile stamp) over the Rust-backed TauriWebSocket. Desktop's
+# `store/gateway.ts` is a registry that multiplexes clients, not a client, so it
+# lands verbatim as an AUTO file and only the wire half is protected.
+store/gateway-client.*
+store/gateway-secondaries.*
+store/live-session-status.*
+store/session-replay.*
+# LEGACY — universal's session-key route dispatch (was `store/session-request-router`,
+# which is now desktop's, verbatim). Universal-only, imported only by the old
+# fold's island; retires with it (MJXHRM-602 fold step 6).
+store/session-route-dispatch.*
+# LEGACY — universal's session-key session state (was `store/session-states`,
+# which is now desktop's, verbatim). In-memory only; retires with the old fold
+# and the ChatScreen family (MJXHRM-602 fold steps 6–8).
+store/session-key-states.*
+store/session-state-types.*
+store/session-tiles-binding.*
+store/ssh-backend.*
+# Universal's session LIST/LIFECYCLE layer (list, paging, pins, tombstones,
+# branching, opening) is built on the connection scoping above and has no
+# desktop counterpart — desktop's `store/session.ts` is the session STATE store
+# and lands verbatim as an AUTO file, so only the lifecycle half is protected.
+store/session-lifecycle.*
+store/chat.ts
+store/prompt-session-bridge.ts
+store/terminal-open.ts
+store/layout-edges.ts
+store/live-poll.ts
+store/pane-geometry.ts
+store/voice-levels.ts
+store/transcript-paint.*
+store/effective-cwd.ts
+store/reactions-universal.ts
+store/billing-block-universal.ts
+store/pane-focus-universal.ts
+store/resume-prompts.ts
+store/tauri-app-update.ts
+lib/desktop-fs-universal.ts
+lib/clipboard-universal.ts
+voice/wake-pause.ts
+store/wake-word-universal.ts
+store/live-sync-universal.ts
+store/pet-generate-universal.ts
+store/composer-hud-universal.ts
+# Universal-only theme peer sync atoms (desktop uses profile prefs instead).
+themes/appearance-sync.ts
+themes/mode-skin-atoms.ts
+store/artifacts.*
+store/windows.ts
+store/windows.test.ts
+store/windows-kind.test.ts
+lib/connection-color.*
+lib/icons-extra.ts
+components/chat/chat-connection-banner.*
+components/chat/connection-accent.*
+app/chat/use-tab-connection.*
+app/settings/setting-row-id.ts
+app/gateway/gateway-configurator.tsx
+hermes.ts
+# The public `@hermes/plugin-sdk` specifier resolves to universal-only
+# `sdk/universal.ts` (desktop's barrel plus universal's additions). Desktop's
+# runtime shim names its barrel by relative path, so it carries ONE changed
+# specifier here, or a runtime-loaded plugin would see a narrower SDK than a
+# bundled one. `sdk/index.ts` itself stays desktop's, verbatim.
+sdk/runtime.ts
+# Desktop's pane host plus ONE branch: a `url` tab renders universal's
+# `BrowserPane` (the Rust guest webview, bound to the focused url tab) instead of
+# desktop's `PreviewPane`. Desktop draws a url tab with an Electron `<webview>`,
+# an element a Tauri webview does not have; the guest is the Tauri seam. File,
+# artifact and html tabs still render desktop's pane. `preview-tile.tsx` and
+# `browser-popout-shell.tsx` mount this component, so they stay desktop's.
+app/chat/right-rail/preview.tsx
+app/chat/right-rail/preview.test.tsx
+# The entry carries three universal lines desktop has no place for, in this order:
+# the persisted-tab migration (must be the first import), the hermesDesktop bridge
+# install (a side-effect import, second, so it precedes every module-scope
+# `window.hermesDesktop` read), and the `bootUniversal()` call.
+main.tsx
+
+# ---------------------------------------------------------------------------
+# The mobile shell. Desktop has no phone presentation; these are the files that
+# make universal work on a touch device at all.
+# ---------------------------------------------------------------------------
+app/mobile-controller.tsx
+app/model-picker-overlay.tsx
+app/model-visibility-overlay.tsx
+app/shell/model-drawer-grouping.ts
+store/zoom-universal.ts
+app/shell/mobile-*.*
+app/right-pane/**/mobile-*.*
+app/chat/composer/bubble-row.tsx
+app/chat/composer/bubble-drag.*
+store/chat-bubbles.*
+hooks/use-keyboard-inset.*
+lib/safe-area.*
+lib/touch.*
+lib/resize-gesture.*
+lib/trackpad-gestures.*
+# Desktop's primitive plus one event: `pointercancel` ends the drag too. On touch
+# the platform can steal a pointer mid-gesture and deliver `pointercancel` INSTEAD
+# of `pointerup`, so desktop's two-event version leaks both listeners. Same
+# export, same signature — a superset desktop's callers cannot tell apart.
+lib/pointer-drag.ts
+lib/pointer-drag.test.ts
+# Universal asks the Tauri runtime which platform it is on and handles the iOS
+# webview boot race; desktop only sniffs navigator, and has no notion of mobile
+# at all. Desktop's three host-OS predicates are folded in at the bottom.
+lib/platform.ts
+
+# ---------------------------------------------------------------------------
+# Contracts. These encode the mobile and WebKit rules the imported code has to
+# satisfy; they are the phase-5 checklist and must not be replaced by desktop's
+# (Chromium, mouse-only) expectations.
+# ---------------------------------------------------------------------------
+styles.css
+styles.hud-contract.test.ts
+styles.mobile-viewport.test.ts
+styles.safe-area-vars.test.ts
+styles.connect-safe-area.test.ts
+entry-graph.test.ts
+components/ui/hover-affordance-touch.test.ts
+
+# ---------------------------------------------------------------------------
+# i18n. Universal's catalogues carry the connection-banner strings and are held
+# to a ratchet baseline that may only shrink, so desktop's differently-keyed
+# catalogues cannot land wholesale.
+# ---------------------------------------------------------------------------
+i18n/en.ts
+i18n/ar.ts
+i18n/ja.ts
+i18n/zh.ts
+i18n/zh-hant.ts
+i18n/types.ts
+
+# Universal host glue (Tauri HUD handoff, workspace route table, composer draft bus).
+app/hud/handoff-satellite.ts
+app/contrib/workspace-routes.tsx
+store/composer-draft-transport.ts
+app/contrib/handoff-receipt.ts
+lib/connector-tools.ts
+components/pane-shell/tree/renderer/track-model.ts
+store/translucency.ts
+
+# Universal markdown math collapse (katex-html host) + touch column resize.
+# Desktop's katex-memo expands KaTeX into a hast subtree; universal caches the
+# HTML string and mounts one host node. Desktop's markdown-table lacks
+# startPointerDrag / touch-none / unmount teardown the mobile tests pin.
+lib/katex-memo.ts
+lib/markdown-preprocess.ts
+components/assistant-ui/markdown-table.tsx
+components/assistant-ui/markdown-text.tsx
+components/assistant-ui/directive-text.tsx
+components/chat/shiki-highlighter.tsx
+app/contrib/surfaces.tsx

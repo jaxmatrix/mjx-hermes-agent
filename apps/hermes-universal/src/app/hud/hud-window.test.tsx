@@ -13,7 +13,7 @@
  */
 
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
-import { MemoryRouter, useNavigate } from 'react-router-dom'
+import { MemoryRouter, useNavigate } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as NotificationsModule from '@/store/notifications'
@@ -62,7 +62,7 @@ vi.mock('@/store/chat', async importActual => ({
   ...((await importActual()) as Record<string, unknown>),
   ...chat
 }))
-vi.mock('@/store/session', async importActual => ({
+vi.mock('@/store/session-lifecycle', async importActual => ({
   ...(await importActual<typeof SessionModule>()),
   lastOpenedSessionId: () => remembered.id,
   openSession: vi.fn().mockResolvedValue(undefined),
@@ -82,7 +82,7 @@ vi.mock('./hud', () => ({ closeHud: vi.fn().mockResolvedValue(undefined), HUD_SU
 vi.mock('./handoff', () => ({ reportHudSession: vi.fn() }))
 
 import { $connectionError, $connectionPhase } from '@/store/connection'
-import { $activeStoredSessionId, openSession } from '@/store/session'
+import { $activeStoredSessionId, openSession } from '@/store/session-lifecycle'
 
 import { closeHud } from './hud'
 import { HudWindowRoot } from './hud-window'
@@ -258,7 +258,7 @@ describe('the connecting state', () => {
 
     const { container } = summonAt('/')
 
-    expect(container.textContent).toContain('Connecting to Hermes…')
+    expect(container.textContent).toContain('Connecting…')
     expect(container.textContent).not.toContain('This tile is not available in this window.')
     expect(bandState(container)).toBe('collapsed')
   })

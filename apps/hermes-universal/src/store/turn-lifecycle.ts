@@ -31,23 +31,21 @@
 import { atom } from 'nanostores'
 
 import type { GatewayEvent } from '@/gateway'
-import type { ChatMessage } from '@/lib/chat-messages'
 import { isLiveTailRow, reconcileLiveTail } from '@/lib/live-tail'
 import { appendLiveSessionProjection } from '@/lib/session-history'
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { applyResumedApproval } from '@/store/approvals'
-import { applyResumedClarify } from '@/store/clarify'
-import { $gatewayState } from '@/store/gateway'
-import { applyResumedMcpSetup } from '@/store/mcp-setup'
-import { requestForSession } from '@/store/session-request-router'
+import { $gatewayState } from '@/store/gateway-client'
+import { applyResumedClarify, applyResumedMcpSetup } from '@/store/resume-prompts'
+import { requestForSession } from '@/store/session-route-dispatch'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   addSessionKeyHooks,
   isPlaceholderKey,
   rekeySession,
   updateSession
 } from '@/store/session-state-types'
-import type { SessionResumeResponse } from '@/types/hermes'
+import type { SessionResumeResult } from '@/types/hermes'
 
 // ---------------------------------------------------------------------------
 // The record
@@ -472,7 +470,7 @@ export interface RemoteTurnSnapshot {
 }
 
 /** Read the fields we care about out of a raw `session.resume` response. */
-export function remoteTurnSnapshot(resumed: SessionResumeResponse): RemoteTurnSnapshot {
+export function remoteTurnSnapshot(resumed: SessionResumeResult): RemoteTurnSnapshot {
   const inflight = resumed.inflight ?? null
   const auto = resumed.auto_continue
 
@@ -637,7 +635,7 @@ export function applyTurnReconciliation(key: string, plan: TurnReconciliation): 
  * that trusts `running` alone paints an idle chat, seals whatever it recovered
  * as a finished reply, and is surprised by `message.start` a minute later.
  */
-export const resumedTurnIsLive = (resumed: SessionResumeResponse): boolean =>
+export const resumedTurnIsLive = (resumed: SessionResumeResult): boolean =>
   Boolean(resumed.inflight?.streaming ?? resumed.running) || Boolean(resumed.auto_continue)
 
 /**
@@ -661,7 +659,7 @@ export const resumedTurnIsLive = (resumed: SessionResumeResponse): boolean =>
  * this function, so hanging the replay here is what stops the fourth one being
  * written without it (MJXHRM-362).
  */
-export function adoptResumedTurn(key: string, resumed: SessionResumeResponse): TurnReconciliation {
+export function adoptResumedTurn(key: string, resumed: SessionResumeResult): TurnReconciliation {
   applyResumedClarify(key, resumed)
   applyResumedMcpSetup(key, resumed)
   applyResumedApproval(key, resumed)
@@ -702,7 +700,7 @@ const sameMessages = (left: ChatMessage[], right: ChatMessage[]): boolean =>
  * slice while it is in the air, so a merge built from the pre-await copy would
  * silently drop every token that arrived during the round trip.
  */
-function reconcileSessionTail(key: string, resumed: SessionResumeResponse): void {
+function reconcileSessionTail(key: string, resumed: SessionResumeResult): void {
   updateSession(key, state => {
     // The committed prefix, with the live tail removed: the projection decides
     // for itself what the running turn looks like, and feeding it our own tail
@@ -765,7 +763,7 @@ function applyReconciledBusy(key: string, plan: TurnReconciliation): void {
  * back, and `reconcileSessionTail` folds it into that slice.
  */
 export async function reconcileSessionTurn(key: string): Promise<TurnReconciliation | null> {
-  const state = $sessionStates.get()[key]
+  const state = $sessionKeyStates.get()[key]
   const storedId = state?.storedSessionId ?? state?.runtimeSessionId
 
   if (!storedId || reconciling.has(key)) {
@@ -786,10 +784,10 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
     // → `_gui_surface_toolsets`), and "desktop" is the literal that unlocks the
     // `desktop_ui` toolset this app answers every bridge of. See
     // `lib/session-source.ts` for why the old omission was only half a fix.
-    const resumed = await requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
+    const resumed = await requestForSession<SessionResumeResult>(storedId, 'session.resume', {
       session_id: storedId,
       omit_messages: true,
-      ...SESSION_SOURCE_PARAMS
+      source: 'desktop'
     })
 
     // A gateway that RESTARTED (a supervised local backend, a redeployed remote)

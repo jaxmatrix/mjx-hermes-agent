@@ -20,7 +20,6 @@ import {
   setCuratorPaused
 } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { writeClipboardText } from '@/lib/clipboard'
 import { AlertCircle } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { upsertDesktopActionTask } from '@/store/activity'
@@ -238,8 +237,7 @@ export function MaintenancePanel() {
                 </span>
                 <Button
                   onClick={() => {
-                    // Seam: desktop calls `window.hermesDesktop.writeClipboard`.
-                    void writeClipboardText(url)
+                    void window.hermesDesktop.writeClipboard(url)
                     notify({ durationMs: 1500, kind: 'success', message: mm.linkCopied })
                   }}
                   size="xs"
@@ -282,8 +280,8 @@ export function MaintenancePanel() {
                     !curator.enabled
                       ? 'bg-(--ui-bg-quinary) text-(--ui-text-tertiary)'
                       : curator.paused
-                        ? 'bg-(--ui-yellow)/15 text-(--ui-yellow)'
-                        : 'bg-(--ui-green)/15 text-(--ui-green)'
+                        ? 'bg-amber-500/15 text-amber-400'
+                        : 'bg-emerald-500/15 text-emerald-400'
                   )}
                 >
                   {!curator.enabled ? mm.curatorDisabled : curator.paused ? mm.curatorPaused : mm.curatorActive}

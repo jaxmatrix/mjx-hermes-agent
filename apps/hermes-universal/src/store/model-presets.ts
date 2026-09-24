@@ -1,10 +1,12 @@
-import { Codecs, persistentAtom } from '@/lib/persisted'
-import { setCurrentFastMode, setCurrentReasoningEffort } from '@/store/model'
-import { notifyError } from '@/store/notifications'
+import { atom } from 'nanostores'
 
-// Ported from apps/desktop/src/store/model-presets.ts. Seam changes: persistence
-// via @/lib/persisted (persistentAtom) instead of desktop's storage helpers, and
-// the reasoning/fast setters come from @/store/model.
+import { persistString, storedString } from '@/lib/storage'
+
+import { notifyError } from './notifications'
+import { setCurrentFastMode, setCurrentReasoningEffort } from './session'
+import { sessionTileDelegate } from './session-states'
+
+const STORAGE_KEY = 'hermes.desktop.model-presets'
 
 /** Per-model reasoning/fast preset, remembered globally across sessions and
  *  re-applied to the session whenever that model is selected. Unset dimensions
@@ -19,11 +21,23 @@ type RequestGateway = <T>(method: string, params?: Record<string, unknown>) => P
 /** Stable `provider::model` key (matches the visibility-store format). */
 export const modelPresetKey = (provider: string, model: string): string => `${provider}::${model}`
 
-export const $modelPresets = persistentAtom<Record<string, ModelPreset>>(
-  'hermes.model-presets',
-  {},
-  Codecs.json<Record<string, ModelPreset>>()
-)
+function load(): Record<string, ModelPreset> {
+  const raw = storedString(STORAGE_KEY)
+
+  if (!raw) {
+    return {}
+  }
+
+  try {
+    const parsed = JSON.parse(raw)
+
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, ModelPreset>) : {}
+  } catch {
+    return {}
+  }
+}
+
+export const $modelPresets = atom<Record<string, ModelPreset>>(load())
 
 export function getModelPreset(provider: string, model: string): ModelPreset {
   return $modelPresets.get()[modelPresetKey(provider, model)] ?? {}
@@ -35,27 +49,39 @@ export function setModelPreset(provider: string, model: string, patch: ModelPres
   const next = { ...$modelPresets.get(), [key]: { ...$modelPresets.get()[key], ...patch } }
 
   $modelPresets.set(next)
+  persistString(STORAGE_KEY, JSON.stringify(next))
 }
 
-/** Push a model's preset onto the active session (optimistic + gateway).
+/** Apply a model's preset to the composer, then push it to a live session.
  *  `undefined` skips that dimension; values are capability-gated upstream.
- *  No-ops without a session — the gateway's `config.set` reasoning/fast fall
- *  back to persistent (global/profile) config when none matches, so selecting
- *  a model must not reach it (else it rewrites `agent.*`, defaults included). */
+ *  Without a session the local draft still needs the preset, but must not call
+ *  `config.set`: that falls back to persistent profile config when no session
+ *  matches and would rewrite the user's defaults.
+ *
+ *  `primary: false` scopes the optimistic write to the tile's session slice —
+ *  a tile's picker must not clobber the primary composer's effort/fast. */
 export async function applyModelPreset(
   { effort, fast }: ModelPreset,
-  ctx: { failMessage: string; request: RequestGateway; sessionId: null | string }
+  ctx: { failMessage: string; primary?: boolean; request: RequestGateway; sessionId: null | string }
 ): Promise<void> {
+  if (ctx.primary ?? true) {
+    if (effort !== undefined) {
+      setCurrentReasoningEffort(effort)
+    }
+
+    if (fast !== undefined) {
+      setCurrentFastMode(fast)
+    }
+  } else if (ctx.sessionId) {
+    sessionTileDelegate()?.updateSession(ctx.sessionId, state => ({
+      ...state,
+      ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+      ...(fast !== undefined ? { fast } : {})
+    }))
+  }
+
   if (!ctx.sessionId) {
     return
-  }
-
-  if (effort !== undefined) {
-    setCurrentReasoningEffort(effort)
-  }
-
-  if (fast !== undefined) {
-    setCurrentFastMode(fast)
   }
 
   try {

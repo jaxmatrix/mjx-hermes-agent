@@ -1,3 +1,5 @@
+'use client'
+
 import { type ReactNode, useCallback, useRef, useState } from 'react'
 
 import { useResizeObserver } from '@/hooks/use-resize-observer'
@@ -14,17 +16,9 @@ export function ExpandableBlock({ children, className }: ExpandableBlockProps) {
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
 
-  // SHARED observer, and measurement inside ResizeObserver timing only — the two
-  // halves of desktop's version of this file, neither of which came across in the
-  // port (MJXHRM-45).
-  //
-  // The private `new ResizeObserver` this replaces meant the browser delivered
-  // one callback PER MOUNTED INSTANCE whenever a common ancestor resized, and a
-  // tool-heavy transcript mounts dozens of these. The synchronous `measure()`
-  // before the first delivery was worse: it read `scrollHeight` while the
-  // commit's layout was still dirty, forcing a reflow per instance on every
-  // session switch. The observer's spec-guaranteed first delivery does the same
-  // measurement with layout already clean.
+  // Measure inside ResizeObserver timing only (layout is clean there). A
+  // synchronous mount-time scrollHeight read forces a reflow per instance,
+  // and a tool-heavy transcript mounts dozens of these on a session switch.
   const measure = useCallback(() => {
     const el = innerRef.current
 
@@ -56,11 +50,6 @@ export function ExpandableBlock({ children, className }: ExpandableBlockProps) {
         // both sideways scrolling and text selection. Keep the fade
         // `pointer-events-none` and pin the only clickable target — a compact
         // toggle — to the right edge, clear of the draggable scrollbar track.
-        //
-        // The fade colour has to end in whatever the host surface is painted
-        // with, and a code card is no longer the chat background — it has its
-        // own tint. Hosts override `--expandable-fade-from`; everyone else keeps
-        // the chat surface.
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex h-7 justify-end bg-linear-to-t from-[var(--expandable-fade-from,var(--ui-chat-surface-background))] to-transparent">
           <button
             aria-expanded={expanded}

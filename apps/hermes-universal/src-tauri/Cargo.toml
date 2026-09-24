@@ -43,7 +43,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # work. "Trace every command" therefore costs one word here, not 50 edits.
 [features]
 default = ["update-checks"]
-update-checks = ["dep:regex", "dep:tauri-plugin-updater"]
+update-checks = ["dep:tauri-plugin-updater"]
 tracing = [
   "dep:tracing",
   "dep:tracing-subscriber",
@@ -191,6 +191,11 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 # no extra compilation unit. Used by the hermes-media:// scheme to decode a path
 # for its extension check without hand-rolling a decoder.
 percent-encoding = "2"
+url = "2"
+# RGBA→PNG for `save_clipboard_image` (clipboard-manager hands raw RGBA).
+image = { version = "0.25", default-features = false, features = ["png"] }
+# Debounced directory watches for preview + disk-plugin roots (`watchers.rs`).
+notify = "6"
 # rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
 #
 # BOTH root sources, deliberately in step with tokio-tungstenite below —
@@ -226,10 +231,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # incl. the Android/iOS NDK build.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-# Play Store listing scrape (updates.rs) — only pulled in by `update-checks`.
-# Google publishes no version API, so the listing HTML is the only source; the
-# patterns it matches are inherently unstable, hence the soft "unparsed" result.
-regex = { version = "1", optional = true }
+# Always-on (favicon HTML + Play Store listing scrape under update-checks).
+regex = "1"
 
 # OpenTelemetry span export (`tracing` feature). All optional — a default build
 # links none of them.
@@ -303,6 +306,9 @@ env_logger = { version = "0.11", default-features = false }
 # PTY: Unix openpty / Windows ConPTY. Gated OFF the mobile targets — a phone has no
 # local shell, the right pane isn't shown there, and this keeps it out of the NDK build.
 portable-pty = "0.9"
+# OS trash for `fs_trash` (fs_ipc.rs) — recoverable delete matching Electron
+# `shell.trashItem`. Desktop-only; phones have no project-tree trash path.
+trash = "5"
 # System-sleep inhibitor behind the keep-awake toggle (keep_awake.rs, desktop-only):
 # macOS IOPMAssertion, Windows SetThreadExecutionState, Linux systemd-inhibit over
 # D-Bus. Gated for the same reason as the PTY — a phone has no such lever, and this

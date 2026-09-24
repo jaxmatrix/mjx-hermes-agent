@@ -1,494 +1,831 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { type ChatMessage, chatMessageText } from '@/lib/chat-messages'
 import {
-  __resetInFlightTurnJournalCache,
   clearInFlightTurnJournal,
+  type JournalableSessionState,
   mergeInFlightMessages,
   persistInFlightTurnState,
   readInFlightTurnJournal,
-  recoverableTail,
-  recoverInFlightTurnJournal
+  recoverInFlightTurnJournal,
+  resetInFlightTurnJournalStateForTests
 } from '@/lib/inflight-turn-journal'
 
-const user = (id: string, text: string): ChatMessage => ({ id, role: 'user', parts: [{ type: 'text', text }] })
+const STORAGE_KEY = 'hermes.desktop.inflightTurnJournal.v1'
+const STORAGE_PREFIX = 'hermes.desktop.inflightTurnJournal.v2:'
+const MIGRATION_KEY = 'hermes.desktop.inflightTurnJournal.v2.migrated'
 
-const assistant = (id: string, text: string, patch: Partial<ChatMessage> = {}): ChatMessage => ({
-  id,
-  role: 'assistant',
-  parts: [{ type: 'text', text }],
-  ...patch
-})
+const sessionStorageKey = (storedSessionId: string) => `${STORAGE_PREFIX}${encodeURIComponent(storedSessionId)}`
 
-const withTool = (id: string, patch: Partial<ChatMessage> = {}): ChatMessage => ({
-  id,
-  role: 'assistant',
-  parts: [
-    { type: 'reasoning', text: 'thinking' },
-    { type: 'tool-call', toolCallId: 't1', toolName: 'terminal', args: {} }
-  ],
-  ...patch
-})
+function user(id: string, text: string): ChatMessage {
+  return { id, role: 'user', parts: [{ type: 'text', text }] }
+}
 
-beforeEach(() => {
-  window.localStorage.clear()
-  __resetInFlightTurnJournalCache()
-})
+function assistant(id: string, text: string, extra: Partial<ChatMessage> = {}): ChatMessage {
+  return { id, role: 'assistant', parts: [{ type: 'text', text }], ...extra }
+}
 
-describe('recoverableTail', () => {
-  it('takes the live assistant and the user turn that opened it', () => {
-    const tail = recoverableTail([
-      user('u0', 'older'),
-      assistant('a0', 'older reply'),
-      user('u1', 'do a thing'),
-      withTool('assistant-stream-1', { pending: true })
-    ])
+function assistantWithTool(id: string, text: string, extra: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id,
+    role: 'assistant',
+    parts: [
+      { type: 'tool-call', toolCallId: 'tc-1', toolName: 'terminal', args: { command: 'ls' } },
+      { type: 'text', text }
+    ],
+    ...extra
+  }
+}
 
-    expect(tail.map(m => m.id)).toEqual(['u1', 'assistant-stream-1'])
-  })
-
-  // A mid-turn correction inserts ANOTHER user row right before the live reply,
-  // so a turn can open with a RUN of user rows. Stopping at the nearest one
-  // journals the correction alone and loses the prompt that started the turn.
-  it('walks back over a run of user rows so a correction keeps its prompt', () => {
-    const tail = recoverableTail([
-      user('u1', 'do a thing'),
-      user('u2', 'actually do this'),
-      withTool('assistant-stream-1', { pending: true })
-    ])
-
-    expect(tail.map(m => m.id)).toEqual(['u1', 'u2', 'assistant-stream-1'])
-  })
-
-  it('journals nothing when the turn has produced nothing worth keeping', () => {
-    expect(recoverableTail([user('u1', 'do a thing')])).toEqual([])
-    expect(recoverableTail([user('u1', 'x'), assistant('a1', '   ', { pending: true })])).toEqual([])
-  })
-
-  it('keeps a failed turn, which has no text but is the whole point', () => {
-    const tail = recoverableTail([user('u1', 'x'), assistant('a1', '', { error: 'provider exploded' })])
-
-    expect(tail.map(m => m.id)).toEqual(['u1', 'a1'])
-  })
-})
-
-describe('mergeInFlightMessages', () => {
-  const tail = [user('u1', 'do a thing'), withTool('assistant-stream-1', { pending: true })]
-
-  it('appends the whole turn when the base never saw it', () => {
-    const result = mergeInFlightMessages([user('u0', 'older'), assistant('a0', 'reply')], tail)
-
-    expect(result.applied).toBe(true)
-    expect(result.messages.map(m => m.id)).toEqual(['u0', 'a0', 'u1', 'assistant-stream-1'])
-  })
-
-  // The turn finished and committed while we were away — anything the journal
-  // still holds is a partial copy of a reply already on screen.
-  it('reports caught-up when the base already has a settled reply', () => {
-    const result = mergeInFlightMessages([user('h1', 'do a thing'), assistant('h2', 'the answer')], tail)
-
-    expect(result).toMatchObject({ applied: false, caughtUp: true })
-  })
-
-  // The backend's projection is TEXT-ONLY: its snapshot cannot express the
-  // reasoning and tool calls the user watched happen.
-  it('overlays journal structure onto a live projection row, keeping its id', () => {
-    const base = [user('h1', 'do a thing'), assistant('assistant-stream-s1', 'partial', { pending: true })]
-    const result = mergeInFlightMessages(base, tail)
-
-    expect(result.applied).toBe(true)
-    expect(result.messages[1].id).toBe('assistant-stream-s1')
-    expect(result.messages[1].parts.map(p => p.type)).toEqual(['reasoning', 'tool-call'])
-  })
-
-  it('matches the prompt on normalized text, not exact whitespace', () => {
-    const base = [user('h1', '  do   a thing '), assistant('assistant-stream-s1', '', { pending: true })]
-
-    expect(mergeInFlightMessages(base, tail).applied).toBe(true)
-  })
-
-  it('never re-appends a row the base already holds by id', () => {
-    const base = [user('u1', 'do a thing'), withTool('assistant-stream-1', { pending: true })]
-    const result = mergeInFlightMessages(base, tail)
-
-    expect(result.messages.filter(m => m.id === 'assistant-stream-1')).toHaveLength(1)
-  })
-
-  // The journal can outlive the turn it recorded: a reclaim, reconnect or
-  // restart race skips the settle that clears the entry. On the next resume its
-  // rows carry ids the committed rows do not, so id-based dedupe waves them
-  // through and the conversation ends with the same answers appended again, out
-  // of order.
-  it('treats a tail whose answers are already committed as caught up', () => {
-    // Deliberately mismatched ids and a user row the base does not hold, so the
-    // ONLY thing that can recognise the duplicate is the text comparison.
-    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the answer')]
-    const stale = [user('journal-u', 'a different prompt'), assistant('journal-a', 'the answer')]
-
-    expect(mergeInFlightMessages(base, stale)).toMatchObject({ applied: false, caughtUp: true })
-  })
-
-  it('ignores whitespace when deciding the tail is already committed', () => {
-    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the   answer')]
-    const stale = [user('journal-u', 'a different prompt'), assistant('journal-a', 'the answer')]
-
-    expect(mergeInFlightMessages(base, stale).caughtUp).toBe(true)
-  })
-
-  it('still appends a tail the base has never seen', () => {
-    // The crash-recovery path the journal exists for must not regress: same
-    // shape as above, different answer text.
-    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the answer')]
-    const fresh = [user('journal-u', 'a different prompt'), assistant('journal-a', 'a NEW answer')]
-    const result = mergeInFlightMessages(base, fresh)
-
-    expect(result.applied).toBe(true)
-    expect(chatMessageText(result.messages[result.messages.length - 1])).toBe('a NEW answer')
-  })
-
-  it('appends a tail where only SOME answers are already committed', () => {
-    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the answer')]
-
-    const partly = [
-      user('journal-u', 'a different prompt'),
-      assistant('journal-a', 'the answer'),
-      assistant('journal-b', 'and then some')
-    ]
-
-    expect(mergeInFlightMessages(base, partly).applied).toBe(true)
-  })
-
-  it('does nothing for a tail with no recoverable assistant', () => {
-    expect(mergeInFlightMessages([], [user('u1', 'x')])).toMatchObject({ applied: false, caughtUp: false })
-  })
-
-  // A journaled row was captured mid-stream, so it carries `pending: true`. If
-  // the turn died with the app, nothing will ever complete it — leaving the
-  // flag on renders a bubble that spins forever beside an idle composer.
-  it('seals a recovered row when the turn is not still running', () => {
-    const result = mergeInFlightMessages([], tail)
-
-    expect(result.messages.at(-1)?.pending).toBe(false)
-  })
-
-  it('keeps it pending when the backend says the turn survived', () => {
-    const result = mergeInFlightMessages([], tail, { keepPending: true })
-
-    expect(result.messages.at(-1)?.pending).toBe(true)
-  })
-
-  // `appendLiveSessionProjection` seeds an EMPTY assistant boundary row before
-  // the first delta of a queued turn. Counting it as the committed reply threw
-  // the journal away and left the crashed turn as a blank bubble.
-  it('does not treat an empty assistant row as the settled reply', () => {
-    const base = [user('h1', 'do a thing'), assistant('h2', '')]
-
-    expect(mergeInFlightMessages(base, tail)).toMatchObject({ applied: true, caughtUp: false })
-  })
-
-  // The snapshot's text can be up to one throttle window newer than the
-  // journal's; taking the journal's parts wholesale rolled the answer back.
-  it('keeps the projection text when it extends what the journal recorded', () => {
-    const journaled = [user('u1', 'do a thing'), assistant('assistant-stream-1', 'the ans', { pending: true })]
-    const base = [user('u1', 'do a thing'), assistant('assistant-stream-s1', 'the answer', { pending: true })]
-    const result = mergeInFlightMessages(base, journaled)
-
-    expect(result.messages[1].id).toBe('assistant-stream-s1')
-    expect(chatMessageText(result.messages[1])).toBe('the answer')
-  })
-})
-
-describe('the persisted journal', () => {
-  const busyState = {
+function journalState(overrides: Partial<JournalableSessionState> = {}): JournalableSessionState {
+  return {
     awaitingResponse: false,
     busy: true,
-    messages: [user('u1', 'do a thing'), withTool('assistant-stream-1', { pending: true })],
+    messages: [user('u1', 'do the thing'), assistant('assistant-stream-1', 'partial answer', { pending: true })],
     storedSessionId: 'stored-1',
     streamId: 'assistant-stream-1',
-    turnStartedAt: 1_000
+    turnStartedAt: 1000,
+    ...overrides
   }
+}
 
-  it('writes on a throttle rather than per repaint', () => {
-    vi.useFakeTimers()
+beforeEach(() => {
+  resetInFlightTurnJournalStateForTests()
+  vi.useFakeTimers()
+  window.localStorage.clear()
+})
 
-    persistInFlightTurnState(busyState)
-    persistInFlightTurnState(busyState)
+afterEach(() => {
+  vi.restoreAllMocks()
+  clearInFlightTurnJournal('stored-1')
+  vi.useRealTimers()
+})
 
-    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+describe('persistInFlightTurnState', () => {
+  it('sweeps expired and oldest session entries once before the first write', () => {
+    const now = Date.now()
 
-    vi.advanceTimersByTime(500)
+    for (let index = 0; index < 25; index += 1) {
+      const sessionId = `old-${index}`
 
-    expect(readInFlightTurnJournal('stored-1')?.messages.map(m => m.id)).toEqual(['u1', 'assistant-stream-1'])
+      const snapshot = {
+        messages: [
+          user(`u-${index}`, `prompt-${index}`),
+          assistant(`a-${index}`, `partial-${index}`, { pending: true })
+        ],
+        streamId: `a-${index}`,
+        turnStartedAt: index,
+        updatedAt: now - index * 1_000
+      }
 
-    vi.useRealTimers()
+      window.localStorage.setItem(sessionStorageKey(sessionId), JSON.stringify(snapshot))
+    }
+
+    window.localStorage.setItem(
+      sessionStorageKey('expired'),
+      JSON.stringify({
+        messages: [user('expired-u', 'expired'), assistant('expired-a', 'expired', { pending: true })],
+        streamId: 'expired-a',
+        turnStartedAt: 0,
+        updatedAt: now - 8 * 24 * 60 * 60 * 1_000
+      })
+    )
+
+    persistInFlightTurnState(journalState())
+    vi.advanceTimersByTime(400)
+
+    const sessionKeys = Array.from({ length: window.localStorage.length }, (_, index) =>
+      window.localStorage.key(index)
+    ).filter((key): key is string => key?.startsWith(STORAGE_PREFIX) === true)
+
+    expect(sessionKeys).toHaveLength(24)
+    expect(window.localStorage.getItem(sessionStorageKey('expired'))).toBeNull()
+    expect(window.localStorage.getItem(sessionStorageKey('old-24'))).toBeNull()
+    expect(window.localStorage.getItem(sessionStorageKey('stored-1'))).not.toBeNull()
   })
 
-  it('clears the entry the moment the turn settles', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
+  it('keeps another session snapshot when one session settles', () => {
+    persistInFlightTurnState(journalState())
+    persistInFlightTurnState(journalState({ storedSessionId: 'stored-2' }))
+    vi.advanceTimersByTime(400)
 
-    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
-
-    persistInFlightTurnState({ ...busyState, busy: false, streamId: null })
-
-    expect(readInFlightTurnJournal('stored-1')).toBeNull()
-
-    vi.useRealTimers()
-  })
-
-  // `busy` alone is not "the turn is over". A submit that has left but not been
-  // acknowledged, and a stream still bound to a row, are both live turns — and
-  // both are windows a crash is likely to land in.
-  it('keeps the entry while the turn is only unacknowledged or still bound', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-
-    persistInFlightTurnState({ ...busyState, busy: false, streamId: null, awaitingResponse: true })
-    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
-
-    persistInFlightTurnState({ ...busyState, busy: false })
-    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
-
-    vi.useRealTimers()
-  })
-
-  // The rows a recovery appends are LOCAL-ONLY: the backend never persisted
-  // them, so a later cold open cannot satisfy `caughtUp` and would replay the
-  // same dead turn on every open for the whole seven-day TTL.
-  it('spends an entry it successfully folded into a settled transcript', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
-
-    expect(recoverInFlightTurnJournal('stored-1', []).applied).toBe(true)
-    expect(readInFlightTurnJournal('stored-1')).toBeNull()
-  })
-
-  // A running turn still owns its entry — the fold is not the end of it.
-  it('keeps the entry when the backend says the turn is still running', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
-
-    expect(recoverInFlightTurnJournal('stored-1', [], { keepPending: true }).applied).toBe(true)
-    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
-  })
-
-  // The clear path runs for every idle session on every state commit, i.e. on
-  // every token of every other session's turn. Answering it from storage meant
-  // a synchronous getItem + JSON.parse per idle session per delta.
-  it('answers a clear for an unjournaled session without touching storage', () => {
-    // jsdom's Storage is a Proxy that swallows an own-property spy, so the
-    // counter has to sit on the prototype the instance actually resolves
-    // through (the Node-26 shim in test-setup is a plain object, hence both).
-    const readTarget = (
-      typeof Storage !== 'undefined' && window.localStorage instanceof Storage ? Storage.prototype : window.localStorage
-    ) as Storage
-
-    const getItem = vi.spyOn(readTarget, 'getItem')
-    const removeItem = vi.spyOn(readTarget, 'removeItem')
-
-    clearInFlightTurnJournal('never-journaled')
-    clearInFlightTurnJournal('never-journaled')
-    clearInFlightTurnJournal('never-journaled')
-
-    // One read only, and it is the once-per-renderer v1 probe — not a per-call
-    // parse of the store. The key mirror answers the rest, so nothing reaches
-    // storage for a session that was never journaled.
-    expect(getItem).toHaveBeenCalledTimes(1)
-    expect(removeItem).not.toHaveBeenCalled()
-    getItem.mockRestore()
-    removeItem.mockRestore()
-  })
-
-  // The v1 store kept every session under ONE key, so each throttled write
-  // re-parsed and re-stringified every OTHER busy session's tail — a grid of
-  // streaming tiles turned the journal into a whole-store JSON round trip
-  // several times a second, on the token path (upstream 3139a30e52).
-  it('writes each session under its own key, untouched by another settling', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    persistInFlightTurnState({ ...busyState, storedSessionId: 'stored-2' })
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
-
-    const keys = Object.keys(window.localStorage).filter(key => key.includes('inflightTurnJournal'))
-
-    expect(keys).toHaveLength(2)
-
-    // A spy that would catch a regression to the shared blob: clearing one
-    // session must not rewrite the other's storage entry at all.
-    const raw = window.localStorage.getItem(keys.find(key => key.endsWith('stored-1')) as string)
+    expect(window.localStorage.getItem(sessionStorageKey('stored-1'))).not.toBeNull()
+    expect(window.localStorage.getItem(sessionStorageKey('stored-2'))).not.toBeNull()
 
     clearInFlightTurnJournal('stored-2')
 
-    expect(window.localStorage.getItem(keys.find(key => key.endsWith('stored-1')) as string)).toBe(raw)
     expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
     expect(readInFlightTurnJournal('stored-2')).toBeNull()
   })
 
-  it('recovers turns journaled by the single-key v1 store', () => {
-    // A crash that happened before the upgrade is exactly the crash the journal
-    // exists for; dropping v1 on migration would lose it.
-    window.localStorage.setItem(
-      'hermes.universal.inflightTurnJournal.v1',
-      JSON.stringify({
-        entries: {
-          'stored-legacy': {
-            messages: [user('u1', 'legacy prompt'), assistant('a1', 'legacy partial', { pending: true })],
-            streamId: 'a1',
-            turnStartedAt: 500,
-            updatedAt: Date.now()
-          }
-        },
-        version: 1
+  it('journals the running turn tail after the throttle window', () => {
+    persistInFlightTurnState(journalState())
+
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+
+    vi.advanceTimersByTime(400)
+
+    const entry = readInFlightTurnJournal('stored-1')
+    expect(entry).not.toBeNull()
+    expect(entry?.streamId).toBe('assistant-stream-1')
+    expect(entry?.turnStartedAt).toBe(1000)
+    expect(entry?.messages.map(m => m.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('coalesces rapid updates into one write carrying the latest state', () => {
+    persistInFlightTurnState(journalState())
+    persistInFlightTurnState(
+      journalState({
+        messages: [
+          user('u1', 'do the thing'),
+          assistant('assistant-stream-1', 'partial answer grew', { pending: true })
+        ]
       })
     )
-    __resetInFlightTurnJournalCache()
 
-    const snapshot = readInFlightTurnJournal('stored-legacy')
+    vi.advanceTimersByTime(400)
 
-    expect(snapshot?.streamId).toBe('a1')
-    expect(snapshot?.messages).toHaveLength(2)
-    // …and the v1 blob is gone, so it cannot be migrated twice.
-    expect(window.localStorage.getItem('hermes.universal.inflightTurnJournal.v1')).toBeNull()
+    const entry = readInFlightTurnJournal('stored-1')
+    const tail = entry?.messages.find(m => m.role === 'assistant')
+    expect(tail?.parts).toEqual([{ type: 'text', text: 'partial answer grew' }])
   })
 
-  // Re-injecting a week-old tail is worse than the gap it fills.
-  it('prunes an entry past its age limit', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.setSystemTime(Date.now() + 8 * 24 * 60 * 60 * 1000)
+  it('preserves a long user prompt exactly so recovery still matches its transcript row', () => {
+    const prompt = 'prompt '.repeat(8_000)
+
+    persistInFlightTurnState(
+      journalState({
+        messages: [user('u1', prompt), assistant('assistant-stream-1', 'partial', { pending: true })]
+      })
+    )
+    vi.advanceTimersByTime(400)
+
+    const result = recoverInFlightTurnJournal('stored-1', [user('db-u1', prompt)])
+
+    expect(result.messages.map(message => message.id)).toEqual(['db-u1', 'assistant-stream-1'])
+  })
+
+  it('preserves user attachment refs exactly so recovery still matches its transcript row', () => {
+    const attachmentRefs = Array.from({ length: 25 }, (_, index) => `@file:/tmp/input-${index}.txt`)
+    const prompt = user('u1', 'inspect these files')
+    prompt.attachmentRefs = attachmentRefs
+
+    persistInFlightTurnState(
+      journalState({ messages: [prompt, assistant('assistant-stream-1', 'partial', { pending: true })] })
+    )
+    vi.advanceTimersByTime(400)
+
+    const restoredPrompt = user('db-u1', 'inspect these files')
+    restoredPrompt.attachmentRefs = attachmentRefs
+    const result = recoverInFlightTurnJournal('stored-1', [restoredPrompt])
+
+    expect(result.messages.map(message => message.id)).toEqual(['db-u1', 'assistant-stream-1'])
+  })
+
+  it('trims oldest sealed rows when bounded parts exceed the entry cap', () => {
+    const text = 'x'.repeat(60 * 1024)
+
+    const messages = [
+      user('u1', 'do the thing'),
+      assistant('a1', text, { pending: false }),
+      assistant('a2', text, { pending: false }),
+      assistant('a3', text, { pending: false }),
+      assistant('a4', text, { pending: true })
+    ]
+
+    persistInFlightTurnState(journalState({ messages, streamId: 'a4' }))
+    vi.advanceTimersByTime(400)
+
+    const raw = window.localStorage.getItem(sessionStorageKey('stored-1'))
+    const snapshot = JSON.parse(raw!)
+
+    expect(raw?.length).toBeLessThanOrEqual(160 * 1024)
+    expect(snapshot.messages.map((message: ChatMessage) => message.id)).toEqual(['u1', 'a3', 'a4'])
+  })
+
+  it('keeps an older recoverable snapshot when the newest row alone is too large', () => {
+    persistInFlightTurnState(journalState())
+    vi.advanceTimersByTime(400)
+
+    const hugeAssistant: ChatMessage = {
+      id: 'assistant-stream-1',
+      role: 'assistant',
+      parts: Array.from({ length: 3 }, () => ({ type: 'text' as const, text: 'x'.repeat(64 * 1024) })),
+      pending: true
+    }
+
+    persistInFlightTurnState(
+      journalState({ messages: [user('u1', 'do the thing'), hugeAssistant], streamId: hugeAssistant.id })
+    )
+    vi.advanceTimersByTime(400)
+
+    const snapshot = JSON.parse(window.localStorage.getItem(sessionStorageKey('stored-1'))!)
+
+    expect(snapshot.messages[1].parts).toEqual([{ type: 'text', text: 'partial answer' }])
+  })
+
+  it('skips a pathological user prompt instead of truncating its recovery join key', () => {
+    const prompt = 'x'.repeat(64 * 1024 + 1)
+
+    persistInFlightTurnState(
+      journalState({
+        messages: [user('u1', prompt), assistant('assistant-stream-1', 'partial', { pending: true })]
+      })
+    )
+    vi.advanceTimersByTime(400)
+
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+  })
+
+  it('does not parse the legacy aggregate when a pathological write discards its session', () => {
+    const legacy = {
+      messages: [user('legacy-u1', 'old prompt'), assistant('legacy-a1', 'old partial', { pending: true })],
+      streamId: 'legacy-a1',
+      turnStartedAt: 1,
+      updatedAt: Date.now()
+    }
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries: { 'stored-1': legacy }, version: 1 }))
+    const getItem = vi.spyOn(Storage.prototype, 'getItem')
+    const prompt = 'x'.repeat(64 * 1024 + 1)
+
+    persistInFlightTurnState(
+      journalState({
+        messages: [user('u1', prompt), assistant('assistant-stream-1', 'partial', { pending: true })]
+      })
+    )
+    vi.advanceTimersByTime(400)
+
+    expect(getItem).not.toHaveBeenCalledWith(STORAGE_KEY)
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+  })
+
+  it('preserves a tombstone while sweeping before legacy migration', () => {
+    const legacy = {
+      messages: [user('legacy-u1', 'old prompt'), assistant('legacy-a1', 'old partial', { pending: true })],
+      streamId: 'legacy-a1',
+      turnStartedAt: 1,
+      updatedAt: Date.now()
+    }
+
+    window.localStorage.setItem(sessionStorageKey('stored-1'), '0')
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries: { 'stored-1': legacy }, version: 1 }))
+
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(sessionStorageKey('stored-1'))).toBeNull()
+  })
+
+  it('removes tombstones after the one-shot legacy migration has completed', () => {
+    const key = sessionStorageKey('stored-1')
+
+    window.localStorage.setItem(MIGRATION_KEY, '1')
+    window.localStorage.setItem(key, '0')
+
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+    expect(window.localStorage.getItem(key)).toBeNull()
+  })
+
+  it('strips pathological 5 MiB tool payloads before attempting a storage write', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+
+    const oversized: ChatMessage = {
+      id: 'assistant-stream-1',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-call',
+          toolCallId: 'tc-1',
+          toolName: 'terminal',
+          args: { command: 'x'.repeat(5 * 1024 * 1024) },
+          result: 'x'.repeat(5 * 1024 * 1024),
+          isError: true
+        },
+        { type: 'text', text: 'still useful' }
+      ],
+      pending: true
+    }
+
+    persistInFlightTurnState(journalState({ messages: [user('u1', 'do the thing'), oversized] }))
+    vi.advanceTimersByTime(400)
+
+    const raw = window.localStorage.getItem(sessionStorageKey('stored-1'))
+    const snapshot = JSON.parse(raw!)
+    const persistedTool = snapshot.messages[1].parts[0]
+
+    expect(raw?.length).toBeLessThan(256 * 1024)
+    expect(persistedTool).toEqual({
+      args: {},
+      isError: true,
+      result: {},
+      toolCallId: 'tc-1',
+      toolName: 'terminal',
+      type: 'tool-call'
+    })
+    expect(snapshot.messages[1].parts[1]).toEqual({ type: 'text', text: 'still useful' })
+    expect(setItem.mock.calls.every(([, value]) => value.length <= 256 * 1024)).toBe(true)
+  })
+
+  it('clears the entry the moment the turn settles, cancelling pending writes', () => {
+    persistInFlightTurnState(journalState())
+    vi.advanceTimersByTime(400)
+    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
+
+    persistInFlightTurnState(journalState({ messages: [] }))
+    persistInFlightTurnState(journalState({ busy: false, awaitingResponse: false, streamId: null }))
 
     expect(readInFlightTurnJournal('stored-1')).toBeNull()
 
-    vi.useRealTimers()
-  })
-
-  it('spends the entry once the base transcript has caught up', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
-
-    const result = recoverInFlightTurnJournal('stored-1', [user('h1', 'do a thing'), assistant('h2', 'the answer')])
-
-    expect(result.caughtUp).toBe(true)
+    vi.advanceTimersByTime(1000)
     expect(readInFlightTurnJournal('stored-1')).toBeNull()
   })
 
-  it('restores the turn clock alongside the rows it recovered', () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
+  it('does not journal a turn with no recoverable assistant content yet', () => {
+    persistInFlightTurnState(journalState({ messages: [user('u1', 'do the thing')], streamId: null }))
 
-    expect(recoverInFlightTurnJournal('stored-1', [])).toMatchObject({ applied: true, turnStartedAt: 1_000 })
+    vi.advanceTimersByTime(400)
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
   })
 
-  it('is a no-op for a session with no stored id or no entry', () => {
-    persistInFlightTurnState({ ...busyState, storedSessionId: null })
-    clearInFlightTurnJournal(null)
+  it('expires entries older than the max age', () => {
+    persistInFlightTurnState(journalState())
+    vi.advanceTimersByTime(400)
 
-    expect(recoverInFlightTurnJournal(null, [])).toMatchObject({ applied: false })
-    expect(recoverInFlightTurnJournal('nothing-here', [])).toMatchObject({ applied: false })
+    const key = sessionStorageKey('stored-1')
+    const raw = JSON.parse(window.localStorage.getItem(key)!)
+    raw.updatedAt = Date.now() - 8 * 24 * 60 * 60 * 1000
+    window.localStorage.setItem(key, JSON.stringify(raw))
+
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+  })
+
+  it('isolates storage read, write, and removal failures', () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('read denied')
+    })
+
+    expect(() => readInFlightTurnJournal('stored-1')).not.toThrow()
+    getItem.mockRestore()
+
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota')
+    })
+
+    expect(() => {
+      persistInFlightTurnState(journalState())
+      vi.advanceTimersByTime(400)
+    }).not.toThrow()
+    setItem.mockRestore()
+
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('remove denied')
+    })
+
+    expect(() => clearInFlightTurnJournal('stored-1')).not.toThrow()
+  })
+
+  it('discards malformed optional message metadata instead of throwing during recovery', () => {
+    window.localStorage.setItem(
+      sessionStorageKey('stored-1'),
+      JSON.stringify({
+        messages: [
+          { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'prompt' }], attachmentRefs: '@file:bad' },
+          { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'partial' }], pending: true }
+        ],
+        streamId: 'a1',
+        turnStartedAt: 1,
+        updatedAt: Date.now()
+      })
+    )
+    const base = [user('db-u1', 'prompt')]
+
+    expect(() => recoverInFlightTurnJournal('stored-1', base)).not.toThrow()
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
   })
 })
 
-/**
- * These keys are shared by every window of the origin, but a TURN is not: the
- * gateway binds a session's stream to one connection, so the HUD, a detached
- * tile window and a second app window all hold slices that look settled for a
- * session that is streaming next door — and "settled" is the condition on which
- * the journal is deleted (MJXHRM-374).
- *
- * A second module instance under `vi.resetModules()` is a faithful model of a
- * second window: separate module state, one shared `localStorage`, which is
- * exactly what a second Tauri WebView of this origin is.
- */
-describe('the journal across windows', () => {
-  async function otherWindow() {
-    vi.resetModules()
+describe('legacy journal migration', () => {
+  it('migrates the bounded v1 aggregate once and recovers its sessions', () => {
+    const first = {
+      messages: [user('u1', 'one'), assistant('a1', 'partial one', { pending: true })],
+      streamId: 'a1',
+      turnStartedAt: 1,
+      updatedAt: Date.now()
+    }
 
-    return import('@/lib/inflight-turn-journal')
-  }
+    const second = {
+      messages: [
+        user('u2', 'two'),
+        {
+          id: 'a2',
+          role: 'assistant' as const,
+          parts: [
+            {
+              type: 'tool-call' as const,
+              toolCallId: 'tc-legacy',
+              toolName: 'terminal',
+              args: { command: 'large-output' },
+              result: 'x'.repeat(1024 * 1024)
+            },
+            { type: 'text' as const, text: 'partial two' }
+          ],
+          pending: true
+        }
+      ],
+      streamId: 'a2',
+      turnStartedAt: 2,
+      updatedAt: Date.now()
+    }
 
-  const busyState = {
-    awaitingResponse: false,
-    busy: true,
-    messages: [user('u1', 'do a thing'), withTool('assistant-stream-1', { pending: true })],
-    storedSessionId: 'stored-1',
-    streamId: 'assistant-stream-1',
-    turnStartedAt: 1_000
-  }
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries: { one: first, two: second }, version: 1 }))
 
-  const settledState = { ...busyState, awaitingResponse: false, busy: false, streamId: null }
+    expect(readInFlightTurnJournal('one')).toEqual(first)
+    const migratedSecondRaw = window.localStorage.getItem(sessionStorageKey('two'))!
+    const migratedSecond = JSON.parse(migratedSecondRaw)
 
-  it('does not let an idle window delete the entry a live one is writing', async () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
+    expect(migratedSecondRaw.length).toBeLessThan(256 * 1024)
+    expect(migratedSecond.messages[1].parts).toEqual([
+      { args: {}, result: {}, toolCallId: 'tc-legacy', toolName: 'terminal', type: 'tool-call' },
+      { text: 'partial two', type: 'text' }
+    ])
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(MIGRATION_KEY)).toBe('1')
 
-    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
-
-    // The HUD / tile / second app window: it holds a slice for this session, it
-    // is not the one streaming it, and its journal pass runs on every commit.
-    const other = await otherWindow()
-    other.persistInFlightTurnState(settledState)
-
-    expect(other.readInFlightTurnJournal('stored-1')).not.toBeNull()
-    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries: { three: first }, version: 1 }))
+    expect(readInFlightTurnJournal('three')).toBeNull()
+    expect(window.localStorage.getItem(STORAGE_KEY)).not.toBeNull()
   })
 
-  it('still lets the window that wrote the entry release it', async () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
-
-    const other = await otherWindow()
-    other.persistInFlightTurnState(settledState)
-
-    // The guard is ownership, not "never clear": the window whose turn it was
-    // must still seal the entry, or every finished turn would linger to its TTL.
-    persistInFlightTurnState(settledState)
+  it('drops an oversized legacy aggregate without parsing it', () => {
+    window.localStorage.setItem(STORAGE_KEY, 'x'.repeat(2 * 1024 * 1024 + 1))
 
     expect(readInFlightTurnJournal('stored-1')).toBeNull()
-    expect(other.readInFlightTurnJournal('stored-1')).toBeNull()
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(MIGRATION_KEY)).toBe('1')
   })
 
-  it('releases a throttled write that settles before it lands', () => {
-    vi.useFakeTimers()
+  it('does not overwrite a newer per-session snapshot while migrating another legacy session', () => {
+    persistInFlightTurnState(journalState())
+    vi.advanceTimersByTime(400)
 
-    // Nothing is on disk yet — the entry exists only as a pending timer, and a
-    // settle here has to cancel it or the write fires onto a finished turn.
-    persistInFlightTurnState(busyState)
-    persistInFlightTurnState(settledState)
-    vi.advanceTimersByTime(500)
+    const legacyCurrent = {
+      messages: [user('legacy-u1', 'old prompt'), assistant('legacy-a1', 'old partial', { pending: true })],
+      streamId: 'legacy-a1',
+      turnStartedAt: 1,
+      updatedAt: Date.now() - 1_000
+    }
+
+    const legacyOther = {
+      messages: [user('u2', 'other prompt'), assistant('a2', 'other partial', { pending: true })],
+      streamId: 'a2',
+      turnStartedAt: 2,
+      updatedAt: Date.now()
+    }
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ entries: { 'stored-1': legacyCurrent, other: legacyOther }, version: 1 })
+    )
+
+    expect(readInFlightTurnJournal('other')).toEqual(legacyOther)
+    expect(readInFlightTurnJournal('stored-1')?.messages[0]).toEqual(user('u1', 'do the thing'))
+  })
+
+  it('does not resurrect a legacy entry after that session settles before migration', () => {
+    const legacyCurrent = {
+      messages: [user('legacy-u1', 'old prompt'), assistant('legacy-a1', 'old partial', { pending: true })],
+      streamId: 'legacy-a1',
+      turnStartedAt: 1,
+      updatedAt: Date.now()
+    }
+
+    const legacyOther = {
+      messages: [user('u2', 'other prompt'), assistant('a2', 'other partial', { pending: true })],
+      streamId: 'a2',
+      turnStartedAt: 2,
+      updatedAt: Date.now()
+    }
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ entries: { 'stored-1': legacyCurrent, other: legacyOther }, version: 1 })
+    )
+
+    persistInFlightTurnState(journalState({ busy: false, awaitingResponse: false, streamId: null }))
 
     expect(readInFlightTurnJournal('stored-1')).toBeNull()
+    expect(readInFlightTurnJournal('other')).toEqual(legacyOther)
+  })
+})
 
+describe('recoverInFlightTurnJournal', () => {
+  function journalEntry(messages: ChatMessage[]) {
+    persistInFlightTurnState(journalState({ messages, streamId: messages.at(-1)?.id ?? null }))
+    vi.advanceTimersByTime(400)
+  }
+
+  it('is a reference-preserving no-op when nothing is journaled', () => {
+    const base = [user('u1', 'do the thing')]
+    const result = recoverInFlightTurnJournal('stored-1', base)
+
+    expect(result.applied).toBe(false)
+    expect(result.messages).toBe(base)
+  })
+
+  it('appends the full tail when the base transcript never saw the turn', () => {
+    journalEntry([
+      user('u1', 'do the thing'),
+      assistantWithTool('assistant-stream-1', 'working on it', { pending: true })
+    ])
+
+    const base = [user('u0', 'earlier turn'), assistant('a0', 'earlier reply')]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: true })
+
+    expect(result.applied).toBe(true)
+    expect(result.messages.map(m => m.id)).toEqual(['u0', 'a0', 'u1', 'assistant-stream-1'])
+    expect(result.streamId).toBe('assistant-stream-1')
+  })
+
+  it('appends only the assistant tail when the user row was persisted', () => {
+    journalEntry([
+      user('u1', 'do the thing'),
+      assistantWithTool('assistant-stream-1', 'working on it', { pending: true })
+    ])
+
+    const base = [user('db-u1', 'do the thing')]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: false })
+
+    expect(result.applied).toBe(true)
+    expect(result.messages.map(m => m.id)).toEqual(['db-u1', 'assistant-stream-1'])
+    // Idle resume: the assistant-tail append path must not resurrect the
+    // stream target either, or the journal entry re-folds on every open.
+    expect(result.streamId).toBeNull()
+    const tail = result.messages.at(-1)!
+    expect(tail.pending).toBe(false)
+    expect(tail.parts[0]).toMatchObject({ type: 'tool-call' })
+  })
+
+  it('detects a committed reply as caught up and clears the entry', () => {
+    journalEntry([user('u1', 'do the thing'), assistant('assistant-stream-1', 'partial', { pending: true })])
+
+    const base = [user('db-u1', 'do the thing'), assistant('db-a1', 'full committed reply')]
+    const result = recoverInFlightTurnJournal('stored-1', base)
+
+    expect(result.applied).toBe(false)
+    expect(result.caughtUp).toBe(true)
+    expect(result.messages).toBe(base)
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+  })
+
+  it('overlays the backend text-only projection instead of dropping local tool progress', () => {
+    // Sweeper regression on #44339: a backend `inflight` assistant snapshot
+    // (text only) used to mark the richer local tail "caught up" and delete
+    // locally recorded tool calls. After #76444, longer text wins only when it
+    // is a strict extension of the journal answer (flat thinking dumps must
+    // not replace structured answer text).
+    journalEntry([
+      user('u1', 'do the thing'),
+      assistantWithTool('assistant-stream-old', 'local part', { pending: true })
+    ])
+
+    const base = [
+      user('db-u1', 'do the thing'),
+      assistant('assistant-stream-rt9', 'local part and more from the backend snapshot', { pending: true })
+    ]
+
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: true })
+
+    expect(result.applied).toBe(true)
+    expect(result.caughtUp).toBe(false)
+    expect(result.messages).toHaveLength(2)
+
+    const merged = result.messages.at(-1)!
+    // Keeps the BASE projection row id so live deltas keep landing on it.
+    expect(merged.id).toBe('assistant-stream-rt9')
+    expect(result.streamId).toBe('assistant-stream-rt9')
+    // Journal structure survives; strict-extension backend text wins.
+    expect(merged.parts[0]).toMatchObject({ type: 'tool-call', toolName: 'terminal' })
+    expect(merged.parts[1]).toMatchObject({ type: 'text', text: 'local part and more from the backend snapshot' })
+    // Still in flight — the journal must NOT be cleared.
+    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
+  })
+
+  it('keeps journal answer text when a longer flat dump is not a strict extension (#76444)', () => {
+    journalEntry([user('u1', 'do the thing'), assistantWithTool('assistant-stream-old', 'partial', { pending: true })])
+
+    const base = [
+      user('db-u1', 'do the thing'),
+      assistant(
+        'assistant-stream-rt9',
+        'thinking chatter\nRan terminal\npartial and unrelated dump longer than answer',
+        { pending: true }
+      )
+    ]
+
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: true })
+    const merged = result.messages.at(-1)!
+
+    expect(merged.parts[0]).toMatchObject({ type: 'tool-call', toolName: 'terminal' })
+    expect(merged.parts[1]).toMatchObject({ type: 'text', text: 'partial' })
+  })
+
+  it('keeps the journal text when it is longer than the projection text', () => {
+    journalEntry([
+      user('u1', 'do the thing'),
+      assistantWithTool('assistant-stream-old', 'a much longer locally journaled partial answer', { pending: true })
+    ])
+
+    const base = [user('db-u1', 'do the thing'), assistant('assistant-stream-rt9', 'thin', { pending: true })]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: true })
+
+    const merged = result.messages.at(-1)!
+    expect(merged.id).toBe('assistant-stream-rt9')
+    expect(merged.parts[1]).toMatchObject({ type: 'text', text: 'a much longer locally journaled partial answer' })
+  })
+
+  // ── Scrambled-transcript regression (duplicate trailing answers) ───────────
+  // The journal can outlive the turn it recorded (reclaim/reconnect/restart
+  // races skip the settle that would clear it). On resume the fold then
+  // re-appends content that the committed transcript ALREADY holds, rendering
+  // the same answers twice at the end of the conversation. Reported on the
+  // desktop as "the answer was already there, but it was inputted again".
+
+  it('does not re-append committed answers when the journaled user row never persisted', () => {
+    // A resume projection can journal a `user-inflight-*` row that was never
+    // written to the DB (and may even belong to a different conversation).
+    // Because no base user matches it, the fold used to treat the whole tail
+    // as unknown and append it — duplicating the assistant answers below.
+    // Live rows never carry a durable id; the last committed turn's equal
+    // reply is what proves them stale.
+    journalEntry([
+      user('user-inflight-a3c2beb1', 'a stray user bubble that never persisted'),
+      assistant('assistant-stream-1', 'the committed answer')
+    ])
+
+    const base = [user('db-u1', 'the real prompt'), assistant('db-a1', 'the committed answer', { rowId: 42 })]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: false })
+
+    expect(result.caughtUp).toBe(true)
+    expect(result.applied).toBe(false)
+    expect(result.messages).toBe(base)
+    expect(result.messages.map(m => m.id)).toEqual(['db-u1', 'db-a1'])
+    // The stale entry is cleared so the next resume stays clean.
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+  })
+
+  // A steer typed before the first token journals `[prompt, steer, assistant]`.
+  // When only the prompt persisted, the prompt is the anchor: the steer and
+  // the partial reply are recovered under it, and the prompt is not repeated.
+  it('anchors a pre-token steer tail on the persisted prompt', () => {
+    journalEntry([
+      user('user-1', 'remove the session counts'),
+      user('user-2', 'hurry up'),
+      assistant('assistant-stream-1', 'Moving.')
+    ])
+
+    const base = [user('db-u1', 'remove the session counts')]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: false })
+
+    expect(result.applied).toBe(true)
+    expect(result.messages.map(message => `${message.role}:${chatMessageText(message)}`)).toEqual([
+      'user:remove the session counts',
+      'user:hurry up',
+      'assistant:Moving.'
+    ])
+  })
+
+  it('retires a journal row by durable identity regardless of turn position', () => {
+    journalEntry([assistant('assistant-old', 'the committed answer', { rowId: 42 })])
+
+    const base = [
+      user('db-u1', 'the real prompt'),
+      assistant('db-a1', 'the committed answer', { rowId: 42 }),
+      user('db-u2', 'and then?'),
+      assistant('db-a2', 'done', { rowId: 43 })
+    ]
+
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: false })
+
+    expect(result.caughtUp).toBe(true)
+    expect(result.messages).toEqual(base)
+  })
+
+  it('does not re-append committed answers when the journal tail has no user row', () => {
+    // A tail captured after a partial hydrate can end on assistant rows with
+    // no user prompt before them. The old code appended them verbatim, so the
+    // transcript ended with a duplicate of an answer that was already settled.
+    journalEntry([assistant('assistant-stream-1', 'the committed answer')])
+
+    const base = [user('db-u1', 'the real prompt'), assistant('db-a1', 'the committed answer', { rowId: 42 })]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: false })
+
+    expect(result.caughtUp).toBe(true)
+    expect(result.messages).toBe(base)
+    expect(readInFlightTurnJournal('stored-1')).toBeNull()
+  })
+
+  it('keeps appending a genuinely unknown turn (crash recovery still works)', () => {
+    // The staleness check must not swallow a tail the base never saw: that is
+    // the crash-recovery path the journal exists for.
+    journalEntry([user('u1', 'the live prompt'), assistant('assistant-stream-1', 'partial answer', { pending: true })])
+
+    const base = [user('db-u0', 'an earlier turn'), assistant('db-a0', 'earlier reply')]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: true })
+
+    expect(result.applied).toBe(true)
+    expect(result.caughtUp).toBe(false)
+    expect(result.messages.map(m => m.id)).toEqual(['db-u0', 'db-a0', 'u1', 'assistant-stream-1'])
+    expect(readInFlightTurnJournal('stored-1')).not.toBeNull()
+  })
+
+  it('does not resurrect the journal streamId on a not-running resume (journal self-clear)', () => {
+    // The fold used to carry the stale entry's streamId onto the resumed state
+    // even when the backend reported the session idle. persistInFlightTurnState
+    // then re-wrote the journal instead of clearing it, so the same stale tail
+    // was folded again on every open — the scramble never healed.
+    journalEntry([user('u1', 'do the thing'), assistant('assistant-stream-1', 'partial answer', { pending: true })])
+
+    const base = [user('db-u0', 'an earlier turn'), assistant('db-a0', 'earlier reply')]
+    const result = recoverInFlightTurnJournal('stored-1', base, { keepPending: false })
+
+    expect(result.applied).toBe(true)
+    expect(result.streamId).toBeNull()
+  })
+})
+
+describe('mergeInFlightMessages', () => {
+  it('treats an error-bearing assistant row as recoverable content', () => {
+    const tail = [user('u1', 'do the thing'), assistant('a-err', '', { error: 'provider exploded' })]
+    const result = mergeInFlightMessages([user('db-u1', 'do the thing')], tail)
+
+    expect(result.applied).toBe(true)
+    expect(result.messages.at(-1)?.error).toBe('provider exploded')
+  })
+
+  it('ignores hidden rows when extracting nothing to recover', () => {
+    const result = mergeInFlightMessages([], [user('u1', 'x')])
+
+    expect(result.applied).toBe(false)
+    expect(result.caughtUp).toBe(false)
+  })
+})
+
+describe('mid-turn redirect corrections', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
     vi.useRealTimers()
   })
 
-  it('leaves a peer window’s entry for recovery to reclaim', async () => {
-    vi.useFakeTimers()
-    persistInFlightTurnState(busyState)
-    vi.advanceTimersByTime(500)
-    vi.useRealTimers()
+  // A redirect inserts its correction as a second user row directly before the
+  // live reply, so the turn opens with a RUN of user rows. Journaling only back
+  // to the nearest one lost the prompt that actually started the turn — the
+  // vanishing user bubble.
+  it('journals the whole user run, not just the correction', () => {
+    persistInFlightTurnState({
+      awaitingResponse: false,
+      busy: true,
+      messages: [
+        user('user-1', 'remove the session counts'),
+        user('user-2', 'hurry up'),
+        assistant('assistant-stream-1', 'Moving.', { pending: true })
+      ],
+      storedSessionId: 'stored-redirect',
+      streamId: 'assistant-stream-1',
+      turnStartedAt: Date.now()
+    })
+    vi.advanceTimersByTime(400)
 
-    const other = await otherWindow()
-    other.persistInFlightTurnState(settledState)
+    const journaled = readInFlightTurnJournal('stored-redirect')?.messages ?? []
 
-    // An entry a window never got to seal is not stranded: the next window to
-    // open the session folds it in and drops it, which is the whole point of it.
-    expect(other.recoverInFlightTurnJournal('stored-1', []).applied).toBe(true)
-    expect(other.readInFlightTurnJournal('stored-1')).toBeNull()
+    expect(journaled.map(message => message.parts.map(part => (part as { text: string }).text).join(''))).toEqual([
+      'remove the session counts',
+      'hurry up',
+      'Moving.'
+    ])
+  })
+
+  it('still stops at an assistant boundary so prior turns are not journaled', () => {
+    persistInFlightTurnState({
+      awaitingResponse: false,
+      busy: true,
+      messages: [
+        user('user-old', 'an earlier turn'),
+        assistant('assistant-old', 'an earlier answer'),
+        user('user-1', 'the live prompt'),
+        assistant('assistant-stream-1', 'Moving.', { pending: true })
+      ],
+      storedSessionId: 'stored-boundary',
+      streamId: 'assistant-stream-1',
+      turnStartedAt: Date.now()
+    })
+    vi.advanceTimersByTime(400)
+
+    const journaled = readInFlightTurnJournal('stored-boundary')?.messages ?? []
+
+    expect(journaled.map(message => message.id)).toEqual(['user-1', 'assistant-stream-1'])
   })
 })

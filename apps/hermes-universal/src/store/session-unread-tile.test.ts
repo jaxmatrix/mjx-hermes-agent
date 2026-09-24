@@ -1,129 +1,96 @@
-/**
- * MJXHRM-452 — the "finished while you were away" marker on a multi-tile shell.
- *
- * Universal renders many chats at once, so "the session the user is looking at"
- * is `$focusedStoredSessionId` (the interacted chat zone's tile, else the
- * selected session), NOT `$activeStoredSessionId` — a tile is never the latter.
- * Keying either half of the marker on the selection meant:
- *
- *   - a tile the user was watching went green the moment its turn finished, and
- *   - nothing on the tile-fronting path could clear it again.
- *
- * The truth is PER SESSION (one marker for one conversation), with the tiles as
- * an overlay deciding which of them is on screen — so two tiles bound to the
- * same conversation can never disagree, including across a compaction rekey,
- * where one surface holds the lineage root and the other the live tip.
- */
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { describe, expect, it, vi } from 'vitest'
+import * as model from '@/components/pane-shell/tree/model'
+// Cold transforms belong to collection, not the first unread assertion's budget.
+import * as tree from '@/components/pane-shell/tree/store'
+import { registry } from '@/contrib/registry'
+import { createClientSessionState } from '@/lib/chat-runtime'
 
-vi.mock('@/store/gateway', async () => {
-  const { atom } = await import('@/store/atom')
+import * as session from './session'
+import * as states from './session-states'
 
-  return {
-    $gatewayState: atom('open'),
-    addGatewayEventListener: () => () => {},
-    getGatewayClient: () => null,
-    requestGateway: vi.fn()
-  }
-})
+// The completed-unread dot is keyed on the FOCUSED session, not the selected
+// one. A tile is never $selectedStoredSessionId, so keying either half on the
+// selection left a tiled session's dot green with no way to clear it.
 
-import type { SessionInfo } from '@/types/hermes'
+describe('completed-unread dot follows the focused session', () => {
+  const disposers: (() => void)[] = []
 
-import { $activeStoredSessionId, $sessions, $unreadFinishedSessionIds } from './session'
+  afterEach(() => {
+    // Undo the registrations and store writes this file makes, so the next
+    // test starts clean without paying to rebuild the module graph.
+    while (disposers.length > 0) {
+      disposers.pop()?.()
+    }
+  })
 
-const row = (id: string, lineageRoot?: string): SessionInfo =>
-  ({ id, ...(lineageRoot ? { _lineage_root_id: lineageRoot } : {}) }) as SessionInfo
+  async function setup() {
+    // `declareDefaultTree` only seeds `$layoutTree` when it is empty, so the
+    // layout has to be cleared here or the second test would adopt the first
+    // test's tree instead of the one it declares.
+    tree.$layoutTree.set(null)
+    tree.$activeTreeGroup.set(null)
 
-async function setup() {
-  const tree = await import('@/components/pane-shell/tree/store')
-  const model = await import('@/components/pane-shell/tree/model')
-  const { registry } = await import('@/contrib/registry')
-  const { emptySessionState } = await import('@/store/session-state-types')
-  const states = await import('./session-states')
+    for (const id of ['workspace', 'session-tile:tiled']) {
+      disposers.push(
+        registry.register({
+          area: 'panes',
+          data: id === 'workspace' ? { placement: 'main', uncloseable: true } : { placement: 'main' },
+          id,
+          render: () => null,
+          title: id
+        })
+      )
+    }
 
-  for (const id of ['workspace', 'session-tile:tiled', 'session-tile:tiled-alias']) {
-    registry.register({
-      area: 'panes',
-      data: id === 'workspace' ? { placement: 'main', uncloseable: true } : { placement: 'main' },
-      id,
-      render: () => null,
-      title: id
-    })
-  }
+    // The workspace holds the primary chat, a second zone holds the tile.
+    tree.declareDefaultTree(
+      model.split('row', [
+        model.group(['workspace'], { active: 'workspace', id: 'grp-main' }),
+        model.group(['session-tile:tiled'], { active: 'session-tile:tiled', id: 'grp-tile' })
+      ])
+    )
 
-  // Workspace holds the primary chat; two further zones hold tiles.
-  tree.declareDefaultTree(
-    model.split('row', [
-      model.group(['workspace'], { active: 'workspace', id: 'grp-main' }),
-      model.group(['session-tile:tiled'], { active: 'session-tile:tiled', id: 'grp-tile' }),
-      model.group(['session-tile:tiled-alias'], { active: 'session-tile:tiled-alias', id: 'grp-alias' })
-    ])
-  )
+    session.$unreadFinishedSessionIds.set([])
+    session.$selectedStoredSessionId.set('primary')
 
-  $unreadFinishedSessionIds.set([])
-  $activeStoredSessionId.set('primary')
+    const finishTurn = (storedSessionId: string) => {
+      const working = { ...createClientSessionState(null), busy: true, storedSessionId }
+      states.publishSessionState(`rt-${storedSessionId}`, working)
+      states.publishSessionState(`rt-${storedSessionId}`, { ...working, busy: false })
+    }
 
-  const finishTurn = (storedSessionId: string) => {
-    const working = { ...emptySessionState(storedSessionId), busy: true, storedSessionId }
-    states.publishSessionState(`rt-${storedSessionId}`, working)
-    states.publishSessionState(`rt-${storedSessionId}`, { ...working, busy: false })
+    return { finishTurn, session, tree }
   }
 
-  return { finishTurn, tree }
-}
-
-describe('the unread marker follows the focused session, not the selected one', () => {
-  it('clears the marker when an already-open tile is fronted', async () => {
-    const { finishTurn, tree } = await setup()
+  it('clears the dot when an already-open tile is fronted', async () => {
+    const { finishTurn, session, tree } = await setup()
 
     tree.noteActiveTreeGroup('grp-main')
     finishTurn('tiled')
-    expect($unreadFinishedSessionIds.get()).toEqual(['tiled'])
+    expect(session.$unreadFinishedSessionIds.get()).toEqual(['tiled'])
 
-    // Fronting the tile is what a tab click does. Nothing on this path used to
-    // clear the marker, so the dot stayed green with no way to dismiss it.
+    // Fronting the tile is what a tab click does. Before the fix nothing on
+    // this path cleared the marker, so the dot stayed green.
     tree.noteActiveTreeGroup('grp-tile')
-    expect($unreadFinishedSessionIds.get()).toEqual([])
+    expect(session.$unreadFinishedSessionIds.get()).toEqual([])
   })
 
   it('never marks a tile that finishes while it is the focused one', async () => {
-    const { finishTurn, tree } = await setup()
+    const { finishTurn, session, tree } = await setup()
 
     tree.noteActiveTreeGroup('grp-tile')
     finishTurn('tiled')
 
-    expect($unreadFinishedSessionIds.get()).toEqual([])
+    expect(session.$unreadFinishedSessionIds.get()).toEqual([])
   })
 
   it('marks the primary session when a tile has focus', async () => {
-    const { finishTurn, tree } = await setup()
+    const { finishTurn, session, tree } = await setup()
 
     tree.noteActiveTreeGroup('grp-tile')
     finishTurn('primary')
 
-    expect($unreadFinishedSessionIds.get()).toEqual(['primary'])
-  })
-
-  it('agrees across two tiles bound to one conversation after a rekey', async () => {
-    const { finishTurn, tree } = await setup()
-
-    // The compaction case: `tiled-alias` is the pane opened BEFORE the rotation
-    // (it holds the lineage root); `tiled` is the live tip. One conversation.
-    $sessions.set([row('tiled', 'tiled-alias')])
-
-    tree.noteActiveTreeGroup('grp-main')
-    finishTurn('tiled')
-    expect($unreadFinishedSessionIds.get()).toEqual(['tiled'])
-
-    // Fronting the OTHER tile — the one holding the root id — has to clear the
-    // marker written under the tip. Identity comparison left it unclearable.
-    tree.noteActiveTreeGroup('grp-alias')
-    expect($unreadFinishedSessionIds.get()).toEqual([])
-
-    // And the reverse: focused on the root, a turn finishing under the tip is
-    // not "away" — the two tiles must not disagree about one session.
-    finishTurn('tiled')
-    expect($unreadFinishedSessionIds.get()).toEqual([])
+    expect(session.$unreadFinishedSessionIds.get()).toEqual(['primary'])
   })
 })

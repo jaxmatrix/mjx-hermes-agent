@@ -6,13 +6,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ConnectionModule from '@/store/connection'
 import type * as SshBackendModule from '@/store/ssh-backend'
 
-// SSH mode landed on main AFTER this branch was cut, so its connect path never went
-// through the soft switch. The merge rerouted it; these pin that down, because an
-// SSH dial that bypassed runConnect would leave the previous gateway's session rows
-// on screen for the 45-90s the tunnel takes to come up.
+// An SSH Connect is desktop's apply like every other mode (MJXHRM-602): the form
+// is saved as a registry row and switched onto in two phases. These pin that the
+// form hands over the whole target — and dials nothing itself.
 
-vi.mock('@/store/gateway-soft-switch', () => ({ softSwitchGateway: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('@/store/gateway-switch-broadcast', () => ({ broadcastGatewaySwitch: vi.fn() }))
+vi.mock('@/store/connections', () => ({
+  applyConnection: vi.fn().mockResolvedValue('box'),
+  connectionById: vi.fn(),
+  saveLaunchTarget: vi.fn().mockResolvedValue(undefined)
+}))
 vi.mock('@/lib/secure-store', () => ({
   // Resolves to a record, never null — the form prefill reads fields off it directly.
   loadSshSecrets: vi.fn().mockResolvedValue({}),
@@ -22,7 +24,6 @@ vi.mock('@/lib/secure-store', () => ({
 }))
 vi.mock('@/store/connection', async importActual => ({
   ...(await importActual<typeof ConnectionModule>()),
-  connectSsh: vi.fn().mockResolvedValue(undefined),
   probeStatus: vi.fn().mockRejectedValue(new Error('no gateway in tests'))
 }))
 vi.mock('@/store/ssh-backend', async importActual => ({
@@ -36,12 +37,11 @@ vi.mock('@/store/ssh-backend', async importActual => ({
 }))
 
 import { I18nProvider } from '@/i18n'
+import { TRANSLATIONS } from '@/i18n/catalog'
 import { queryClient } from '@/lib/query-client'
-import { connectSsh } from '@/store/connection'
-import { saveGatewayTarget } from '@/store/gateway-restore'
-import { softSwitchGateway } from '@/store/gateway-soft-switch'
-import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
-import { testSshBackend } from '@/store/ssh-backend'
+import { applyConnection } from '@/store/connections'
+import { $notifications } from '@/store/notifications'
+import { attachSshPrompts, testSshBackend } from '@/store/ssh-backend'
 
 import { GatewayConfigurator } from './gateway-configurator'
 
@@ -57,7 +57,7 @@ function renderConfigurator() {
 
 /** Pick the SSH mode card, type a host, and hit the commit button. */
 function connectOverSsh(host = 'deploy@box') {
-  fireEvent.click(screen.getByRole('button', { name: /^SSH/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^Connect via SSH/ }))
   fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: host } })
   fireEvent.click(screen.getByRole('button', { name: 'Save and reconnect' }))
 }
@@ -65,36 +65,39 @@ function connectOverSsh(host = 'deploy@box') {
 beforeEach(() => {
   localStorage.clear()
   vi.clearAllMocks()
+  $notifications.set([])
 })
 
+const gatewayCopy = TRANSLATIONS.en.settings.gateway
+
 describe('GatewayConfigurator — SSH connect', () => {
-  it('dials through the soft switch rather than straight to connectSsh', async () => {
-    renderConfigurator()
+  it("applies the form as an ssh source, as a person's click under the attempt it follows", async () => {
+    const { container } = renderConfigurator()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Connect via SSH/ }))
+
+    const [passphrase] = container.querySelectorAll('input[type="password"]')
+
+    fireEvent.change(passphrase, { target: { value: 'unlock-the-key' } })
     connectOverSsh()
 
-    await waitFor(() => expect(softSwitchGateway).toHaveBeenCalledOnce())
-    expect(vi.mocked(softSwitchGateway).mock.calls[0][0]).toBe('ssh')
+    await waitFor(() => expect(applyConnection).toHaveBeenCalledOnce())
+
+    expect(applyConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'deploy@box', kind: 'ssh', passphrase: 'unlock-the-key' }),
+      { allowInteractive: true, attemptId: 'attempt-1' }
+    )
   })
 
-  it('hands the ssh dial to the switch as its thunk', async () => {
+  // The tunnel puts its own questions on screen (`acquireTunnel`); a second
+  // attachment here would raise each of them twice.
+  it("follows the dial's progress without attaching its prompts", async () => {
     renderConfigurator()
     connectOverSsh()
 
-    await waitFor(() => expect(softSwitchGateway).toHaveBeenCalledOnce())
+    await waitFor(() => expect(applyConnection).toHaveBeenCalledOnce())
 
-    // The switch owns when the dial runs — it wipes and closes the socket first.
-    expect(connectSsh).not.toHaveBeenCalled()
-    await vi.mocked(softSwitchGateway).mock.calls[0][1]()
-    expect(connectSsh).toHaveBeenCalledOnce()
-  })
-
-  it('tells the other WebViews once the ssh switch has landed', async () => {
-    saveGatewayTarget({ mode: 'ssh', profile: null, ssh: { host: 'deploy@box' } })
-    renderConfigurator()
-    connectOverSsh()
-
-    await waitFor(() => expect(broadcastGatewaySwitch).toHaveBeenCalledOnce())
-    expect(vi.mocked(broadcastGatewaySwitch).mock.calls[0][0]).toBe('ssh')
+    expect(attachSshPrompts).not.toHaveBeenCalled()
   })
 })
 
@@ -107,7 +110,7 @@ describe('GatewayConfigurator — SSH test', () => {
     // mobile it was worse — a pasted PEM is the only credential there is.
     const { container } = renderConfigurator()
 
-    fireEvent.click(screen.getByRole('button', { name: /^SSH/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Connect via SSH/ }))
     fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: 'deploy@box' } })
     fireEvent.change(screen.getByPlaceholderText('~/.ssh/id_ed25519'), { target: { value: '~/.ssh/work' } })
 
@@ -137,7 +140,7 @@ describe('GatewayConfigurator — SSH test', () => {
     // discarded every encrypted key.
     renderConfigurator()
 
-    fireEvent.click(screen.getByRole('button', { name: /^SSH/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Connect via SSH/ }))
     fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: 'box' } })
     fireEvent.click(screen.getByRole('button', { name: 'Test SSH' }))
 
@@ -147,5 +150,52 @@ describe('GatewayConfigurator — SSH test', () => {
     expect(config.passphrase).toBeUndefined()
     expect(config.password).toBeUndefined()
     expect(config.privateKeyPem).toBeUndefined()
+  })
+})
+
+// A Connect the person dismissed has no verdict to give. MJXHRM-592's `quiet` flag
+// is the legacy primary attempt's; a Test still runs one, so it still reads it.
+describe('GatewayConfigurator — a quiet attempt', () => {
+  it('says nothing when the person dismissed the question, and reports every other failure', async () => {
+    const failed = (cause: { kind: string }) => new Error(gatewayCopy.sshErrAuth, { cause })
+
+    vi.mocked(applyConnection).mockRejectedValueOnce(failed({ kind: 'cancelled' }))
+    renderConfigurator()
+    connectOverSsh()
+
+    await waitFor(() => expect(applyConnection).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save and reconnect' })).toBeEnabled())
+    expect($notifications.get()).toEqual([])
+
+    vi.mocked(applyConnection).mockRejectedValueOnce(failed({ kind: 'credentials-needed' }))
+    connectOverSsh()
+
+    await waitFor(() => expect($notifications.get()).toHaveLength(1))
+    expect($notifications.get()[0]).toMatchObject({ kind: 'error', message: gatewayCopy.sshErrAuth })
+  })
+
+  it('leaves the Test result empty when it is quiet, and fills it otherwise', async () => {
+    vi.mocked(testSshBackend).mockRejectedValueOnce({ kind: 'superseded', message: 'replaced', quiet: true })
+    renderConfigurator()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Connect via SSH/ }))
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: 'box' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Test SSH' }))
+
+    await waitFor(() => expect(testSshBackend).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Test SSH' })).toBeEnabled())
+    expect(screen.queryByText(gatewayCopy.sshErrUnknown)).toBeNull()
+    expect($notifications.get()).toEqual([])
+
+    vi.mocked(testSshBackend).mockRejectedValueOnce({ kind: 'auth-failed', message: 'nope' })
+    fireEvent.click(screen.getByRole('button', { name: 'Test SSH' }))
+
+    expect(await screen.findByText(gatewayCopy.sshErrAuth)).toBeInTheDocument()
+
+    // And the same KIND with no flag fills the result like any other failure.
+    vi.mocked(testSshBackend).mockRejectedValueOnce({ kind: 'superseded', message: 'replaced' })
+    fireEvent.click(screen.getByRole('button', { name: 'Test SSH' }))
+
+    expect(await screen.findByText(gatewayCopy.sshErrUnknown)).toBeInTheDocument()
   })
 })

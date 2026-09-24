@@ -12,7 +12,7 @@ vi.mock('@/lib/updates', () => ({
 }))
 
 import { I18nProvider } from '@/i18n'
-import { __resetUpdateState } from '@/store/updates'
+import { __resetUpdateState } from '@/store/tauri-app-update'
 
 import { AboutSection } from './about-section'
 
@@ -73,7 +73,7 @@ describe('AboutSection', () => {
 
     renderAbout()
 
-    expect(await screen.findByText('Version 1.3.0 is available.')).toBeInTheDocument()
+    expect(await screen.findByText('Version 1.3.0 is available')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Download/ }))
 

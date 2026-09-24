@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { selectRemotePaths } from '@/lib/desktop-fs'
+import { selectRemotePaths } from '@/lib/desktop-fs-universal'
 import { ensureSession } from '@/store/chat'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
-import { requestForSession } from '@/store/session-request-router'
+import { requestForSession } from '@/store/session-route-dispatch'
 
 import {
   attachToSession,
@@ -26,14 +26,21 @@ vi.mock('@/store/data-url-read-max', () => ({
   readCappedFileBase64: readCapped
 }))
 vi.mock('@/store/chat', () => ({ ensureSession: vi.fn() }))
-vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn() }))
+vi.mock('@/store/gateway-client', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $gatewayState: atom('open'),
+    requestGateway: vi.fn()
+  }
+})
 // A session with a STORED id dispatches through MJXHRM-480's router, so an
 // attachment reaches the gateway that owns the session rather than whichever one
 // the window happens to be pointed at (MJXHRM-446 made those two different
 // things). Only the draft path — no stored id yet — still goes direct.
-vi.mock('@/store/session-request-router', () => ({ requestForSession: vi.fn() }))
+vi.mock('@/store/session-route-dispatch', () => ({ requestForSession: vi.fn() }))
 vi.mock('@/store/session-state-types', () => ({
-  $sessionStates: { get: () => ({ 'live-1': { runtimeSessionId: 'live-1', storedSessionId: 'stored-1' } }) },
+  $sessionKeyStates: { get: () => ({ 'live-1': { runtimeSessionId: 'live-1', storedSessionId: 'stored-1' } }) },
   runtimeKeyForStoredSession: (storedId: string) => (storedId === 'stored-1' ? 'live-1' : null)
 }))
 vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))
@@ -47,7 +54,7 @@ vi.mock('@/store/session-recovery', () => ({
     sessionId
   })
 }))
-vi.mock('@/lib/desktop-fs', () => ({ selectRemotePaths: vi.fn(async () => []) }))
+vi.mock('@/lib/desktop-fs-universal', () => ({ selectRemotePaths: vi.fn(async () => []) }))
 
 describe('remote attachment picks', () => {
   beforeEach(() => {
@@ -146,7 +153,7 @@ describe('staging failures are reported', () => {
     readCapped.mockRejectedValueOnce(new Error('permission denied'))
 
     await expect(stageAttachmentFromPath('/work/secret.bin')).resolves.toBeNull()
-    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('secret.bin'))
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'composer.attachFailed')
   })
 
   // The cap is enforced in Rust, so from here a refusal is just a rejection —
@@ -160,7 +167,7 @@ describe('staging failures are reported', () => {
     expect(requestForSession).not.toHaveBeenCalled()
     expect(notifyError).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('16 MB') }),
-      expect.stringContaining('huge.png')
+      'composer.attachFailed'
     )
   })
 
@@ -181,7 +188,7 @@ describe('staging failures are reported', () => {
     vi.mocked(requestForSession).mockResolvedValue({} as never)
 
     await expect(stageAttachmentFromPath('/work/notes.txt')).resolves.toBeNull()
-    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('notes.txt'))
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'composer.attachFailed')
   })
 
   it('stays quiet when the gateway does hand back a ref', async () => {
@@ -244,8 +251,8 @@ describe('staging bytes that never had a path', () => {
     await expect(stageAttachmentFromBlob(huge, 'huge.png')).resolves.toBeNull()
     expect(requestForSession).not.toHaveBeenCalled()
     expect(notifyError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining('16') }),
-      expect.stringContaining('huge.png')
+      expect.objectContaining({ message: 'composer.attachTooLarge' }),
+      'composer.attachFailed'
     )
   })
 
@@ -265,7 +272,7 @@ describe('staging bytes that never had a path', () => {
     vi.mocked(requestForSession).mockResolvedValue({} as never)
 
     await expect(stageAttachmentFromBlob(new Blob(['x'], { type: 'image/png' }), 'shot.png')).resolves.toBeNull()
-    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('shot.png'))
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'composer.attachFailed')
   })
 })
 
@@ -326,6 +333,6 @@ describe('attachToSession targets the session it is given', () => {
     vi.mocked(requestForSession).mockResolvedValue({} as never)
 
     await expect(attachToSession('stored-1', { dataUrl: 'data:x', name: 'a.png' })).resolves.toBeNull()
-    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('a.png'))
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'composer.attachFailed')
   })
 })

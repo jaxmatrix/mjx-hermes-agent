@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 
 import { COMMAND_CENTER_ROUTE } from '@/app/routes'
 import { useSettingsNavGroups } from '@/app/settings/settings-nav'

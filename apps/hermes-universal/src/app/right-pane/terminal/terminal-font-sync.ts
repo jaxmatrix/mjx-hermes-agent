@@ -25,9 +25,9 @@ import { $terminalFontFamily, setTerminalFontFamilyFromConfig } from './terminal
 // So the writer announces and every other WebView adopts — the same shape, and
 // the same reasoning, as themes/appearance-sync.ts (a `storage` listener is a
 // Chromium-renderer trick universal cannot use; the Tauri event bus is the
-// portable equivalent already proven here and in store/gateway-switch-sync.ts).
+// portable equivalent already proven there).
 //
-// Wired by a side-effect import in main.tsx, like the two syncs it mirrors.
+// Armed by `boot.ts`, in every window.
 
 export const TERMINAL_FONT_EVENT = 'terminal-font://changed'
 
@@ -60,8 +60,8 @@ let applyingRemote = false
  * setting is that an OPEN terminal re-faces, and "open" includes the ones in
  * other windows.
  *
- * Idempotent — main.tsx imports this module for its side effect, and a re-import
- * (HMR, a test) must not stack receivers or announcers.
+ * Idempotent — a second call (HMR, a test) must not stack receivers or
+ * announcers.
  */
 export function initTerminalFontSync(): void {
   if (started || !IS_TAURI) {
@@ -106,5 +106,3 @@ export function initTerminalFontSync(): void {
     }
   })
 }
-
-initTerminalFontSync()

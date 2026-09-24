@@ -10,13 +10,36 @@ const setProfileAsset = vi.fn<(params: Any) => Promise<Any>>()
 const clearProfileAsset = vi.fn<(name: string) => Promise<Any>>()
 const notify = vi.fn<(input: Any) => void>()
 
-vi.mock('@/lib/gateway-rpc', () => ({
-  clearProfileAsset: (name: string) => clearProfileAsset(name),
-  configureProfile: (params: Any) => configureProfile(params),
-  describeProfile: (name: string) => describeProfile(name),
-  getProfileAsset: (name: string) => getProfileAsset(name),
-  setProfileAsset: (params: Any) => setProfileAsset(params)
-}))
+vi.mock('@/store/gateway-client', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $gatewayState: atom('open'),
+    requestGateway: (method: string, params?: Any) => {
+      if (method === 'profiles.describe') {
+        return describeProfile(String(params?.name ?? ''))
+      }
+
+      if (method === 'profiles.get_asset') {
+        return getProfileAsset(String(params?.name ?? ''))
+      }
+
+      if (method === 'profiles.configure') {
+        return configureProfile(params ?? {})
+      }
+
+      if (method === 'profiles.set_asset') {
+        if (params?.clear) {
+          return clearProfileAsset(String(params.name ?? ''))
+        }
+
+        return setProfileAsset(params ?? {})
+      }
+
+      throw new Error(`unexpected gateway method ${method}`)
+    }
+  }
+})
 vi.mock('@/store/notifications', () => ({ notify: (input: Any) => notify(input), notifyError: vi.fn() }))
 
 import { I18nProvider } from '@/i18n'
@@ -68,11 +91,11 @@ describe('ProfileEditor save', () => {
     await waitFor(() => expect(configureProfile).toHaveBeenCalledTimes(1))
 
     const params = configureProfile.mock.calls[0][0]
-    expect(params).toEqual({ disabledSkills: ['pdf'], name: 'research' })
+    expect(params).toEqual({ disabled_skills: ['pdf'], name: 'research' })
     // An untouched toolset list must NOT be echoed back: `toolsets_pinned` is
     // false here, so sending the list would PIN today's set forever.
-    expect(params).not.toHaveProperty('enabledToolsets')
-    expect(params).not.toHaveProperty('enabledMcpServers')
+    expect(params).not.toHaveProperty('enabled_toolsets')
+    expect(params).not.toHaveProperty('enabled_mcp_servers')
     expect(params).not.toHaveProperty('description')
   })
 
@@ -96,7 +119,7 @@ describe('ProfileEditor save', () => {
     fireEvent.click(screen.getByRole('button', { name: /save configuration/i }))
 
     await waitFor(() => expect(configureProfile).toHaveBeenCalledTimes(1))
-    expect(configureProfile.mock.calls[0][0]).toEqual({ enabledToolsets: ['search'], name: 'research' })
+    expect(configureProfile.mock.calls[0][0]).toEqual({ enabled_toolsets: ['search'], name: 'research' })
   })
 
   // Every section is applied independently and best-effort, so `ok` alone

@@ -1,7 +1,8 @@
 import { api } from '@/lib/api'
 import type { PaginatedSessions, SessionInfo } from '@/types/hermes'
 
-import { $connectionsRegistry, type ConnectionView } from './connections'
+import { $registryView, type ConnectionView } from './connections'
+import { refreshTileTitles } from './session-key-states'
 
 /**
  * THE CROSS-GATEWAY SESSION LIST.
@@ -125,7 +126,7 @@ export async function fetchRegistrySessionRows(
   params: SourceSessionParams = {},
   excludeConnectionId?: null | string
 ): Promise<SourceSessionRow[]> {
-  const sources = $connectionsRegistry
+  const sources = $registryView
     .get()
     .connections.filter(source => source.id !== excludeConnectionId && Boolean(source.url))
 
@@ -198,6 +199,12 @@ export function spliceRegistrySessionRows(
       ownerByStoredId.set(row.id, row.connection_id)
     }
   }
+
+  // Every open tab whose row is in this merge takes its name from it
+  // (MJXHRM-591, invariant 43). The rows carry their connection, so a tab is
+  // only ever named by its OWN backend's row — and the snapshot is what keeps
+  // its name after a switch empties the active backend's list.
+  refreshTileTitles(rows)
 
   return rows
 }

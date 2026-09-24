@@ -10,8 +10,6 @@ import { cn } from '@/lib/utils'
 import { $composerSuggestionsBySession, markSuggestionInvoked, suggestionKey } from '@/store/composer-suggestions'
 
 /**
- * Ported from apps/desktop/src/app/chat/composer/suggestion-pills.tsx.
- *
  * The composer suggestion strip — generic pills fed by the suggestion bus
  * (`store/composer-suggestions.ts`; the MCP connect pills of PR #85036 are
  * provider one of N). Renders beside the micro-action badges in the floating
@@ -112,14 +110,14 @@ function SessionSuggestionPills({ sessionId }: { sessionId: null | string }) {
     const invoke = async () => {
       cancels.set(key, false)
       setPhase(key, 'working')
-      void triggerHaptic('selection')
+      triggerHaptic('selection')
       // Acting on a pill clears its ignored-count in the bus's declined
       // ledger — its later withdrawal is success, not a strike.
       markSuggestionInvoked(sessionId, key)
 
       try {
         await suggestion.invoke({ cancelled: () => cancels.get(key) === true, sessionId })
-        void triggerHaptic('submit')
+        triggerHaptic('submit')
         setPhase(key, 'done')
       } catch {
         // Provider owns error surfacing (and swallows its own cancels);

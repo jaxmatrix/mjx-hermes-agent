@@ -1,109 +1,120 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-import type * as Hermes from '@/hermes'
-
-// Partial: `@/hermes` is imported at module scope by the profile store, which
-// this file pulls in transitively through `@/store/session`.
-vi.mock('@/hermes', async importOriginal => ({
-  ...(await importOriginal<typeof Hermes>()),
-  getSession: vi.fn()
-}))
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { getSession } from '@/hermes'
-import { __resetSessionLinkTitleCache, fetchSessionLinkTitle, lookupLocalSessionTitle } from '@/lib/session-link-title'
-import { parseSessionRefValue, sessionRefFallbackLabel } from '@/lib/session-refs'
 import { $sessions } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
-const row = (patch: Partial<SessionInfo>): SessionInfo => ({ id: 'x', ...patch }) as SessionInfo
+import { __resetSessionLinkTitleCache, fetchSessionLinkTitle, lookupLocalSessionTitle } from './session-link-title'
+import { sessionRefCacheKey } from './session-refs'
 
-beforeEach(() => {
+vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  getSession: vi.fn()
+}))
+
+function makeSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
+  return {
+    ended_at: null,
+    id: '20260101_abc123',
+    input_tokens: 0,
+    is_active: false,
+    last_active: 1_000,
+    message_count: 1,
+    model: null,
+    output_tokens: 0,
+    preview: null,
+    profile: 'default',
+    source: 'cli',
+    started_at: 1_000,
+    title: 'Research notes',
+    tool_call_count: 0,
+    ...overrides
+  }
+}
+
+afterEach(() => {
   __resetSessionLinkTitleCache()
   $sessions.set([])
   vi.mocked(getSession).mockReset()
 })
 
-describe('parseSessionRefValue', () => {
-  it('splits a profiled ref', () => {
-    expect(parseSessionRefValue('work/20260809_143312_a1b2')).toEqual({
-      profile: 'work',
-      sessionId: '20260809_143312_a1b2'
-    })
-  })
-
-  it('treats a bare id as "this profile"', () => {
-    expect(parseSessionRefValue('20260809_143312_a1b2')).toEqual({ profile: null, sessionId: '20260809_143312_a1b2' })
-    expect(parseSessionRefValue('  ')).toEqual({ profile: null, sessionId: '' })
-  })
-})
-
-describe('sessionRefFallbackLabel', () => {
-  it('truncates a long id and leaves a short one alone', () => {
-    expect(sessionRefFallbackLabel('20260809_143312_a1b2')).toBe('20260809…')
-    expect(sessionRefFallbackLabel('short')).toBe('short')
-  })
-})
-
 describe('lookupLocalSessionTitle', () => {
-  it('reads the sidebar list, preferring the title over the preview', () => {
-    $sessions.set([row({ id: 's1', title: 'Ship the thing', preview: 'hello' })])
+  it('reads from the in-memory session list', () => {
+    $sessions.set([makeSession({ profile: 'work', title: 'Branch plan' })])
 
-    expect(lookupLocalSessionTitle('s1')).toBe('Ship the thing')
+    expect(lookupLocalSessionTitle('work/20260101_abc123')).toBe('Branch plan')
   })
 
-  it('falls back to the preview, then to nothing', () => {
-    $sessions.set([row({ id: 's1', preview: 'hello there' })])
+  it('matches the lineage root so a compressed chat still resolves', () => {
+    $sessions.set([makeSession({ _lineage_root_id: '20260101_abc123', id: '20260102_tip', title: 'Compressed chat' })])
 
-    expect(lookupLocalSessionTitle('s1')).toBe('hello there')
-    expect(lookupLocalSessionTitle('s2')).toBe('')
+    expect(lookupLocalSessionTitle('20260101_abc123')).toBe('Compressed chat')
   })
 
-  // The same id can exist in two profiles and mean two conversations.
-  it('will not match a row from another profile', () => {
-    $sessions.set([row({ id: 's1', profile: 'work', title: 'Work thing' })])
+  it('ignores a same-id row owned by another profile', () => {
+    $sessions.set([makeSession({ profile: 'work', title: 'Work chat' })])
 
-    expect(lookupLocalSessionTitle('home/s1')).toBe('')
-    expect(lookupLocalSessionTitle('work/s1')).toBe('Work thing')
+    expect(lookupLocalSessionTitle('personal/20260101_abc123')).toBe('')
+  })
+
+  it('returns empty for an untitled row so the caller can fall back to the id', () => {
+    $sessions.set([makeSession({ preview: null, title: null })])
+
+    expect(lookupLocalSessionTitle('default/20260101_abc123')).toBe('')
   })
 })
 
 describe('fetchSessionLinkTitle', () => {
-  it('answers from the sidebar list without a round-trip', async () => {
-    $sessions.set([row({ id: 's1', title: 'Ship the thing' })])
+  it('dedupes concurrent lookups', async () => {
+    vi.mocked(getSession).mockResolvedValue(makeSession({ title: 'From API' }))
 
-    expect(await fetchSessionLinkTitle('s1')).toBe('Ship the thing')
+    const value = 'default/20260101_abc123'
+    const [first, second] = await Promise.all([fetchSessionLinkTitle(value), fetchSessionLinkTitle(value)])
+
+    expect(first).toBe('From API')
+    expect(second).toBe('From API')
+    expect(getSession).toHaveBeenCalledTimes(1)
+    expect(getSession).toHaveBeenCalledWith('20260101_abc123', 'default')
+  })
+
+  it('uses the local sidebar row before calling the API', async () => {
+    $sessions.set([makeSession({ title: 'Cached title' })])
+
+    await expect(fetchSessionLinkTitle('default/20260101_abc123')).resolves.toBe('Cached title')
     expect(getSession).not.toHaveBeenCalled()
   })
 
-  // A transcript can carry the same link a dozen times; each chip asking for
-  // itself would be a dozen requests for one answer.
-  it('dedupes concurrent lookups down to one request', async () => {
-    vi.mocked(getSession).mockResolvedValue(row({ id: 's9', title: 'Resolved' }))
+  it('keeps separate cache entries per profile', async () => {
+    vi.mocked(getSession).mockImplementation(async (id, scope) => {
+      const profile = typeof scope === 'string' ? scope : scope?.profile || 'default'
 
-    const [a, b] = await Promise.all([fetchSessionLinkTitle('s9'), fetchSessionLinkTitle('s9')])
+      return makeSession({ id, profile, title: profile === 'work' ? 'Work chat' : 'Home chat' })
+    })
 
-    expect([a, b]).toEqual(['Resolved', 'Resolved'])
-    expect(getSession).toHaveBeenCalledTimes(1)
+    await expect(fetchSessionLinkTitle('default/20260101_abc123')).resolves.toBe('Home chat')
+    await expect(fetchSessionLinkTitle('work/20260101_abc123')).resolves.toBe('Work chat')
+    expect(sessionRefCacheKey('default/20260101_abc123')).not.toBe(sessionRefCacheKey('work/20260101_abc123'))
   })
 
-  it('caches across calls, including a resolved-to-nothing answer', async () => {
-    vi.mocked(getSession).mockResolvedValue(row({ id: 's9', title: '' }))
+  it('falls back to the preview when the session has no title', async () => {
+    vi.mocked(getSession).mockResolvedValue(makeSession({ preview: 'Summarize this repo', title: null }))
 
-    expect(await fetchSessionLinkTitle('s9')).toBe('')
-    expect(await fetchSessionLinkTitle('s9')).toBe('')
-    expect(getSession).toHaveBeenCalledTimes(1)
+    await expect(fetchSessionLinkTitle('20260101_abc123')).resolves.toBe('Summarize this repo')
   })
 
-  // A link to a session on another backend 404s. The chip falls back to its
-  // short id; it must never surface an error.
-  it('resolves empty when the lookup fails', async () => {
-    vi.mocked(getSession).mockRejectedValue(new Error('404'))
+  it('resolves empty when the id is not on this backend', async () => {
+    vi.mocked(getSession).mockRejectedValue(new Error('Session not found'))
 
-    expect(await fetchSessionLinkTitle('s9')).toBe('')
+    await expect(fetchSessionLinkTitle('default/missing')).resolves.toBe('')
   })
 
-  it('resolves empty for an unparseable ref without asking', async () => {
-    expect(await fetchSessionLinkTitle('   ')).toBe('')
-    expect(getSession).not.toHaveBeenCalled()
+  it('resolves empty when the desktop bridge is unavailable', async () => {
+    vi.mocked(getSession).mockImplementation(() => {
+      throw new TypeError("Cannot read properties of undefined (reading 'api')")
+    })
+
+    await expect(fetchSessionLinkTitle('default/20260101_abc123')).resolves.toBe('')
   })
 })

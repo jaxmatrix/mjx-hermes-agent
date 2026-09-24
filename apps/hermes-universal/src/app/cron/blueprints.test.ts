@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AutomationBlueprint } from '@/hermes'
 
-import { blueprintSlotHelp, cleanBlueprintFieldError, initialBlueprintValues } from './blueprints'
+import { initialBlueprintValues } from './blueprints'
 
 function blueprint(fields: AutomationBlueprint['fields']): AutomationBlueprint {
   return {
@@ -14,19 +14,6 @@ function blueprint(fields: AutomationBlueprint['fields']): AutomationBlueprint {
     command: '',
     appUrl: '',
     fields
-  }
-}
-
-function field(overrides: Partial<AutomationBlueprint['fields'][number]>): AutomationBlueprint['fields'][number] {
-  return {
-    name: 'topic',
-    type: 'text',
-    label: 'Topic',
-    default: null,
-    options: [],
-    optional: false,
-    help: '',
-    ...overrides
   }
 }
 
@@ -114,40 +101,5 @@ describe('initialBlueprintValues', () => {
     )
 
     expect(values).toEqual({ deliver: 'telegram' })
-  })
-})
-
-// The backend's 422 for a bad slot arrives through api() as
-// "POST /api/… → HTTP 422: <detail>"; the numeric prefix an Error picks up on
-// the way is noise in a field-level hint.
-describe('cleanBlueprintFieldError', () => {
-  it('strips a leading status code', () => {
-    expect(cleanBlueprintFieldError('422: time must be HH:MM')).toBe('time must be HH:MM')
-  })
-
-  it('leaves a message with no code alone', () => {
-    expect(cleanBlueprintFieldError('time must be HH:MM')).toBe('time must be HH:MM')
-  })
-
-  it('only strips the prefix, not digits inside the message', () => {
-    expect(cleanBlueprintFieldError('422: 24-hour clock only')).toBe('24-hour clock only')
-  })
-})
-
-describe('blueprintSlotHelp', () => {
-  it('shows help for a non-text slot', () => {
-    expect(blueprintSlotHelp(field({ type: 'time', help: 'When to run' }))).toBe('When to run')
-  })
-
-  it('hides help for a text slot — its placeholder already carries it', () => {
-    expect(blueprintSlotHelp(field({ type: 'text', help: 'What to watch' }))).toBeUndefined()
-  })
-
-  it('hides the dashboard-centric deliver help', () => {
-    expect(blueprintSlotHelp(field({ name: 'deliver', type: 'enum', help: 'local = save only' }))).toBeUndefined()
-  })
-
-  it('returns undefined when a slot carries no help', () => {
-    expect(blueprintSlotHelp(field({ type: 'enum', help: '' }))).toBeUndefined()
   })
 })

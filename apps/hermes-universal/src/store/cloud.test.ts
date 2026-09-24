@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-vi.mock('@/store/connection', () => ({ connectCloud: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/store/connections', () => ({ applyConnection: vi.fn().mockResolvedValue('agent-one') }))
 
 import { invoke } from '@tauri-apps/api/core'
 
-import { connectCloud } from '@/store/connection'
+import { applyConnection } from '@/store/connections'
 
 import {
   $cloudAgents,
@@ -38,7 +38,7 @@ const agent = {
 beforeEach(() => {
   localStorage.clear()
   mockInvoke.mockReset()
-  vi.mocked(connectCloud).mockClear()
+  vi.mocked(applyConnection).mockClear()
   $cloudAgents.set([])
   $cloudOrgs.set([])
   $portalSignedIn.set(false)
@@ -187,7 +187,7 @@ describe('resumePortalSignIn', () => {
 })
 
 describe('connectCloudAgent', () => {
-  it('signs in to the agent then connects in cloud mode', async () => {
+  it('signs in to the agent, then saves it as a cloud source and switches onto it', async () => {
     setImpl(cmd => {
       if (cmd === 'portal_agent_sign_in') {
         return Promise.resolve({ connected: true, baseUrl: 'https://a1.example.com' })
@@ -197,14 +197,16 @@ describe('connectCloudAgent', () => {
     })
     await connectCloudAgent(agent)
     expect(mockInvoke).toHaveBeenCalledWith('portal_agent_sign_in', { dashboardUrl: 'https://a1.example.com' })
-    expect(connectCloud).toHaveBeenCalledWith('https://a1.example.com')
+    expect(applyConnection).toHaveBeenCalledWith(
+      { authMode: 'oauth', kind: 'cloud', label: 'Agent One', url: 'https://a1.example.com' },
+      { allowInteractive: true }
+    )
   })
 
-  // Rejecting is the contract: this runs inside softSwitchGateway, which reads a clean
-  // return as a successful switch and would skip its rollback.
+  // Rejecting is the contract: the panel's caller toasts what this throws.
   it('rejects for an agent without a dashboard URL', async () => {
     await expect(connectCloudAgent({ ...agent, dashboardUrl: null })).rejects.toThrow(/no reachable dashboard/)
-    expect(connectCloud).not.toHaveBeenCalled()
+    expect(applyConnection).not.toHaveBeenCalled()
   })
 
   it('rejects when the silent SSO does not connect', async () => {
@@ -215,7 +217,7 @@ describe('connectCloudAgent', () => {
     )
 
     await expect(connectCloudAgent(agent)).rejects.toThrow()
-    expect(connectCloud).not.toHaveBeenCalled()
+    expect(applyConnection).not.toHaveBeenCalled()
     expect($cloudError.get()).toBeTruthy()
   })
 })

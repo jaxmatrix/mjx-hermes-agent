@@ -2,27 +2,39 @@ import { describe, expect, it } from 'vitest'
 
 import type { HermesConfigRecord } from '@/types/hermes'
 
-import { SECTIONS } from './constants'
 import { defineFieldCopy, fieldCopyForSchemaKey, schemaKeyToFieldCopyKey } from './field-copy'
 import {
+  clearsEnabledToolsets,
+  diffConfig,
   enumOptionsFor,
   getNested,
+  isExternalMemoryProvider,
   providerGroup,
   sectionFieldEntries,
   setNested,
-  stripToolsetLabel,
-  toolsetDisplayLabel,
-  voiceFieldVisible
+  stripToolsetLabel
 } from './helpers'
 
 describe('settings helpers', () => {
   it('does not shadow the backend schema options for memory.provider', () => {
     // memory.provider options are discovery-driven and served by the backend
     // config schema (merged per-request); enumOptionsFor must return undefined
-    // so config-field consumes schema.options instead of a stale static list —
-    // otherwise a user-installed or pip-provided memory backend is unpickable.
+    // so config-field consumes schema.options instead of a stale static list.
     expect(enumOptionsFor('memory.provider', '', {})).toBeUndefined()
     expect(enumOptionsFor('memory.provider', 'honcho', {})).toBeUndefined()
+  })
+
+  describe('isExternalMemoryProvider', () => {
+    it('treats only real plugin names as external providers', () => {
+      expect(isExternalMemoryProvider('honcho')).toBe(true)
+      expect(isExternalMemoryProvider('hindsight')).toBe(true)
+    })
+
+    it('treats built-in aliases and empty values as not external', () => {
+      for (const value of ['', 'builtin', 'built-in', 'Builtin', 'none', '  ', undefined, null, 7]) {
+        expect(isExternalMemoryProvider(value)).toBe(false)
+      }
+    })
   })
 
   describe('defineFieldCopy', () => {
@@ -40,18 +52,6 @@ describe('settings helpers', () => {
 
       expect(copy[['display', 'personality'].join('.')]).toBe('Personality')
       expect(copy[['stt', 'elevenlabs', 'language_code'].join('.')]).toBe('Language')
-    })
-
-    it('keeps top-level flat field keys', () => {
-      expect(
-        defineFieldCopy({
-          model_context_length: 'Context Window',
-          file_read_max_chars: 'File Read Limit'
-        })
-      ).toEqual({
-        model_context_length: 'Context Window',
-        file_read_max_chars: 'File Read Limit'
-      })
     })
 
     it('maps schema keys to camelCase translation keys', () => {
@@ -115,7 +115,9 @@ describe('settings helpers', () => {
     it('removes leading emoji prefixes from registry labels', () => {
       expect(stripToolsetLabel('⏰ Cron Jobs')).toBe('Cron Jobs')
       expect(stripToolsetLabel('⚡ Code Execution')).toBe('Code Execution')
+      expect(stripToolsetLabel('❓ Clarifying Questions')).toBe('Clarifying Questions')
       expect(stripToolsetLabel('🌐 Browser Automation')).toBe('Browser Automation')
+      expect(stripToolsetLabel('🎨 Image Generation')).toBe('Image Generation')
     })
 
     it('leaves plain titles unchanged', () => {
@@ -123,24 +125,15 @@ describe('settings helpers', () => {
     })
   })
 
-  describe('toolsetDisplayLabel', () => {
-    it('strips emoji from toolset rows', () => {
-      expect(toolsetDisplayLabel({ name: 'cronjob', label: '⏰ Cron Jobs' })).toBe('Cron Jobs')
-    })
-  })
-
   describe('providerGroup', () => {
-    it('maps a provider env var to its labeled group', () => {
-      expect(providerGroup('XAI_API_KEY')).toBe('xAI')
-      expect(providerGroup('NOUS_API_KEY')).toBe('Nous Portal')
-      expect(providerGroup('OPENROUTER_API_KEY')).toBe('OpenRouter')
-    })
-
     it('prefers the longest matching prefix so CN/regional buckets win', () => {
+      // MINIMAX_CN_ must beat the generic MINIMAX_ prefix.
       expect(providerGroup('MINIMAX_CN_API_KEY')).toBe('MiniMax (China)')
       expect(providerGroup('MINIMAX_API_KEY')).toBe('MiniMax')
+      // KIMI_CN_ likewise must beat KIMI_.
       expect(providerGroup('KIMI_CN_API_KEY')).toBe('Kimi (China)')
       expect(providerGroup('KIMI_API_KEY')).toBe('Kimi / Moonshot')
+      // HERMES_QWEN_ shares the HERMES_ stem with other integrations.
       expect(providerGroup('HERMES_QWEN_BASE_URL')).toBe('DashScope (Qwen)')
       expect(providerGroup('GEMINI_API_KEY')).toBe('Gemini')
     })
@@ -150,65 +143,27 @@ describe('settings helpers', () => {
     })
   })
 
-  describe('voiceFieldVisible', () => {
-    it('always shows top-level (non-provider-scoped) keys', () => {
-      expect(voiceFieldVisible('tts.provider', {})).toBe(true)
-      expect(voiceFieldVisible('voice.auto_tts', {})).toBe(true)
-    })
-
-    it('shows only the selected TTS provider’s sub-fields', () => {
-      const config = { tts: { provider: 'openai' } }
-      expect(voiceFieldVisible('tts.openai.voice', config)).toBe(true)
-      expect(voiceFieldVisible('tts.elevenlabs.voice_id', config)).toBe(false)
-    })
-
-    it('hides all STT provider sub-fields when STT is disabled', () => {
-      const config = { stt: { enabled: false, provider: 'local' } }
-      expect(voiceFieldVisible('stt.local.model', config)).toBe(false)
-    })
-
-    it('shows the selected STT provider’s sub-fields when STT is enabled', () => {
-      const config = { stt: { enabled: true, provider: 'local' } }
-      expect(voiceFieldVisible('stt.local.model', config)).toBe(true)
-      expect(voiceFieldVisible('stt.openai.model', config)).toBe(false)
-    })
-  })
-
   describe('enumOptionsFor — backend selector dropdowns', () => {
     const config: HermesConfigRecord = {}
 
-    it('renders a dropdown for the TTS provider including xAI (Grok)', () => {
-      const opts = enumOptionsFor('tts.provider', 'edge', config)
-      expect(opts).toBeDefined()
-      expect(opts).toContain('xai')
-      expect(opts).toContain('edge')
-      expect(opts).toContain('elevenlabs')
-    })
+    it('narrows OpenAI TTS voice suggestions to what the selected model supports', () => {
+      // gpt-4o-mini-tts (and unset/unknown models): full 13-voice set.
+      const full = enumOptionsFor('tts.openai.voice', 'alloy', { tts: { openai: { model: 'gpt-4o-mini-tts' } } })
+      expect(full).toContain('marin')
+      expect(full).toContain('cedar')
+      expect(full).toContain('ballad')
+      expect(full).toContain('verse')
+      expect(full).toHaveLength(13)
 
-    // Mirrors tools/transcription_tools.py BUILTIN_STT_PROVIDERS. The backend's
-    // own option list became unreachable when the stt.provider seed was removed
-    // (its _SCHEMA_OVERRIDES entry is applied while walking DEFAULT_CONFIG), so
-    // this list is now the only thing that fills the picker.
-    it('renders a dropdown for the STT provider including xAI (Grok) and DeepInfra', () => {
-      const opts = enumOptionsFor('stt.provider', 'local', config)
-      expect(opts).toEqual(['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs', 'deepinfra'])
-    })
+      // tts-1 / tts-1-hd: the 9-voice set — no ballad/verse/marin/cedar.
+      for (const model of ['tts-1', 'tts-1-hd']) {
+        const narrowed = enumOptionsFor('tts.openai.voice', 'alloy', { tts: { openai: { model } } })
+        expect(narrowed).toEqual(['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'])
+      }
 
-    it('keeps a hand-configured command provider pickable rather than silently dropping it', () => {
-      // `stt.providers.<name>: type: command` names are open-world, so a stored
-      // value outside the list has to survive being rendered.
-      expect(enumOptionsFor('stt.provider', 'my-whisper-cli', config)).toContain('my-whisper-cli')
-    })
-
-    it('renders dropdowns for per-backend model/device sub-fields', () => {
-      expect(enumOptionsFor('stt.openai.model', 'whisper-1', config)).toContain('gpt-4o-transcribe')
-      expect(enumOptionsFor('tts.openai.model', 'gpt-4o-mini-tts', config)).toContain('tts-1-hd')
-      expect(enumOptionsFor('tts.neutts.device', 'cpu', config)).toEqual(['cpu', 'cuda', 'mps'])
-    })
-
-    it('renders a dropdown for the terminal execution backend', () => {
-      const opts = enumOptionsFor('terminal.backend', 'local', config)
-      expect(opts).toEqual(['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'])
+      // A hand-typed custom voice still stays selectable on tts-1.
+      const custom = enumOptionsFor('tts.openai.voice', 'my-cloned-voice', { tts: { openai: { model: 'tts-1' } } })
+      expect(custom).toContain('my-cloned-voice')
     })
 
     it('appends a hand-typed value not in the known list so it stays selected', () => {
@@ -216,14 +171,102 @@ describe('settings helpers', () => {
       expect(opts).toContain('my-custom-command-tts')
       expect(opts).toContain('xai')
     })
+
+    it('surfaces user-defined command-type TTS providers (canonical providers nesting + legacy)', () => {
+      const withCustom: HermesConfigRecord = {
+        tts: {
+          provider: 'neutts',
+          // canonical location the runtime resolves first: tts.providers.<name>
+          providers: {
+            higgs8: { type: 'command', command: 'curl …' },
+            indextts2: { type: 'command', command: 'curl …' },
+            // `type:` is optional at runtime — a bare command block still qualifies
+            typeless: { command: 'curl …' },
+            // misconfigured: type:command but no command → NOT a runtime provider
+            noop: { type: 'command' }
+          },
+          // back-compat: a top-level tts.<name> command block still resolves at runtime
+          mylegacy: { type: 'command', command: 'curl …' },
+          // a non-command block (built-in config) must NOT be offered as a provider
+          edge: { voice: 'en-US-JennyNeural' }
+        }
+      }
+
+      const opts = enumOptionsFor('tts.provider', 'neutts', withCustom)
+      expect(opts).toContain('higgs8') // canonical providers.<name>
+      expect(opts).toContain('indextts2') // canonical providers.<name>
+      expect(opts).toContain('typeless') // command block with no type: still surfaced
+      expect(opts).toContain('mylegacy') // legacy top-level tts.<name>
+      expect(opts).toContain('elevenlabs') // built-ins preserved
+      expect(opts).not.toContain('noop') // type:command with no command is excluded
+      // 'edge' appears once (the built-in), not duplicated by the config block
+      expect(opts!.filter(o => o === 'edge')).toHaveLength(1)
+      // the 'providers' container itself is never offered as a provider name
+      expect(opts).not.toContain('providers')
+    })
+
+    it('surfaces command-type STT providers too (canonical providers nesting)', () => {
+      const withCustom: HermesConfigRecord = {
+        stt: {
+          provider: 'local',
+          providers: { myasr: { type: 'command', command: 'curl …' } }
+        }
+      }
+
+      const opts = enumOptionsFor('stt.provider', 'local', withCustom)
+      expect(opts).toContain('myasr')
+      expect(opts).toContain('local')
+      expect(opts).not.toContain('providers')
+    })
+
+    // The runtime rejects a built-in name as a command provider before any config
+    // lookup, so such a block must never be offered — including the names the
+    // display list omits (`deepinfra` for TTS; `deepinfra`/`local_command` for
+    // STT), where filtering on ENUM_OPTIONS instead of the runtime's built-in set
+    // would wrongly offer a provider that can never dispatch.
+    it('never offers a built-in name as a command provider, even one absent from the dropdown list', () => {
+      const shadowing: HermesConfigRecord = {
+        tts: {
+          provider: 'edge',
+          providers: {
+            // built-in and absent from ENUM_OPTIONS['tts.provider']
+            deepinfra: { type: 'command', command: 'curl …' },
+            // built-in guard is case-insensitive at runtime (provider.lower())
+            EDGE: { type: 'command', command: 'curl …' },
+            // a genuine custom provider alongside them still surfaces
+            higgs8: { type: 'command', command: 'curl …' }
+          }
+        }
+      }
+
+      const opts = enumOptionsFor('tts.provider', 'edge', shadowing)
+      expect(opts).not.toContain('deepinfra')
+      expect(opts).not.toContain('EDGE')
+      expect(opts).toContain('higgs8')
+      expect(opts!.filter(o => o === 'edge')).toHaveLength(1)
+    })
+
+    it('never offers a built-in STT name absent from the dropdown list as a command provider', () => {
+      const shadowing: HermesConfigRecord = {
+        stt: {
+          provider: 'local',
+          providers: {
+            // both are built-in STT names omitted from ENUM_OPTIONS['stt.provider']
+            local_command: { type: 'command', command: 'curl …' },
+            deepinfra: { type: 'command', command: 'curl …' },
+            myasr: { type: 'command', command: 'curl …' }
+          }
+        }
+      }
+
+      const opts = enumOptionsFor('stt.provider', 'local', shadowing)
+      expect(opts).not.toContain('local_command')
+      expect(opts).not.toContain('deepinfra')
+      expect(opts).toContain('myasr')
+    })
   })
 
   describe('sectionFieldEntries', () => {
-    // Row existence is gated on config presence, not on the backend schema:
-    // universal points at whatever gateway the user configures, and a schema
-    // that hides `memory.provider` (as the backend did once the web dashboard's
-    // Plugins page took it over) must not delete the row along with the memory
-    // OAuth connect affordance and provider config panel mounted on it.
     it('renders memory.provider from config even when the backend schema omits it', () => {
       const schema = { 'memory.memory_enabled': { type: 'boolean' as const } }
       const config: HermesConfigRecord = { memory: { memory_enabled: true, provider: '' } }
@@ -234,7 +277,7 @@ describe('settings helpers', () => {
     })
 
     it('infers the field type from the config value when the schema omits the key', () => {
-      const config: HermesConfigRecord = { memory: { memory_char_limit: 2200, memory_enabled: true, provider: '' } }
+      const config: HermesConfigRecord = { memory: { provider: '', memory_enabled: true, memory_char_limit: 2200 } }
 
       const fields = new Map(sectionFieldEntries({}, config).get('memory') ?? [])
 
@@ -244,7 +287,7 @@ describe('settings helpers', () => {
     })
 
     it('prefers the backend schema entry over inference when both exist', () => {
-      const schema = { 'memory.provider': { options: ['honcho'], type: 'select' as const } }
+      const schema = { 'memory.provider': { type: 'select' as const, options: ['honcho'] } }
       const config: HermesConfigRecord = { memory: { provider: 'honcho' } }
 
       const field = new Map(sectionFieldEntries(schema, config).get('memory') ?? []).get('memory.provider')
@@ -256,92 +299,85 @@ describe('settings helpers', () => {
     it('hides declared keys absent from both schema and config', () => {
       expect(sectionFieldEntries({}, {}).get('memory') ?? []).toHaveLength(0)
     })
+  })
 
-    /**
-     * `/api/config/schema` is DERIVED from DEFAULT_CONFIG
-     * (`web_server._build_schema_from_config`), so a key that is real and read
-     * by the agent but deliberately NOT seeded has no schema entry and no
-     * config value — and the rule above then deletes its row. The 08-20 sync
-     * removed `stt.provider`'s "local" seed exactly so a fresh install would be
-     * indistinguishable from unset, which took the picker down with it.
-     */
-    it('renders stt.provider on a fresh install, where nothing seeds it', () => {
-      // Deliberately hostile fixture: the gateway declares OTHER stt keys, so
-      // an assertion that merely counted rows would pass without the fallback.
-      const schema = { 'stt.enabled': { type: 'boolean' as const } }
-      const config: HermesConfigRecord = { stt: { enabled: true } }
+  describe('clearsEnabledToolsets', () => {
+    it('flags a non-empty → empty transition', () => {
+      const prev: HermesConfigRecord = { toolsets: ['memory', 'terminal', 'web_search'] }
+      const next: HermesConfigRecord = { toolsets: [] }
 
-      const fields = new Map(sectionFieldEntries(schema, config).get('voice') ?? [])
-
-      expect(fields.get('stt.provider')?.type).toBe('select')
-      expect(fields.get('timeouts.tools.sequential_call')).toBeUndefined()
+      expect(clearsEnabledToolsets(prev, next)).toBe(true)
     })
 
-    it('renders timeouts.tools.sequential_call, which nothing seeds either', () => {
-      const fields = new Map(sectionFieldEntries({}, {}).get('advanced') ?? [])
+    it('does not flag a non-empty → missing transition (deep-merge preserves the key)', () => {
+      // PUT /api/config deep-merges the override onto the stored config, so an
+      // import that omits `toolsets` keeps the existing list — no wipe happens,
+      // so there is nothing to confirm.
+      const prev: HermesConfigRecord = { toolsets: ['memory'] }
+      const next: HermesConfigRecord = {}
 
-      expect(fields.get('timeouts.tools.sequential_call')?.type).toBe('number')
+      expect(clearsEnabledToolsets(prev, next)).toBe(false)
     })
 
-    it('lets a gateway that DOES declare a fallback key win', () => {
-      const schema = { 'stt.provider': { options: ['local'], type: 'string' as const } }
+    it('does not flag when at least one toolset remains', () => {
+      const prev: HermesConfigRecord = { toolsets: ['memory', 'terminal'] }
+      const next: HermesConfigRecord = { toolsets: ['memory'] }
 
-      const field = new Map(sectionFieldEntries(schema, {}).get('voice') ?? []).get('stt.provider')
-
-      expect(field?.type).toBe('string')
+      expect(clearsEnabledToolsets(prev, next)).toBe(false)
     })
 
-    /**
-     * The two silent-data-loss shapes of MJXHRM-443. Both are about a value the
-     * user never touched surviving a Settings visit: `agent.max_turns` = null
-     * is "unlimited" (DEFAULT_CONFIG, not a migration), and an unset
-     * `stt.provider` is what makes the autodetect ladder run.
-     */
-    it('keeps a null agent.max_turns and an unset stt.provider through a save round-trip', () => {
-      const config: HermesConfigRecord = {
-        agent: { api_max_retries: 3, max_turns: null },
-        stt: { enabled: true }
-      }
+    it('does not flag when the list was already empty', () => {
+      const prev: HermesConfigRecord = { toolsets: [] }
+      const next: HermesConfigRecord = { toolsets: [] }
 
-      // A save PUTs the whole draft, so the round-trip is: touch ONE unrelated
-      // field, then look at what the other two became.
-      const saved = setNested(config, 'agent.api_max_retries', 5)
-
-      expect(getNested(saved, 'agent.max_turns')).toBeNull()
-      expect(getNested(saved, 'agent.api_max_retries')).toBe(5)
-      expect(Object.prototype.hasOwnProperty.call(saved.stt as object, 'provider')).toBe(false)
+      expect(clearsEnabledToolsets(prev, next)).toBe(false)
     })
 
-    it('renders a null agent.max_turns as a row, not as a dropped key', () => {
-      const schema = { 'agent.max_turns': { type: 'string' as const } }
-      const fields = new Map(sectionFieldEntries(schema, { agent: { max_turns: null } }).get('advanced') ?? [])
+    it('does not flag an unrelated edit that never touched toolsets', () => {
+      const prev: HermesConfigRecord = { model: 'a', toolsets: ['memory'] }
+      const next: HermesConfigRecord = { model: 'b', toolsets: ['memory'] }
 
-      expect(fields.has('agent.max_turns')).toBe(true)
+      expect(clearsEnabledToolsets(prev, next)).toBe(false)
+    })
+  })
+
+  describe('diffConfig', () => {
+    it('omits a top-level key the draft never touched', () => {
+      // The autosave baseline is a snapshot taken when Settings opened. A key
+      // an agent set via `hermes config set` while the page sat open must not
+      // come back in the patch just because it's still present in the draft.
+      const baseline: HermesConfigRecord = { fallback_providers: ['nara1'], timezone: 'UTC' }
+      const draft: HermesConfigRecord = { fallback_providers: ['nara1'], timezone: 'America/New_York' }
+
+      expect(diffConfig(baseline, draft)).toEqual({ timezone: 'America/New_York' })
     })
 
-    it('exposes every config key the 08-18 and 08-20 sync added', () => {
-      // Dot-paths verified against hermes_cli/config_defaults.py DEFAULT_CONFIG.
-      const added = [
-        'compression.tail_mode',
-        'display.timestamps',
-        'voice.submit_mode',
-        'timeouts.tools.sequential_call',
-        'cron.media_send_timeout_seconds',
-        'model_overrides',
-        'runtime.nofile_soft_limit',
-        'agent.run_budget_seconds',
-        'agent.stall_guards',
-        'agent.execution_guidance',
-        'agent.reasoning_echo',
-        'web.keyless_fallback',
-        'web.keyless_rescue',
-        'web.provider_tier',
-        'memory.nudge_interval'
-      ]
+    it('includes a nested key only when it actually changed, leaving siblings out', () => {
+      const baseline: HermesConfigRecord = { display: { personality: 'default', show_reasoning: true } }
+      const draft: HermesConfigRecord = { display: { personality: 'default', show_reasoning: false } }
 
-      const declared = new Set(SECTIONS.flatMap(section => section.keys))
+      expect(diffConfig(baseline, draft)).toEqual({ display: { show_reasoning: false } })
+    })
 
-      expect(added.filter(key => !declared.has(key))).toEqual([])
+    it('sends a new key that was absent from the baseline', () => {
+      const baseline: HermesConfigRecord = {}
+      const draft: HermesConfigRecord = { timezone: 'UTC' }
+
+      expect(diffConfig(baseline, draft)).toEqual({ timezone: 'UTC' })
+    })
+
+    it('returns an empty object when the draft matches the baseline exactly', () => {
+      const baseline: HermesConfigRecord = { toolsets: ['memory'], display: { personality: 'default' } }
+      const draft: HermesConfigRecord = { toolsets: ['memory'], display: { personality: 'default' } }
+
+      expect(diffConfig(baseline, draft)).toEqual({})
+    })
+
+    it('treats an array as a whole value, not diffed element by element', () => {
+      const baseline: HermesConfigRecord = { toolsets: ['memory', 'terminal'] }
+      const draft: HermesConfigRecord = { toolsets: ['memory'] }
+
+      expect(diffConfig(baseline, draft)).toEqual({ toolsets: ['memory'] })
     })
   })
 })

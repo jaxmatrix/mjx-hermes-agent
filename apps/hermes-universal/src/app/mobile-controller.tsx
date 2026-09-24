@@ -1,72 +1,67 @@
 import { type ReactNode, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
-import { AgentsView } from '@/app/agents'
-import { CommandCenterView } from '@/app/command-center'
 import { ConnectScreen } from '@/app/connect-screen'
-import { CronView } from '@/app/cron'
 import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
 import { ModelPickerOverlay } from '@/app/model-picker-overlay'
 import { ModelVisibilityOverlay } from '@/app/model-visibility-overlay'
-import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { FloatingPet } from '@/app/pet/floating-pet'
-import { ProfilesView } from '@/app/profiles'
-import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
-import { SettingsView } from '@/app/settings/settings-view'
 import { StarmapView } from '@/app/starmap'
-import { WebhooksView } from '@/app/webhooks'
 import { NotificationStack } from '@/components/notifications'
+import { DesktopOnboardingOverlay } from '@/components/onboarding'
 import { ResourcePressureBanner } from '@/components/resource-pressure-banner'
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
-import { useMediaQuery } from '@/hooks/use-media-query'
-import { IS_DESKTOP, IS_MOBILE } from '@/lib/platform'
 import { useStore } from '@/store/atom'
 import { $connectionPhase, $hasConnected } from '@/store/connection'
+import { requestGateway } from '@/store/gateway-client'
 import { $restoring } from '@/store/gateway-restore'
 import { $gatewaySwitching } from '@/store/gateway-switch'
+import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { startLiveSessionSync } from '@/store/live-session-status'
-import { $onboardingActive, checkConfigured } from '@/store/onboarding'
-import { syncPetInfo } from '@/store/pet-gallery'
-import { deleteSessionLocal } from '@/store/session'
-import { $statusbarVisible } from '@/store/statusbar-prefs'
+import { startNewSession, startNewSessionTab } from '@/store/new-session'
+import { $activeGatewayProfile } from '@/store/profile'
+import {
+  $selectedStoredSessionId,
+  $sessions,
+  sessionMatchesStoredId,
+  sessionPinId
+} from '@/store/session'
+import { archiveSessionLocal } from '@/store/session-lifecycle'
 import { openAppRoute } from '@/store/windows'
-import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom'
+import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom-universal'
 
 import { CommandPalette } from './command-palette'
-import { ContribController } from './contrib/controller'
-import { WorkspaceRoutes } from './contrib/panes'
 import { useKeybinds } from './hooks/use-keybinds'
 import { COMMAND_CENTER_ROUTE, GATEWAY_SETTINGS_ROUTE, sessionRoute } from './routes'
 import { SessionSwitcher } from './session-switcher'
 import { useOverlayRouting } from './shell/hooks/use-overlay-routing'
 import { MobileShell } from './shell/mobile-shell'
 import { MobileSurfaceShell } from './shell/mobile-surface-shell'
-import { AppShell, SidebarProvider } from './shell/sidebar'
-import { Statusbar } from './shell/statusbar'
-import { Titlebar } from './shell/titlebar'
+import { SidebarProvider } from './shell/sidebar'
 
-// Connected-guard + routing. Until a gateway connection is ready we show the
-// full-screen ConnectScreen (no nav). Once ready, the first-run onboarding
-// wizard shows if no provider is configured; otherwise the sidebar shell
-// hosts the routed views. The toast stack (portaled to <body>) floats over all.
+// The PHONE's main-window root (`app.tsx` sends the desktop main window to
+// desktop's own root instead). Connected-guard + routing: until a gateway
+// connection is ready we show the full-screen ConnectScreen (no nav). Once ready,
+// desktop's onboarding overlay owns first-run / manual provider setup; otherwise
+// the touch shell hosts the routed views. The toast stack (portaled to <body>)
+// floats over all.
 export function MobileController() {
   const phase = useStore($connectionPhase)
-  const onboarding = useStore($onboardingActive)
   const restoring = useStore($restoring)
   const hasConnected = useStore($hasConnected)
   const switching = useStore($gatewaySwitching)
-  const statusbarVisible = useStore($statusbarVisible)
+  const activeProfile = useStore($activeGatewayProfile)
 
   // Publishes --visual-viewport-{height,top} / --keyboard-inset /
   // data-keyboard-open for the WHOLE mobile app, not just the shells.
   // `html.is-mobile #root` is sized from those vars (styles.css), and
-  // ConnectScreen / GatewayConnectingScreen / OnboardingScreen all render OUTSIDE
-  // MobileShell below while holding focusable fields — so measuring only inside
-  // the shells left those screens on the layout viewport, and a disconnect while
-  // typing (which swaps the shell for the connecting screen) stripped the vars
-  // out from under #root mid-keyboard. Inert off-mobile: desktop reports
-  // offsetTop 0 and a visual viewport the size of the layout one. The hook
-  // refcounts ONE module-level subscription, so the shells' own calls stay free.
+  // ConnectScreen / GatewayConnectingScreen all render OUTSIDE MobileShell
+  // below while holding focusable fields — so measuring only inside the shells
+  // left those screens on the layout viewport, and a disconnect while typing
+  // (which swaps the shell for the connecting screen) stripped the vars out
+  // from under #root mid-keyboard. Inert off-mobile: desktop reports offsetTop
+  // 0 and a visual viewport the size of the layout one. The hook refcounts ONE
+  // module-level subscription, so the shells' own calls stay free.
   useKeyboardInset()
 
   // UI scale: apply the persisted zoom once, and wire Cmd/Ctrl +/-/0 shortcuts.
@@ -96,15 +91,6 @@ export function MobileController() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // On reaching a live connection, check whether a provider is configured and
-  // pull the active pet's sprite so the in-app pet can render in chat.
-  useEffect(() => {
-    if (phase === 'ready') {
-      void checkConfigured()
-      void syncPetInfo()
-    }
-  }, [phase])
-
   // Live-session rehydration + the coalesced session-list refresh
   // (store/live-session-status). Started HERE, not in app/contrib/controller:
   // that module is also imported by the tile and HUD satellite windows, and a
@@ -119,19 +105,11 @@ export function MobileController() {
   // instead of bouncing to the connecting screen. Only once we've been connected:
   // on a first run the connect screen owns the dial and must keep it.
   const live = phase === 'ready' || (switching && hasConnected)
-  const connected = live && !onboarding
+  const connected = live
 
-  // Desktop always uses the docked (wide) shell regardless of window width;
-  // mobile/web fall to the phone drawer below 768px. The wide path renders the
-  // MJX-50 layout tree; the narrow path keeps the flat AppShell drawer.
-  const mediaWide = useMediaQuery('(min-width: 768px)')
-  const wide = IS_DESKTOP || mediaWide
-
-  // Overlay views (settings / command-center / agents / cron / …) are top-level
-  // portals rather than routed panes — desktop parity: the underlying route (chat)
-  // stays as the backdrop and the portal floats over it. Open state and the
-  // "return to where you were" path both come from the shared hook ported from
-  // desktop's shell/hooks/use-overlay-routing.
+  // Which windowable surface (settings / command-center / agents / cron / …) the
+  // route names, and the "return to where you were" path — desktop's
+  // shell/hooks/use-overlay-routing.
   const { pathname } = useLocation()
   const navigate = useNavigate()
 
@@ -141,7 +119,6 @@ export function MobileController() {
     commandCenterOpen,
     cronOpen,
     profilesOpen,
-    returnPathRef,
     starmapOpen,
     settingsOpen,
     webhooksOpen
@@ -152,7 +129,32 @@ export function MobileController() {
   // ⌘G/⌘N and ⌘K listeners this app used to carry. Mounted unconditionally so
   // the keys work on the connect / onboarding screens too.
   useKeybinds({
-    toggleCommandCenter: () => (commandCenterOpen ? closeOverlayToPreviousRoute() : openAppRoute(COMMAND_CENTER_ROUTE))
+    archiveSelectedSession: () => {
+      const sessionId = $selectedStoredSessionId.get()
+
+      if (sessionId) {
+        void archiveSessionLocal(sessionId)
+      }
+    },
+    openNewSessionTab: () => startNewSessionTab(),
+    startFreshSession: () => startNewSession(),
+    toggleCommandCenter: () => (commandCenterOpen ? closeOverlayToPreviousRoute() : openAppRoute(COMMAND_CENTER_ROUTE)),
+    toggleSelectedPin: () => {
+      const sessionId = $selectedStoredSessionId.get()
+
+      if (!sessionId) {
+        return
+      }
+
+      const session = $sessions.get().find(s => sessionMatchesStoredId(s, sessionId))
+      const pinId = session ? sessionPinId(session) : sessionId
+
+      if ($pinnedSessionIds.get().includes(pinId)) {
+        unpinSession(pinId)
+      } else {
+        pinSession(pinId)
+      }
+    }
   })
 
   // Only the Gateway settings page is usable while disconnected (it's the
@@ -196,13 +198,6 @@ export function MobileController() {
         )}
       </>
     )
-  } else if (onboarding) {
-    content = (
-      <>
-        <NotificationStack />
-        <OnboardingScreen />
-      </>
-    )
   } else {
     content = (
       <>
@@ -216,71 +211,36 @@ export function MobileController() {
             a detached tile / HUD / activity root gets it too (MJXHRM-387). */}
         {/* ⌃Tab session switcher HUD — keyboard-driven from useKeybinds. */}
         <SessionSwitcher />
-        {/* Layout fork, mobile-first so a phone NEVER falls into the docked
-            tile tree regardless of measured width:
-            • IS_MOBILE → the new touch shell (blank scaffold for now).
-            • wide (desktop, or ≥768 window) → the MJX-50 recursive LAYOUT TREE:
-              every surface (sidebar / chat routes / files / preview / review /
-              terminal) is an `area:'panes'` contribution the controller registers;
-              the tree resolves content from the registry and hosts multi-session
-              tiles.
-            • else (web / sub-768 desktop window) → the flat AppShell drawer. */}
-        {IS_MOBILE ? (
-          <MobileShell />
-        ) : wide ? (
-          <ContribController />
-        ) : (
-          <AppShell>
-            <WorkspaceRoutes />
-          </AppShell>
-        )}
+        {/* The touch shell. A phone NEVER falls into desktop's docked tile tree,
+            whatever width it measures. */}
+        <MobileShell />
       </>
     )
   }
 
-  // SidebarProvider wraps every branch so the desktop Titlebar's sidebar button
-  // has context on all screens. The frameless-window chrome (Titlebar) mounts
-  // above the routed content on desktop Tauri only; mobile/web keep the native
-  // top inset and per-screen headers.
+  // SidebarProvider wraps every branch so the shell's drawers have context on
+  // all screens. No frameless-window chrome here: a phone keeps the native top
+  // inset and per-screen headers.
   return (
     <SidebarProvider>
       <div className="relative flex h-full min-h-0 flex-col">
-        {/* Frameless chrome — a REAL top row (in-flow, reserves its height) so
-            it can never cover the content beneath it (the tree zone tab strips /
-            session titles start right below it). Desktop Tauri only. */}
-        {IS_DESKTOP && <Titlebar connected={connected} />}
         {/* Resource-pressure bar (NS-656): disk exhaustion, memory pressure and
             suspected-OOM restarts, read off the `/api/status` snapshot the
             statusbar already polls (store/system-status.ts) — no second poller.
-            A REAL in-flow row like the Titlebar above and the Statusbar below,
-            so it can never cover the content it is warning about, and it renders
+            A REAL in-flow row, so it can never cover the content it is warning about, and it renders
             nothing at all until the backend classifies a level. Mounted on the
             connected branch only: an unreachable gateway has no status to
             report, and the poll is gated on the socket being open anyway. */}
         {connected && <ResourcePressureBanner />}
         <div className="min-h-0 flex-1">{content}</div>
-        {/* Bottom statusbar (ported from desktop): a real shrink-0 row below the
-            content. Connected-only — it reads live gateway/session state. Hidden
-            on mobile: the touch shell is a blank canvas for now and the statusbar
-            is a desktop surface it will grow its own equivalent of.
-            UNMOUNTED — not just hidden — while toggled off, so its status poll
-            and the per-turn readouts stop with it. */}
-        {connected && !IS_MOBILE && statusbarVisible && <Statusbar />}
-        {/* Settings portal — a full-window overlay (fixed z-50) over the titlebar
-            (z-40) and chat backdrop. Stays mounted while disconnected too (a
-            settings-initiated "Save & reconnect", or a sign-out) so reconfiguring or
-            re-authenticating the gateway never bounces the user out to the connect
-            picker — desktop parity. Blocked only during the first-run onboarding
-            wizard (phase ready but not connected). */}
         {/* Mobile: Settings / Command Center / Profiles present as ONE full-screen
             in-app surface with the shared mobile chrome (top bar + two drawers),
             derived live from the route — parity with the Android native activity
             screen (MJX-203). Its OWN SidebarProvider isolates these drawers from the
             home MobileShell's drawers (both mount Sheets keyed to the same useSidebar
             booleans). Home/back navigates to the stashed route (NOT returnHome, whose
-            iOS fallback would try to close the primary window). The desktop floating-
-            overlay path below is used off-mobile (and stays untouched). */}
-        {IS_MOBILE && mobileSurfaceOpen && (
+            iOS fallback would try to close the primary window). */}
+        {mobileSurfaceOpen && (
           // `absolute`, not `fixed`: the parent above is `relative h-full` inside
           // a #root pinned to the VISIBLE viewport, so this fills the visible
           // rectangle. A `fixed inset-0` here is anchored to the LAYOUT viewport
@@ -297,50 +257,16 @@ export function MobileController() {
             </SidebarProvider>
           </div>
         )}
-        {!IS_MOBILE && settingsOpen && (connected || settingsGatewayOpen) && (
-          <SettingsView returnPath={returnPathRef.current} variant="overlay" />
-        )}
-        {/* Agents ("Spawn tree") overlay — desktop's live subagent surface,
-            floated over the chat backdrop and opened from the statusbar Agents
-            item. Its Panel supplies the fixed-inset card + close-X / Esc. On a
-            phone it is a windowable surface instead (MobileSurfaceShell / a
-            native Android screen), so the desktop card never renders there. */}
-        {!IS_MOBILE && connected && agentsOpen && <AgentsView onClose={closeOverlayToPreviousRoute} />}
-        {/* Command Center overlay — desktop's Sessions / System / Usage /
-            Maintenance ops surface, opened from the statusbar (icon + version
-            chips) and the sidebar rail. */}
-        {!IS_MOBILE && connected && commandCenterOpen && (
-          <CommandCenterView
-            onClose={closeOverlayToPreviousRoute}
-            onDeleteSession={deleteSessionLocal}
-            onNavigateRoute={path => navigate(path)}
-            onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
-            variant="overlay"
-          />
-        )}
-        {/* Cron ("Routines") overlay — desktop's scheduled-jobs master/detail:
-            schedule, run history, pause/resume/trigger. Opened from the sidebar
-            rail and from "Manage" on a sidebar cron row. On a phone it is a
-            windowable surface instead (MobileSurfaceShell / a native Android
-            screen), so the desktop card never renders there. */}
-        {!IS_MOBILE && connected && cronOpen && (
-          <CronView
-            onClose={closeOverlayToPreviousRoute}
-            onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
-          />
-        )}
-        {/* Profiles overlay — desktop's profile CRUD + soul editor master/detail. */}
-        {!IS_MOBILE && connected && profilesOpen && <ProfilesView onClose={closeOverlayToPreviousRoute} />}
-        {/* Webhooks overlay — inbound HTTP event subscriptions (create / enable /
-            disable / delete) plus the receiver's real runtime state. Like cron and
-            profiles it becomes a windowable surface on a phone. */}
-        {!IS_MOBILE && connected && webhooksOpen && <WebhooksView onClose={closeOverlayToPreviousRoute} />}
         {/* Star map overlay — the radial "what Hermes has learned" map. */}
         {connected && starmapOpen && <StarmapView onClose={closeOverlayToPreviousRoute} />}
-        {/* Provider-connect overlay — a focused per-provider sign-in card that
-            floats OVER the settings page (z-70) without unmounting it. Opened from
-            Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}
-        {connected && <ProviderConnectOverlay />}
+        {/* First-run / manual provider setup — same overlay desktop wiring mounts. */}
+        {connected && (
+          <DesktopOnboardingOverlay
+            enabled
+            profile={activeProfile}
+            requestGateway={requestGateway}
+          />
+        )}
         {/* Edit-models ("model visibility") dialog — opened from the composer's
             model menu ("Edit models"). Self-gates on $modelVisibilityOpen +
             gateway-open; "Add provider…" routes to Providers → Accounts. */}
@@ -350,7 +276,7 @@ export function MobileController() {
             on $modelPickerOpen + gateway-open, same as the dialog above. */}
         {connected && <ModelPickerOverlay onOpenProviders={() => openAppRoute('/settings/providers')} />}
         {/* Floating pet — a top-level draggable + roaming mascot that floats over
-            ALL routes. It patrols the Settings overlay's edge when open.
+            ALL routes.
 
             On a phone it walks all four screen edges rather than only the floor,
             sits below the composer bars rather than over them, and lifts on
@@ -358,7 +284,7 @@ export function MobileController() {
             hidden while a MobileSurfaceShell surface is up: those are full-screen route
             surfaces with no card inset, so the overlay ledge the pet would
             patrol doesn't exist there. */}
-        {connected && !(IS_MOBILE && mobileSurfaceOpen) && (
+        {connected && !mobileSurfaceOpen && (
           <FloatingPet
             overlayOpen={
               settingsOpen || agentsOpen || commandCenterOpen || cronOpen || profilesOpen || starmapOpen || webhooksOpen

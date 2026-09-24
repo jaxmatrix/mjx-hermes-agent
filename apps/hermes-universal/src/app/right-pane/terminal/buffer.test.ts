@@ -11,9 +11,12 @@
 import type { Terminal } from '@xterm/xterm'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { $activeTerminalId } from '@/store/terminals'
-
-import { makeTerminalReader, readActiveTerminal, registerTerminalReader } from './buffer'
+import {
+  makeTerminalReader,
+  readActiveTerminal,
+  registerTerminalReader,
+  setActiveTerminalId
+} from './buffer'
 
 /** A stand-in for xterm's buffer: `lines` are absolute, oldest first. */
 const fakeTerm = (lines: string[], { baseY = 0, cursorY = 0, rows = 3 } = {}) =>
@@ -38,7 +41,7 @@ beforeEach(() => {
     disposers.pop()?.()
   }
 
-  $activeTerminalId.set(null)
+  setActiveTerminalId(null)
 })
 
 describe('readActiveTerminal', () => {
@@ -51,7 +54,7 @@ describe('readActiveTerminal', () => {
   // would be worse than answering nothing.
   it('answers null when the ACTIVE id has no registered reader, even though others do', () => {
     disposers.push(registerTerminalReader('term-1', makeTerminalReader(fakeTerm(SCROLLBACK))))
-    $activeTerminalId.set('term-2')
+    setActiveTerminalId('term-2')
 
     expect(readActiveTerminal()).toBeNull()
   })
@@ -62,10 +65,10 @@ describe('readActiveTerminal', () => {
     disposers.push(registerTerminalReader('term-1', makeTerminalReader(fakeTerm(['first shell']))))
     disposers.push(registerTerminalReader('term-2', makeTerminalReader(fakeTerm(['second shell']))))
 
-    $activeTerminalId.set('term-2')
+    setActiveTerminalId('term-2')
     expect(readActiveTerminal()?.text).toBe('second shell')
 
-    $activeTerminalId.set('term-1')
+    setActiveTerminalId('term-1')
     expect(readActiveTerminal()?.text).toBe('first shell')
   })
 
@@ -75,7 +78,7 @@ describe('readActiveTerminal', () => {
     disposers.push(registerTerminalReader('term-1', makeTerminalReader(fakeTerm(['live']))))
     // The stale disposer must be a no-op: it no longer owns the id.
     stale()
-    $activeTerminalId.set('term-1')
+    setActiveTerminalId('term-1')
 
     expect(readActiveTerminal()?.text).toBe('live')
   })

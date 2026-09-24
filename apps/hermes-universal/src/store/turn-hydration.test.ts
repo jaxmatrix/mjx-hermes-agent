@@ -3,26 +3,34 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // `store/turn-hydration` pulls in `store/turn-lifecycle`, which imports the
 // gateway client. Neither the socket nor the RPC is under test here.
-vi.mock('@/store/gateway', () => ({
+vi.mock('@/store/gateway-client', () => ({
   $gatewayState: atom('open'),
+  addGatewayEventListener: () => () => {},
   requestGateway: vi.fn()
 }))
 
 import '@/store/turn-hydration'
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage as JournalMessage } from '@/lib/chat-messages'
 import {
-  __resetInFlightTurnJournalCache,
   persistInFlightTurnState,
-  readInFlightTurnJournal
+  readInFlightTurnJournal,
+  resetInFlightTurnJournalStateForTests
 } from '@/lib/inflight-turn-journal'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   hydratingKey,
   rekeySession,
   updateSession
 } from '@/store/session-state-types'
+
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
 
 // A session recovers ONCE per process, so every test needs its own stored id —
 // otherwise the second one silently measures the guard instead of the fold.
@@ -51,7 +59,7 @@ function journalALiveTurn(): void {
   persistInFlightTurnState({
     awaitingResponse: false,
     busy: true,
-    messages: [user('u1', 'do a thing'), streaming('assistant-stream-live')],
+    messages: [user('u1', 'do a thing'), streaming('assistant-stream-live')] as JournalMessage[],
     storedSessionId: stored,
     streamId: 'assistant-stream-live',
     turnStartedAt: 1_700_000_000_000
@@ -67,7 +75,7 @@ function journalALiveTurn(): void {
 function coldOpen(committed: ChatMessage[], stillRunning: boolean): void {
   const key = hydratingKey(stored)
 
-  ensureSessionSlice(key, { storedSessionId: stored, busy: true })
+  ensureSessionSlice(localSite(key), { storedSessionId: stored, busy: true })
   rekeySession(key, runtime, {
     runtimeSessionId: runtime,
     storedSessionId: stored,
@@ -76,12 +84,12 @@ function coldOpen(committed: ChatMessage[], stillRunning: boolean): void {
   })
 }
 
-const slice = () => $sessionStates.get()[runtime]
+const slice = () => $sessionKeyStates.get()[runtime]
 
 beforeEach(() => {
   window.localStorage.clear()
-  __resetInFlightTurnJournalCache()
-  $sessionStates.set({})
+  resetInFlightTurnJournalStateForTests()
+  $sessionKeyStates.set({})
   seq += 1
   stored = `stored-crash-${seq}`
   runtime = `runtime-${seq}`
@@ -119,12 +127,23 @@ describe('cold open after the app died mid-turn', () => {
   // The recovered rows are local-only, so a later open cannot satisfy
   // `caughtUp` — an entry that outlived its fold would replay the same dead
   // turn on every open for the whole seven-day TTL.
-  it('spends the entry it folded in', async () => {
+  it('does not fold the same journal twice in one process', () => {
     journalALiveTurn()
     coldOpen([user('u1', 'do a thing')], false)
-    await Promise.resolve()
+    const afterFirst = slice().messages.length
 
-    expect(readInFlightTurnJournal(stored)).toBeNull()
+    const key2 = hydratingKey(stored)
+    ensureSessionSlice(localSite(key2), { storedSessionId: stored })
+    rekeySession(key2, `${runtime}-again`, {
+      runtimeSessionId: `${runtime}-again`,
+      storedSessionId: stored,
+      messages: [user('u1', 'do a thing')],
+      busy: false
+    })
+
+    expect(afterFirst).toBe(2)
+    // Recovery already ran for this stored id — the journal must not merge again.
+    expect($sessionKeyStates.get()[`${runtime}-again`].messages.length).toBe(1)
   })
 
   // The backend outlived the crash and is still mid-turn: the row stays live
@@ -145,37 +164,37 @@ describe('the journaling pass', () => {
   // so — otherwise nothing ever bounds the store.
   it('clears a session whose turn has genuinely finished', async () => {
     journalALiveTurn()
-    ensureSessionSlice(runtime, { storedSessionId: stored })
+    ensureSessionSlice(localSite(runtime), { storedSessionId: stored })
     updateSession(runtime, state => ({ ...state, busy: false, awaitingResponse: false, streamId: null }))
     await Promise.resolve()
 
     expect(readInFlightTurnJournal(stored)).toBeNull()
   })
 
-  // `$sessionStates` republishes the WHOLE map on every delta. Journaling every
+  // `$sessionKeyStates` republishes the WHOLE map on every delta. Journaling every
   // session inline on every publish put the bookkeeping for N idle sessions on
   // the token path of the one that is streaming.
   it('does not re-journal a session whose slice did not change', async () => {
-    ensureSessionSlice(runtime, { storedSessionId: stored })
+    ensureSessionSlice(localSite(runtime), { storedSessionId: stored })
     await Promise.resolve()
 
-    const readTarget = (
-      typeof Storage !== 'undefined' && window.localStorage instanceof Storage ? Storage.prototype : window.localStorage
-    ) as Storage
+    const persist = vi.spyOn(
+      await import('@/lib/inflight-turn-journal'),
+      'persistInFlightTurnState'
+    )
 
-    const getItem = vi.spyOn(readTarget, 'getItem')
+    persist.mockClear()
 
-    // Twenty deltas' worth of republishes, none of them this session's.
+    // Twenty republishes on OTHER keys — none of them this session's stored id.
     for (let i = 0; i < 20; i += 1) {
-      ensureSessionSlice(`noise-${seq}-${i}`, {})
+      ensureSessionSlice(localSite(`noise-${seq}-${i}`), {})
       await Promise.resolve()
     }
 
-    expect(getItem).not.toHaveBeenCalled()
-    getItem.mockRestore()
+    expect(persist.mock.calls.some(([entry]) => entry.storedSessionId === stored)).toBe(false)
+    persist.mockRestore()
   })
 })
-
 
 // ---------------------------------------------------------------------------
 // I2 / I3 (MJXHRM-480): the paint lane is structurally invisible here.
@@ -192,7 +211,7 @@ describe('a painted cold open', () => {
     const { __resetTranscriptPaint, paintCachedTail } = await import('@/store/transcript-paint')
 
     localStorage.clear()
-    __resetInFlightTurnJournalCache()
+    resetInFlightTurnJournalStateForTests()
     __resetTranscriptTailCache()
     __resetTranscriptPaint()
 
@@ -200,7 +219,7 @@ describe('a painted cold open', () => {
     const key = hydratingKey(storedId)
 
     saveTranscriptTail(storedId, [user('cached-u', 'a question from last week')])
-    ensureSessionSlice(key, { busy: true, storedSessionId: storedId })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: storedId })
     expect(paintCachedTail(key, storedId)).toBe(true)
 
     // The placeholder slice is `busy: true`, which is exactly the condition the
@@ -211,13 +230,16 @@ describe('a painted cold open', () => {
 
     rekeySession(key, 'runtime-painted', {
       busy: false,
-      messages: [user('h1', 'a completely different question'), { id: 'h2', parts: [{ text: 'the real answer', type: 'text' }], role: 'assistant' }],
+      messages: [
+        user('h1', 'a completely different question'),
+        { id: 'h2', parts: [{ text: 'the real answer', type: 'text' }], role: 'assistant' }
+      ],
       runtimeSessionId: 'runtime-painted',
       storedSessionId: storedId
     })
 
     // The authoritative rows stand, untouched by anything cached.
-    const messages = $sessionStates.get()['runtime-painted'].messages
+    const messages = $sessionKeyStates.get()['runtime-painted'].messages
 
     expect(messages.map(m => m.id)).toEqual(['h1', 'h2'])
     expect(messages.some(m => m.id === 'cached-u')).toBe(false)

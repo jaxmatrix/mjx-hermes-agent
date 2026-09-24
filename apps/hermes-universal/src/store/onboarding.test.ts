@@ -1,260 +1,910 @@
+import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes', () => ({
-  getGlobalModelOptions: vi.fn(),
-  getRecommendedDefaultModel: vi.fn(async () => ({
-    provider: 'openrouter',
-    model: 'openrouter/auto',
-    free_tier: null
-  })),
-  setEnvVar: vi.fn(async () => ({ ok: true })),
-  setModelAssignment: vi.fn(async () => ({
-    ok: true,
-    provider: 'openrouter',
-    model: 'openrouter/auto',
-    scope: 'main'
-  })),
-  validateProviderCredential: vi.fn(async () => ({ ok: true, reachable: true, message: '', models: ['local/model'] })),
-  listOAuthProviders: vi.fn(async () => ({ providers: [] })),
-  startOAuthLogin: vi.fn(),
-  pollOAuthSession: vi.fn(async () => ({ session_id: 's', status: 'pending' })),
-  submitOAuthCode: vi.fn(async () => ({ ok: true, status: 'approved' })),
-  cancelOAuthSession: vi.fn(async () => ({ ok: true }))
-}))
-
-// openExternalLink is fired during OAuth start; stub it (no Tauri host in tests).
-vi.mock('@/lib/external-link', () => ({ openExternalLink: vi.fn(async () => {}) }))
-
-import { API_KEY_OPTIONS } from '@/app/onboarding/api-key-options'
-import {
-  getGlobalModelOptions,
-  getRecommendedDefaultModel,
-  listOAuthProviders,
-  setEnvVar,
-  setModelAssignment,
-  startOAuthLogin,
-  validateProviderCredential
-} from '@/hermes'
+import * as notifications from '@/store/notifications'
+import { makeOAuthProvider } from '@/test/oauth-provider'
 import type { OAuthProvider } from '@/types/hermes'
 
 import {
-  $onboarding,
-  $onboardingActive,
-  $onboardingSeen,
-  backToPicker,
-  checkConfigured,
-  confirmModel,
-  isCustomEndpointSlug,
-  resolveProviderSetup,
-  saveApiKey,
-  startProviderOAuth,
+  $desktopOnboarding,
+  type DesktopOnboardingState,
+  type OnboardingContext,
+  refreshOnboarding,
+  requestDesktopOnboarding,
+  saveOnboardingLocalEndpoint,
+  setOnboardingModel,
   submitOnboardingCode
 } from './onboarding'
 
-const oauthProvider = (flow: 'device_code' | 'pkce'): OAuthProvider =>
-  ({
-    id: 'anthropic',
-    name: 'Anthropic',
-    flow,
-    cli_command: '',
-    docs_url: '',
-    status: { logged_in: false }
-  }) as OAuthProvider
+function baseState(overrides: Partial<DesktopOnboardingState> = {}): DesktopOnboardingState {
+  return {
+    configured: false,
+    flow: { status: 'idle' },
+    mode: 'oauth',
+    providers: null,
+    reason: null,
+    requested: false,
+    firstRunSkipped: false,
+    manual: false,
+    localEndpoint: false,
+    freeTierReady: false,
+    ...overrides
+  }
+}
 
-const startLogin = vi.mocked(startOAuthLogin)
-
-const options = vi.mocked(getGlobalModelOptions)
-const setEnv = vi.mocked(setEnvVar)
-const assign = vi.mocked(setModelAssignment)
-const validate = vi.mocked(validateProviderCredential)
-
-const recommend = vi.mocked(getRecommendedDefaultModel)
-
-const openrouter = API_KEY_OPTIONS.find(o => o.id === 'openrouter')!
-const local = API_KEY_OPTIONS.find(o => o.id === 'local')!
-const fireworks = API_KEY_OPTIONS.find(o => o.id === 'fireworks')!
-const openai = API_KEY_OPTIONS.find(o => o.id === 'openai')!
-
-describe('onboarding store', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    localStorage.clear()
-    $onboardingSeen.set(false)
-    $onboardingActive.set(false)
-    $onboarding.set({
-      step: 'picker',
-      option: null,
-      providerSlug: null,
-      recommended: null,
-      oauth: null,
-      busy: false,
-      error: null
-    })
+function installApiMock(api: (request: { path: string }) => Promise<unknown>) {
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: { api }
   })
-  afterEach(() => localStorage.clear())
+}
 
-  it('marks seen (no wizard) when a provider is already configured', async () => {
-    options.mockResolvedValueOnce({
-      providers: [{ name: 'OpenRouter', slug: 'openrouter', authenticated: true, models: ['a'] }]
-    } as never)
-    await checkConfigured()
-    expect($onboardingActive.get()).toBe(false)
-    expect($onboardingSeen.get()).toBe(true)
-  })
-
-  it('activates the wizard when nothing is configured', async () => {
-    options.mockResolvedValueOnce({
-      providers: [{ name: 'OpenAI', slug: 'openai', authenticated: false, models: [] }]
-    } as never)
-    await checkConfigured()
-    expect($onboardingActive.get()).toBe(true)
-  })
-
-  it('saves an API key then advances to the confirm step', async () => {
-    const ok = await saveApiKey(openrouter, 'sk-test')
-    expect(ok).toBe(true)
-    expect(setEnv).toHaveBeenCalledWith('OPENROUTER_API_KEY', 'sk-test')
-    expect($onboarding.get().step).toBe('confirm')
-    expect($onboarding.get().providerSlug).toBe('openrouter')
-  })
-
-  it('confirms the recommended model and finishes', async () => {
-    await saveApiKey(openrouter, 'sk-test')
-    const ok = await confirmModel()
-    expect(ok).toBe(true)
-    expect(assign).toHaveBeenCalledWith(
-      expect.objectContaining({ scope: 'main', provider: 'openrouter', model: 'openrouter/auto' })
-    )
-    expect($onboardingSeen.get()).toBe(true)
-    expect($onboardingActive.get()).toBe(false)
-  })
-
-  // `GET /api/model/recommended-default` answers 200 with `model: ""` when it
-  // cannot resolve one — it never errors — so the empty string is the shape the
-  // client actually has to survive.
-  it('falls back to the provider catalog when recommended-default answers with an empty model', async () => {
-    recommend.mockResolvedValueOnce({ provider: 'fireworks', model: '', free_tier: null })
-    options.mockResolvedValueOnce({
-      providers: [{ name: 'Fireworks AI', slug: 'fireworks', models: ['accounts/fireworks/models/kimi-k2'] }]
-    } as never)
-
-    await saveApiKey(fireworks, 'fw-test')
-
-    expect($onboarding.get().recommended).toEqual({
-      provider: 'fireworks',
-      model: 'accounts/fireworks/models/kimi-k2',
-      free_tier: null
-    })
-  })
-
-  it('recommends nothing — and assigns nothing — when no model can be resolved at all', async () => {
-    recommend.mockResolvedValueOnce({ provider: 'fireworks', model: '', free_tier: null })
-    options.mockResolvedValueOnce({ providers: [] } as never)
-
-    await saveApiKey(fireworks, 'fw-test')
-    expect($onboarding.get().recommended).toBeNull()
-
-    await confirmModel()
-    expect(assign).not.toHaveBeenCalled()
-  })
-
-  it('looks the OpenAI option up under the slug the backend actually uses', async () => {
-    recommend.mockResolvedValueOnce({ provider: 'openai-api', model: 'gpt-5', free_tier: null })
-
-    await saveApiKey(openai, 'sk-test')
-
-    expect(recommend).toHaveBeenCalledWith('openai-api')
-    expect($onboarding.get().providerSlug).toBe('openai-api')
-  })
-
-  it('wires a local endpoint via validate + custom assignment', async () => {
-    const ok = await saveApiKey(local, 'http://127.0.0.1:8000/v1', 'endpoint-key')
-    expect(ok).toBe(true)
-    expect(validate).toHaveBeenCalledWith('OPENAI_BASE_URL', 'http://127.0.0.1:8000/v1', 'endpoint-key')
-    expect(assign).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'custom', base_url: 'http://127.0.0.1:8000/v1', model: 'local/model' })
-    )
-    expect($onboardingSeen.get()).toBe(true)
-  })
-
-  it('enters the OAuth step for a device_code provider', async () => {
-    startLogin.mockResolvedValueOnce({
-      flow: 'device_code',
-      session_id: 'sess',
-      verification_url: 'https://v',
-      user_code: 'ABCD',
-      expires_in: 600,
-      poll_interval: 5
-    } as never)
-    await startProviderOAuth(oauthProvider('device_code'))
-    const oauth = $onboarding.get().oauth
-    expect($onboarding.get().step).toBe('oauth')
-    expect(oauth?.flow).toBe('device_code')
-    expect(oauth?.userCode).toBe('ABCD')
-    backToPicker() // stop the poll timer
-  })
-
-  it('completes a PKCE flow: submit code → confirm step', async () => {
-    startLogin.mockResolvedValueOnce({
-      flow: 'pkce',
-      session_id: 'sess',
-      auth_url: 'https://a',
-      expires_in: 600
-    } as never)
-    await startProviderOAuth(oauthProvider('pkce'))
-    expect($onboarding.get().oauth?.flow).toBe('pkce')
-
-    const ok = await submitOnboardingCode('the-code')
-    expect(ok).toBe(true)
-    expect($onboarding.get().step).toBe('confirm')
-    expect($onboarding.get().providerSlug).toBe('anthropic')
-  })
-})
-
-describe('resolveProviderSetup', () => {
-  const listProviders = vi.mocked(listOAuthProviders)
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    listProviders.mockResolvedValue({ providers: [oauthProvider('pkce')] } as never)
-  })
-
-  it.each(['custom', 'local', 'CUSTOM', ' Custom ', 'custom:my-box'])(
-    'treats %s as a custom endpoint without consulting the OAuth catalog',
-    async slug => {
-      await expect(resolveProviderSetup(slug)).resolves.toEqual({ kind: 'custom-endpoint' })
-      expect(listProviders).not.toHaveBeenCalled()
+function emptyOpenRouterGateway(): OnboardingContext['requestGateway'] {
+  return async method => {
+    if (method === 'setup.status') {
+      return { provider_configured: true } as never
     }
-  )
 
-  it('resolves a known provider slug to its OAuth connect target', async () => {
-    const target = await resolveProviderSetup('Anthropic')
-    expect(target.kind).toBe('oauth')
-    expect(target.kind === 'oauth' && target.provider.id).toBe('anthropic')
+    if (method === 'setup.runtime_check') {
+      return { error: 'No usable credentials found for openrouter.', ok: false, provider: 'openrouter' } as never
+    }
+
+    throw new Error(`unexpected gateway method: ${method}`)
+  }
+}
+
+function keylessCustomGateway(): OnboardingContext['requestGateway'] {
+  return async method => {
+    if (method === 'setup.status') {
+      return { provider_configured: true } as never
+    }
+
+    if (method === 'setup.runtime_check') {
+      return { ok: true, provider: 'custom' } as never
+    }
+
+    throw new Error(`unexpected gateway method: ${method}`)
+  }
+}
+
+function onboardingContext(requestGateway: OnboardingContext['requestGateway']): OnboardingContext {
+  return { requestGateway }
+}
+
+function fallbackTimeoutGateway(): OnboardingContext['requestGateway'] {
+  return async method => {
+    if (method === 'setup.status' || method === 'setup.runtime_check') {
+      throw new Error(`request timed out: ${method}`)
+    }
+
+    throw new Error(`unexpected gateway method: ${method}`)
+  }
+}
+
+describe('refreshOnboarding', () => {
+  it('keeps onboarding work in its initiating lifetime and profile', async () => {
+    const { startManualOnboarding, startProviderOAuth, saveOnboardingApiKey, closeManualOnboarding } =
+      await import('./onboarding')
+
+    const requests: { path: string; profile?: string }[] = []
+    let release!: () => void
+    let delayKey = true
+    installApiMock(async request => {
+      requests.push(request)
+
+      if (request.path === '/api/providers/oauth') {
+        return { providers: [] }
+      }
+
+      if (request.path.endsWith('/start')) {
+        return {
+          flow: 'device_code',
+          session_id: 'local-fixture',
+          user_code: 'FAKE',
+          verification_url: 'http://localhost/fixture',
+          expires_in: 600
+        }
+      }
+
+      if (request.path.includes('/poll/')) {
+        return { status: 'approved' }
+      }
+
+      if (request.path === '/api/env' && delayKey) {
+        await new Promise<void>(resolve => {
+          release = resolve
+        })
+      }
+
+      if (request.path.startsWith('/api/model/options')) {
+        return { providers: [{ slug: 'fixture', name: 'Fixture', models: ['fixture-model'] }] }
+      }
+
+      if (request.path.startsWith('/api/model/recommended-default')) {
+        return { model: 'fixture-model' }
+      }
+
+      return { ok: true }
+    })
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    let profile = 'beta'
+
+    const ctx: OnboardingContext = {
+      get profile() {
+        return profile
+      },
+      requestGateway: async method =>
+        (method === 'setup.status' ? { provider_configured: true } : { ok: true }) as never
+    }
+
+    try {
+      startManualOnboarding(null, 'beta')
+      const pending = saveOnboardingApiKey('FIREWORKS_API_KEY', 'fake-key', 'Fireworks', ctx)
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+      closeManualOnboarding()
+      profile = 'alpha'
+      startManualOnboarding(null, 'alpha')
+      release()
+      await pending
+      expect(requests.some(r => r.path === '/api/model/set')).toBe(false)
+      expect($desktopOnboarding.get()).toMatchObject({ targetProfile: 'alpha', flow: { status: 'idle' } })
+      closeManualOnboarding()
+      delayKey = false
+      profile = 'beta'
+      startManualOnboarding(null, 'beta')
+      const startAt = requests.length
+      await startProviderOAuth(makeOAuthProvider('fixture'), ctx)
+      await vi.waitFor(() => expect($desktopOnboarding.get().flow.status).toBe('confirming_model'), { timeout: 5000 })
+      expect(requests.slice(startAt).some(r => r.path.includes('/poll/'))).toBe(true)
+      expect(requests.slice(startAt).some(r => r.path === '/api/model/set')).toBe(true)
+      expect(requests.slice(startAt).every(r => r.profile === 'beta')).toBe(true)
+    } finally {
+      closeManualOnboarding()
+    }
   })
 
-  it('falls back to the picker for an unknown slug', async () => {
-    await expect(resolveProviderSetup('does-not-exist')).resolves.toEqual({ kind: 'picker' })
+  beforeEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
   })
 
-  it('falls back to the picker for an empty slug, with no catalog call', async () => {
-    await expect(resolveProviderSetup('   ')).resolves.toEqual({ kind: 'picker' })
-    expect(listProviders).not.toHaveBeenCalled()
+  afterEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+    vi.restoreAllMocks()
   })
 
-  it('falls back to the picker when the OAuth catalog call fails', async () => {
-    listProviders.mockRejectedValueOnce(new Error('gateway down'))
-    await expect(resolveProviderSetup('anthropic')).resolves.toEqual({ kind: 'picker' })
+  it('refreshes OAuth providers again when onboarding was explicitly requested', async () => {
+    const api = vi.fn(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth') {
+        return { providers: [makeOAuthProvider('fresh')] }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+    $desktopOnboarding.set(baseState({ providers: [makeOAuthProvider('cached')] }))
+    requestDesktopOnboarding('Need provider setup')
+
+    const ready = await refreshOnboarding(onboardingContext(emptyOpenRouterGateway()))
+
+    expect(ready).toBe(false)
+    expect(api).toHaveBeenCalledTimes(1)
+    expect($desktopOnboarding.get().providers?.map(p => p.id)).toEqual(['fresh'])
+    expect($desktopOnboarding.get().reason).toContain('No usable credentials found for openrouter.')
+    expect($desktopOnboarding.get().reason).toContain('setup.status reports configured credentials')
+  })
+
+  it('keeps cached providers when onboarding was not re-requested', async () => {
+    const api = vi.fn(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth') {
+        return { providers: [makeOAuthProvider('fresh')] }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+    $desktopOnboarding.set(baseState({ providers: [makeOAuthProvider('cached')] }))
+
+    const ready = await refreshOnboarding(onboardingContext(emptyOpenRouterGateway()))
+
+    expect(ready).toBe(false)
+    expect(api).not.toHaveBeenCalled()
+    expect($desktopOnboarding.get().providers?.map(p => p.id)).toEqual(['cached'])
+  })
+
+  it('does not downgrade configured=true on fallback-only readiness failures', async () => {
+    const api = vi.fn(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth') {
+        return { providers: [makeOAuthProvider('fresh')] }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+    // Simulate a returning user: cache is set and store is configured.
+    window.localStorage.setItem('hermes-desktop-onboarded-v1', '1')
+    $desktopOnboarding.set(
+      baseState({
+        configured: true,
+        providers: [makeOAuthProvider('cached')],
+        reason: null,
+        requested: false
+      })
+    )
+
+    const ready = await refreshOnboarding(onboardingContext(fallbackTimeoutGateway()))
+
+    expect(ready).toBe(false)
+    expect(api).not.toHaveBeenCalled()
+    expect($desktopOnboarding.get().configured).toBe(true)
+    expect($desktopOnboarding.get().reason).toBeNull()
+    // The cache must survive the refresh — proving we didn't downgrade.
+    expect(window.localStorage.getItem('hermes-desktop-onboarded-v1')).toBe('1')
+  })
+
+  it('shows a non-blocking notification when preserving configured on fallback', async () => {
+    const notifySpy = vi.spyOn(notifications, 'notify')
+
+    installApiMock(vi.fn())
+    $desktopOnboarding.set(
+      baseState({
+        configured: true,
+        providers: [makeOAuthProvider('cached')],
+        reason: null,
+        requested: false
+      })
+    )
+
+    await refreshOnboarding(onboardingContext(fallbackTimeoutGateway()))
+
+    expect(notifySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'runtime-not-ready',
+        kind: 'error'
+      })
+    )
+    expect($desktopOnboarding.get().configured).toBe(true)
+  })
+
+  it('enters setup when the selected OpenRouter credential is genuinely empty', async () => {
+    installApiMock(vi.fn())
+    window.localStorage.setItem('hermes-desktop-onboarded-v1', '1')
+    $desktopOnboarding.set(
+      baseState({
+        configured: true,
+        providers: [makeOAuthProvider('cached')],
+        reason: null,
+        requested: false
+      })
+    )
+
+    const ready = await refreshOnboarding(onboardingContext(emptyOpenRouterGateway()))
+
+    expect(ready).toBe(false)
+    expect($desktopOnboarding.get().configured).toBe(false)
+    expect($desktopOnboarding.get().reason).toContain('No usable credentials found for openrouter.')
+    expect(window.localStorage.getItem('hermes-desktop-onboarded-v1')).toBeNull()
+  })
+
+  it('keeps a keyless custom runtime out of setup', async () => {
+    const api = vi.fn()
+
+    installApiMock(api)
+    $desktopOnboarding.set(baseState({ configured: false, reason: 'stale setup error', requested: true }))
+
+    const ready = await refreshOnboarding(onboardingContext(keylessCustomGateway()))
+
+    expect(ready).toBe(true)
+    expect(api).not.toHaveBeenCalled()
+    expect($desktopOnboarding.get()).toMatchObject({
+      configured: true,
+      reason: null,
+      requested: false
+    })
+  })
+
+  it('does not preserve configured when onboarding was explicitly requested', async () => {
+    const api = vi.fn(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth') {
+        return { providers: [makeOAuthProvider('fresh')] }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+    $desktopOnboarding.set(
+      baseState({
+        configured: true,
+        providers: [makeOAuthProvider('cached')],
+        reason: null,
+        requested: true
+      })
+    )
+
+    const ready = await refreshOnboarding(onboardingContext(fallbackTimeoutGateway()))
+
+    expect(ready).toBe(false)
+    // requested overrides preservation — should downgrade.
+    expect($desktopOnboarding.get().configured).toBe(false)
+    expect(api).toHaveBeenCalledTimes(1)
+  })
+
+  it('still surfaces onboarding when fallback failure happens before configured state', async () => {
+    const api = vi.fn(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth') {
+        return { providers: [makeOAuthProvider('fresh')] }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+    $desktopOnboarding.set(baseState({ configured: false, providers: null, requested: true }))
+
+    const ready = await refreshOnboarding(onboardingContext(fallbackTimeoutGateway()))
+
+    expect(ready).toBe(false)
+    expect(api).toHaveBeenCalledTimes(1)
+    expect($desktopOnboarding.get().configured).toBe(false)
+    expect($desktopOnboarding.get().reason).toContain('request timed out')
+  })
+
+  it('deduplicates concurrent provider refresh calls', async () => {
+    let resolveProviders!: (value: { providers: OAuthProvider[] }) => void
+
+    const providersPromise = new Promise<{ providers: OAuthProvider[] }>(resolve => {
+      resolveProviders = value => {
+        resolve(value)
+      }
+    })
+
+    const api = vi.fn(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth') {
+        return providersPromise
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+    $desktopOnboarding.set(baseState({ requested: true }))
+
+    const first = refreshOnboarding(onboardingContext(emptyOpenRouterGateway()))
+    const second = refreshOnboarding(onboardingContext(emptyOpenRouterGateway()))
+
+    await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(1))
+
+    resolveProviders({ providers: [makeOAuthProvider('shared')] })
+    await Promise.all([first, second])
+
+    expect($desktopOnboarding.get().providers?.map(p => p.id)).toEqual(['shared'])
   })
 })
 
-describe('isCustomEndpointSlug', () => {
-  it('matches the custom/local family and nothing else', () => {
-    expect(isCustomEndpointSlug('custom')).toBe(true)
-    expect(isCustomEndpointSlug('local')).toBe(true)
-    expect(isCustomEndpointSlug('custom:vllm')).toBe(true)
-    expect(isCustomEndpointSlug('localai')).toBe(false)
-    expect(isCustomEndpointSlug('openrouter')).toBe(false)
-    expect(isCustomEndpointSlug('')).toBe(false)
+describe('OAuth onboarding', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+  })
+
+  afterEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+    vi.restoreAllMocks()
+  })
+
+  it('clears stale readiness errors after OAuth succeeds and model confirmation is shown', async () => {
+    const model = 'anthropic/claude-opus-4.8'
+    const calls: { body?: unknown; path: string }[] = []
+
+    installApiMock(async ({ body, path }: { body?: unknown; path: string }) => {
+      calls.push({ body, path })
+
+      if (path === '/api/providers/oauth/nous/submit') {
+        return { ok: true, status: 'approved' }
+      }
+
+      if (path.startsWith('/api/model/options')) {
+        return {
+          providers: [
+            {
+              name: 'Nous Portal',
+              slug: 'nous',
+              models: [model]
+            }
+          ]
+        }
+      }
+
+      if (path.startsWith('/api/model/recommended-default?')) {
+        return { provider: 'nous', model, free_tier: false }
+      }
+
+      if (path === '/api/model/set') {
+        return { ok: true, provider: 'nous', model, gateway_tools: [] }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    const requestGateway: OnboardingContext['requestGateway'] = async (method, params) => {
+      if (method === 'reload.env') {
+        return {} as never
+      }
+
+      if (method === 'setup.status') {
+        return { provider_configured: true } as never
+      }
+
+      if (method === 'setup.runtime_check') {
+        expect(params).toEqual({ provider: 'nous' })
+
+        return { ok: true } as never
+      }
+
+      throw new Error(`unexpected gateway method: ${method}`)
+    }
+
+    $desktopOnboarding.set(
+      baseState({
+        flow: {
+          status: 'awaiting_user',
+          provider: makeOAuthProvider('nous', 'Nous Portal'),
+          start: {
+            auth_url: 'https://portal.example/auth',
+            expires_in: 600,
+            flow: 'pkce',
+            session_id: 'portal-session'
+          },
+          code: 'fresh-code'
+        },
+        reason:
+          'No access token found for Nous Portal login. setup.status reports configured credentials, but runtime resolution still failed.',
+        requested: true
+      })
+    )
+
+    await submitOnboardingCode(onboardingContext(requestGateway))
+
+    const state = $desktopOnboarding.get()
+    expect(state.reason).toBeNull()
+    expect(state.flow.status).toBe('confirming_model')
+
+    if (state.flow.status === 'confirming_model') {
+      expect(state.flow.label).toBe('Nous Portal')
+      expect(state.flow.currentModel).toBe(model)
+    }
+
+    expect(calls.some(c => c.path === '/api/model/set')).toBe(true)
+
+    const optionsIndex = calls.findIndex(c => c.path.startsWith('/api/model/options'))
+    const recommendedIndex = calls.findIndex(c => c.path.startsWith('/api/model/recommended-default'))
+    const setIndex = calls.findIndex(c => c.path === '/api/model/set')
+
+    expect(optionsIndex).toBeGreaterThanOrEqual(0)
+    expect(recommendedIndex).toBeGreaterThan(optionsIndex)
+    expect(setIndex).toBeGreaterThan(recommendedIndex)
+  })
+
+  it('does not advance when the default model assignment is not persisted', async () => {
+    const model = 'openai/gpt-5.5-pro'
+    installApiMock(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth/nous/submit') {
+        return { ok: true, status: 'approved' }
+      }
+
+      if (path.startsWith('/api/model/options')) {
+        return { providers: [{ name: 'Nous Portal', slug: 'nous', models: [model] }] }
+      }
+
+      if (path.startsWith('/api/model/recommended-default?')) {
+        return { provider: 'nous', model, free_tier: false }
+      }
+
+      if (path === '/api/model/set') {
+        return {
+          ok: false,
+          provider: 'nous',
+          model,
+          confirm_required: true,
+          confirm_message: 'Confirm this expensive model.'
+        }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    const requestGatewayMock = vi.fn(async (method: string) => {
+      if (method === 'reload.env') {
+        return {}
+      }
+
+      throw new Error(`unexpected gateway method: ${method}`)
+    })
+
+    const requestGateway = requestGatewayMock as OnboardingContext['requestGateway']
+    $desktopOnboarding.set(
+      baseState({
+        flow: {
+          status: 'awaiting_user',
+          provider: makeOAuthProvider('nous', 'Nous Portal'),
+          start: {
+            auth_url: 'https://portal.example/auth',
+            expires_in: 600,
+            flow: 'pkce',
+            session_id: 'portal-session'
+          },
+          code: 'fresh-code'
+        },
+        requested: true
+      })
+    )
+
+    await submitOnboardingCode(onboardingContext(requestGateway))
+
+    const state = $desktopOnboarding.get()
+    expect(state.flow.status).toBe('error')
+    expect(state.flow.status === 'error' ? state.flow.message : '').toContain('Confirm this expensive model.')
+    expect(requestGatewayMock).not.toHaveBeenCalledWith('setup.runtime_check', expect.anything())
+  })
+})
+
+describe('saveOnboardingLocalEndpoint', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+  })
+
+  afterEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+    vi.restoreAllMocks()
+  })
+
+  function readyGateway(): OnboardingContext['requestGateway'] {
+    return async method => {
+      if (method === 'reload.env') {
+        return {} as never
+      }
+
+      if (method === 'setup.status') {
+        return { provider_configured: true } as never
+      }
+
+      if (method === 'setup.runtime_check') {
+        return { ok: true } as never
+      }
+
+      throw new Error(`unexpected gateway method: ${method}`)
+    }
+  }
+
+  it('errors when the endpoint advertises no models (nothing to route to)', async () => {
+    const calls: string[] = []
+    installApiMock(async ({ path }: { path: string }) => {
+      calls.push(path)
+
+      if (path === '/api/providers/validate') {
+        return { ok: true, reachable: true, message: '', models: [] }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    const result = await saveOnboardingLocalEndpoint('http://127.0.0.1:8000/v1', '', {
+      requestGateway: readyGateway()
+    })
+
+    expect(result.ok).toBe(false)
+    // Must not attempt to persist an assignment without a model.
+    expect(calls).not.toContain('/api/model/set')
+  })
+
+  it('auto-discovers the model and persists provider=custom + base_url, then finishes', async () => {
+    const calls: { body?: unknown; path: string }[] = []
+
+    const api = vi.fn(async ({ body, path }: { body?: unknown; path: string }) => {
+      calls.push({ body, path })
+
+      if (path === '/api/providers/validate') {
+        return { ok: true, reachable: true, message: '', models: ['llama-3.1-8b', 'qwen2.5-7b'] }
+      }
+
+      if (path === '/api/model/set') {
+        return { ok: true, provider: 'custom', model: 'llama-3.1-8b', base_url: 'http://127.0.0.1:8000/v1' }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+    const onCompleted = vi.fn()
+
+    const result = await saveOnboardingLocalEndpoint('http://127.0.0.1:8000/v1', '', {
+      onCompleted,
+      requestGateway: readyGateway()
+    })
+
+    expect(result.ok).toBe(true)
+
+    const assign = calls.find(c => c.path === '/api/model/set')
+    expect(assign?.body).toMatchObject({
+      scope: 'main',
+      provider: 'custom',
+      model: 'llama-3.1-8b',
+      base_url: 'http://127.0.0.1:8000/v1'
+    })
+
+    expect(onCompleted).toHaveBeenCalledTimes(1)
+    expect($desktopOnboarding.get().configured).toBe(true)
+  })
+
+  it('forwards the API key to the probe and persists it for auth-gated endpoints', async () => {
+    const calls: { body?: unknown; path: string }[] = []
+
+    const api = vi.fn(async ({ body, path }: { body?: unknown; path: string }) => {
+      calls.push({ body, path })
+
+      if (path === '/api/providers/validate') {
+        return { ok: true, reachable: true, message: '', models: ['gpt-oss-120b'] }
+      }
+
+      if (path === '/api/model/set') {
+        return { ok: true, provider: 'custom', model: 'gpt-oss-120b', base_url: 'https://text.example.com/v1' }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+
+    const result = await saveOnboardingLocalEndpoint('https://text.example.com/v1', 'sk-secret', {
+      requestGateway: readyGateway()
+    })
+
+    expect(result.ok).toBe(true)
+
+    // The probe must receive the key so an auth-gated /v1/models enumerates.
+    const probe = calls.find(c => c.path === '/api/providers/validate')
+    expect(probe?.body).toMatchObject({
+      key: 'OPENAI_BASE_URL',
+      value: 'https://text.example.com/v1',
+      api_key: 'sk-secret'
+    })
+
+    // And the key must be persisted alongside the endpoint for runtime auth.
+    const assign = calls.find(c => c.path === '/api/model/set')
+    expect(assign?.body).toMatchObject({
+      scope: 'main',
+      provider: 'custom',
+      model: 'gpt-oss-120b',
+      base_url: 'https://text.example.com/v1',
+      api_key: 'sk-secret'
+    })
+  })
+
+  it('persists the resolved_base_url that served /models, not the URL as typed (#65488)', async () => {
+    const calls: { body?: unknown; path: string }[] = []
+
+    const api = vi.fn(async ({ body, path }: { body?: unknown; path: string }) => {
+      calls.push({ body, path })
+
+      if (path === '/api/providers/validate') {
+        // The probe fell through from the bare host root to its /v1 variant.
+        return {
+          ok: true,
+          reachable: true,
+          message: '',
+          models: ['llama-3.1-8b'],
+          resolved_base_url: 'http://127.0.0.1:1234/v1'
+        }
+      }
+
+      if (path === '/api/model/set') {
+        return { ok: true, provider: 'custom', model: 'llama-3.1-8b', base_url: 'http://127.0.0.1:1234/v1' }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    installApiMock(api)
+
+    const result = await saveOnboardingLocalEndpoint('http://127.0.0.1:1234', '', {
+      requestGateway: readyGateway()
+    })
+
+    expect(result.ok).toBe(true)
+
+    // The runtime POSTs {base_url}/chat/completions verbatim, so Save must store
+    // the base that actually answered /models rather than the typed host root.
+    const assign = calls.find(c => c.path === '/api/model/set')
+    expect(assign?.body).toMatchObject({
+      scope: 'main',
+      provider: 'custom',
+      model: 'llama-3.1-8b',
+      base_url: 'http://127.0.0.1:1234/v1'
+    })
+  })
+
+  it('reports the runtime reason when resolution still fails after saving', async () => {
+    installApiMock(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/validate') {
+        return { ok: true, reachable: true, message: '', models: ['llama-3.1-8b'] }
+      }
+
+      if (path === '/api/model/set') {
+        return { ok: true }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    const failingGateway: OnboardingContext['requestGateway'] = async method => {
+      if (method === 'reload.env') {
+        return {} as never
+      }
+
+      if (method === 'setup.status') {
+        return { provider_configured: false } as never
+      }
+
+      if (method === 'setup.runtime_check') {
+        return { ok: false, error: 'No provider can serve the selected model.' } as never
+      }
+
+      throw new Error(`unexpected gateway method: ${method}`)
+    }
+
+    const result = await saveOnboardingLocalEndpoint('http://127.0.0.1:8000/v1', '', {
+      requestGateway: failingGateway
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('No provider can serve the selected model.')
+    expect($desktopOnboarding.get().configured).not.toBe(true)
+  })
+})
+
+describe('device-code poll expiry', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+  })
+
+  afterEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  function deviceCodeProvider() {
+    // makeOAuthProvider builds a pkce provider; device-code flows need the
+    // device_code branch instead.
+    return { ...makeOAuthProvider('nous', 'Nous Portal'), flow: 'device_code' as const }
+  }
+
+  function deviceStart(expiresIn: number) {
+    return {
+      expires_in: expiresIn,
+      flow: 'device_code',
+      poll_interval: 5,
+      session_id: 'device-sess-1',
+      user_code: 'ABCD-EFGH',
+      verification_url: 'https://portal.example/device'
+    }
+  }
+
+  it('lapses to an error with actionable guidance when the window expires still pending', async () => {
+    vi.useFakeTimers()
+    installApiMock(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth/nous/start') {
+        return deviceStart(2)
+      }
+
+      if (path === '/api/providers/oauth/nous/poll/device-sess-1') {
+        return { status: 'pending' }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    const { startProviderOAuth } = await import('./onboarding')
+    await startProviderOAuth(deviceCodeProvider(), onboardingContext(emptyOpenRouterGateway()))
+
+    expect($desktopOnboarding.get().flow.status).toBe('polling')
+
+    // Let both the poll interval and the expiry window lapse.
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+
+    expect($desktopOnboarding.get().flow.status).toBe('error')
+  })
+
+  it('keeps polling while the window is open and clears the expiry on cancel', async () => {
+    vi.useFakeTimers()
+    installApiMock(async ({ path }: { path: string }) => {
+      if (path === '/api/providers/oauth/nous/start') {
+        return deviceStart(600)
+      }
+
+      if (path === '/api/providers/oauth/nous/poll/device-sess-1') {
+        return { status: 'pending' }
+      }
+
+      throw new Error(`unexpected api path: ${path}`)
+    })
+
+    const { startProviderOAuth, cancelOnboardingFlow } = await import('./onboarding')
+    await startProviderOAuth(deviceCodeProvider(), onboardingContext(emptyOpenRouterGateway()))
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+    })
+    expect($desktopOnboarding.get().flow.status).toBe('polling')
+
+    cancelOnboardingFlow()
+    // Far past the original window: the cancelled flow must not flip to an
+    // expiry error after the fact.
+    await act(async () => {
+      vi.advanceTimersByTime(700_000)
+    })
+    expect($desktopOnboarding.get().flow.status).toBe('idle')
+  })
+})
+
+// The happy path (cross-provider pick reaches /api/model/set with the picked
+// model's provider) is covered from the ConfirmingModelPanel in
+// components/onboarding/flow.test.tsx so it exercises the onSelect wiring.
+describe('setOnboardingModel', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+  })
+
+  afterEach(() => {
+    window.localStorage.clear()
+    $desktopOnboarding.set(baseState())
+    vi.restoreAllMocks()
+  })
+
+  function confirmingModelState(
+    overrides: Partial<Extract<DesktopOnboardingState['flow'], { status: 'confirming_model' }>> = {}
+  ) {
+    return baseState({
+      flow: {
+        status: 'confirming_model',
+        currentModel: 'gpt-5.6-terra',
+        label: 'OpenAI OAuth (ChatGPT)',
+        providerSlug: 'openai',
+        saving: false,
+        ...overrides
+      }
+    })
+  }
+
+  it('reverts the model, provider and label when persistence fails', async () => {
+    installApiMock(async () => {
+      throw new Error('backend down')
+    })
+    $desktopOnboarding.set(confirmingModelState())
+
+    await setOnboardingModel('deepseek/deepseek-v4-flash-0731', 'nous', 'Nous Portal')
+
+    const flow = $desktopOnboarding.get().flow
+    expect(flow.status).toBe('confirming_model')
+
+    if (flow.status === 'confirming_model') {
+      expect(flow.currentModel).toBe('gpt-5.6-terra')
+      expect(flow.providerSlug).toBe('openai')
+      expect(flow.label).toBe('OpenAI OAuth (ChatGPT)')
+      expect(flow.saving).toBe(false)
+    }
   })
 })

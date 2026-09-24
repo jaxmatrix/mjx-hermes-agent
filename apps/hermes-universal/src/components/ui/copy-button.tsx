@@ -5,12 +5,6 @@ import { ContextMenuItem } from '@/components/ui/context-menu'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
-// The OS-first write seam. Desktop's counterpart is the Electron preload's
-// `window.hermesDesktop.writeClipboard`; universal's is the Tauri
-// clipboard-manager plugin (MJXHRM-415). It used to be defined in this file,
-// which is why five unrelated modules imported a *button component* to get at
-// it — it now lives in @/lib/clipboard with the read half.
-import { writeClipboardText } from '@/lib/clipboard'
 import { triggerHaptic } from '@/lib/haptics'
 import { Check, Copy, X } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -19,6 +13,26 @@ type CopyPayload = string | (() => Promise<string> | string)
 type CopyButtonAppearance = 'button' | 'icon' | 'inline' | 'menu-item' | 'context-menu-item' | 'tool-row'
 type CopyStatus = 'copied' | 'error' | 'idle'
 const COPIED_RESET_MS = 1_500
+
+export async function writeClipboardText(text: string) {
+  if (!text) {
+    return
+  }
+
+  if (window.hermesDesktop?.writeClipboard) {
+    await window.hermesDesktop.writeClipboard(text)
+
+    return
+  }
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+
+    return
+  }
+
+  throw new Error('Clipboard API is unavailable')
+}
 
 export interface CopyButtonProps {
   appearance?: CopyButtonAppearance
@@ -191,7 +205,7 @@ export function CopyButton({
         <button
           aria-label={ariaLabel}
           className={cn(
-            'grid size-6 place-items-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity hover:bg-accent/55 hover:text-foreground focus-visible:opacity-100 group-hover/tool-row:opacity-100 coarse:opacity-100 disabled:opacity-40',
+            'grid size-6 place-items-center rounded-md text-muted-foreground/70 opacity-0 coarse:opacity-100 transition-opacity hover:bg-accent/55 hover:text-foreground focus-visible:opacity-100 group-hover/tool-row:opacity-100 disabled:opacity-40',
             className
           )}
           disabled={disabled}

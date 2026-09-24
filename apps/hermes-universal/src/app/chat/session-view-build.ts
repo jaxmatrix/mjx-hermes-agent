@@ -1,9 +1,10 @@
 import { atom, computed } from 'nanostores'
 
 import { type SessionView } from '@/app/chat/session-view'
-import { type ChatMessage } from '@/store/chat'
-import { $sessionStates } from '@/store/session-state-types'
-import { $sessionTiles, tileRuntimeKey } from '@/store/session-states'
+import { type ChatMessage } from '@/lib/chat-messages'
+import { type ChatMessage as LegacyChatMessage } from '@/lib/session-key-messages'
+import { $sessionKeyTabs, tileRuntimeKey } from '@/store/session-key-states'
+import { $sessionKeyStates } from '@/store/session-state-types'
 import { $transcriptPaint } from '@/store/transcript-paint'
 
 /**
@@ -21,9 +22,9 @@ import { $transcriptPaint } from '@/store/transcript-paint'
  * consumer branches on that meaning.
  */
 
-const NO_MESSAGES: ChatMessage[] = []
+const NO_MESSAGES: LegacyChatMessage[] = []
 
-function lastVisibleIsUser(messages: ChatMessage[]): boolean {
+function lastVisibleIsUser(messages: LegacyChatMessage[]): boolean {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'system') {
       continue
@@ -35,16 +36,16 @@ function lastVisibleIsUser(messages: ChatMessage[]): boolean {
   return false
 }
 
-/** A SessionView driven entirely by the tile's `$sessionStates` slice — the same
+/** A SessionView driven entirely by the tile's `$sessionKeyStates` slice — the same
  *  shape the primary chat's PRIMARY_SESSION_VIEW provides, so one ChatScreen
  *  serves both. */
 export function buildSessionView(storedSessionId: string): SessionView {
   // Resolved through the reverse index (which carries lineage aliases) rather
   // than the tile's cached runtimeId, so the tile follows its session across a
   // background auto-compaction instead of pointing at a dead slice (MJX-133).
-  const $runtimeId = computed([$sessionTiles, $sessionStates], () => tileRuntimeKey(storedSessionId))
+  const $runtimeId = computed([$sessionKeyTabs, $sessionKeyStates], () => tileRuntimeKey(storedSessionId))
 
-  const $state = computed([$runtimeId, $sessionStates], (rt, states) => (rt ? states[rt] : undefined))
+  const $state = computed([$runtimeId, $sessionKeyStates], (rt, states) => (rt ? states[rt] : undefined))
   const $messages = computed($state, s => s?.messages ?? NO_MESSAGES)
 
   // The tile's own paint lane slot, keyed by the same slice key its `$messages`
@@ -54,23 +55,25 @@ export function buildSessionView(storedSessionId: string): SessionView {
     messages.length || !key ? messages : (paint[key]?.messages ?? messages)
   )
 
+  const $viewMessages = computed($paintedMessages, messages => messages as ChatMessage[])
+
   return {
     kind: 'tile',
     $runtimeId,
     $storedId: atom(storedSessionId),
-    $messages,
-    $paintedMessages,
-    $paintedMessagesEmpty: computed($paintedMessages, m => m.length === 0),
+    $messages: $viewMessages,
+    $paintedMessages: $viewMessages,
     $busy: computed($state, s => Boolean(s?.busy)),
     $awaitingResponse: computed($state, s => Boolean(s?.awaitingResponse)),
     $messagesEmpty: computed($messages, m => m.length === 0),
     $lastVisibleIsUser: computed($messages, lastVisibleIsUser),
-    $statusLine: computed($state, s => s?.statusLine ?? ''),
+    $turnStartedAt: computed($state, s => s?.turnStartedAt ?? null),
     $cwd: computed($state, s => s?.cwd ?? ''),
     $model: computed($state, s => s?.model ?? ''),
     $provider: computed($state, s => s?.provider ?? ''),
     $fast: computed($state, s => Boolean(s?.fast)),
-    $reasoningEffort: computed($state, s => s?.reasoningEffort ?? '')
+    $reasoningEffort: computed($state, s => s?.reasoningEffort ?? ''),
+    $reasoningEffortWire: computed($state, () => '')
   }
 }
 

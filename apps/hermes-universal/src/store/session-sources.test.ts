@@ -6,7 +6,7 @@ vi.mock('@/lib/api', () => ({ api, setConnectionBaseResolver: vi.fn() }))
 
 import type { SessionInfo } from '@/types/hermes'
 
-import { $connectionsRegistry, type ConnectionView, type RegistryView } from './connections'
+import { $registryView, type ConnectionView, type RegistryView } from './connections'
 import {
   connectionIdForSession,
   fetchRegistrySessionRows,
@@ -54,7 +54,7 @@ const paths = (): string[] => api.mock.calls.map(([request]) => String(request.p
 beforeEach(() => {
   api.mockReset()
   forgetSessionSources()
-  $connectionsRegistry.set(registry([source({}), source({ id: 'b', kind: 'ssh', label: 'B', url: 'https://b.test' })]))
+  $registryView.set(registry([source({}), source({ id: 'b', kind: 'ssh', label: 'B', url: 'https://b.test' })]))
 })
 
 describe('fetchRegistrySessionRows', () => {

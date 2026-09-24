@@ -16,7 +16,6 @@ import { RowButton } from '@/components/ui/row-button'
 import { Switch } from '@/components/ui/switch'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
-import { startPointerDrag } from '@/lib/pointer-drag'
 import { cn } from '@/lib/utils'
 import {
   $paneHeightOverride,
@@ -49,7 +48,7 @@ export function ToolChip({ children, title }: { children: ReactNode; title?: str
 // The wide-rail track shared by every Capabilities tab (skills/tools/mcp) so
 // the three read as one page. Exported for pages that build their own grid
 // (the MCP tab's cursor-driven layout) but must stay in step.
-// `--md-split` is the drag override slot: unset, it falls back to the declared
+// `--md-split` is the drag override slot: unset it falls back to the declared
 // track, so grids without a resize sash render exactly as before.
 export const MASTER_DETAIL_WIDE_COLS = 'sm:grid-cols-[minmax(0,var(--md-split,0.75fr))_minmax(0,1fr)]'
 
@@ -62,7 +61,7 @@ const SPLIT_MIN_RIGHT_PX = 320
 // sparse detail (skills/tools/mcp); the default 14rem rail suits pages whose
 // detail carries the weight (messaging). A `resizeId` turns the column seam
 // into a drag sash: the rail width persists in the pane store under that id
-// (the same store the terminal/editor panes use), double-click resets it.
+// (same store as the terminal/editor panes), double-click resets to default.
 export function MasterDetail({
   children,
   pane,
@@ -72,15 +71,12 @@ export function MasterDetail({
   children: ReactNode
   pane?: ReactNode
   /** Pane-store key — when set, the seam between the two columns becomes a
-   *  drag-resizable sash and the rail width persists under this id. The sash
-   *  is `hidden sm:block`: below that breakpoint the grid collapses to a
-   *  single column, so there is no seam to drag (and nothing for a touch
-   *  gesture to hit). */
+   *  drag-resizable sash and the rail width persists under this id. */
   resizeId?: string
   split?: 'rail' | 'wide'
 }) {
   const gridRef = useRef<HTMLDivElement>(null)
-  // Unconditional hook (rules of hooks) — the '' atom is inert without an id.
+  // Unconditional hook (rules of hooks) — the '' atom is inert when no id.
   const override = useStore($paneWidthOverride(resizeId ?? ''))
   const [dragging, setDragging] = useState(false)
 
@@ -97,14 +93,20 @@ export function MasterDetail({
     const max = Math.max(SPLIT_MIN_LEFT_PX, grid.getBoundingClientRect().width - SPLIT_MIN_RIGHT_PX)
     setDragging(true)
 
-    startPointerDrag(
-      move =>
-        setPaneWidthOverride(
-          resizeId,
-          Math.round(Math.min(max, Math.max(SPLIT_MIN_LEFT_PX, startWidth + (move.clientX - startX))))
-        ),
-      () => setDragging(false)
-    )
+    const onMove = (move: globalThis.PointerEvent) => {
+      setPaneWidthOverride(
+        resizeId,
+        Math.round(Math.min(max, Math.max(SPLIT_MIN_LEFT_PX, startWidth + (move.clientX - startX))))
+      )
+    }
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      setDragging(false)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp, { once: true })
   }
 
   // With a sash the detail side gets a relative wrapper so the seam handle can
@@ -126,13 +128,13 @@ export function MasterDetail({
             {list}
             <div className="relative grid min-h-0 min-w-0">
               <div
-                className="group/vsash absolute inset-y-0 start-0 z-10 hidden w-1 -translate-x-1/2 cursor-col-resize sm:block rtl:translate-x-1/2"
+                className="group/vsash absolute inset-y-0 start-0 z-10 hidden w-1 -translate-x-1/2 cursor-col-resize sm:block"
                 onDoubleClick={() => setPaneWidthOverride(resizeId, undefined)}
                 onPointerDown={startSplitDrag}
               >
                 <div
                   className={cn(
-                    'absolute inset-y-0 start-1/2 w-px -translate-x-1/2 transition-colors rtl:translate-x-1/2',
+                    'absolute inset-y-0 start-1/2 w-px -translate-x-1/2 transition-colors',
                     dragging ? 'bg-(--ui-stroke-secondary)' : 'group-hover/vsash:bg-(--ui-stroke-secondary)'
                   )}
                 />
@@ -181,7 +183,7 @@ export function DetailColumn({
         </div>
       )}
       {actionBar && (
-        <footer className="shrink-0 bg-(--ui-chat-surface-background) px-5 py-2.5" data-glass-raised="">
+        <footer className="shrink-0 bg-(--ui-chat-surface-background) px-5 py-2.5">
           <div className="mx-auto flex max-w-2xl flex-wrap items-center gap-2">{actionBar}</div>
         </footer>
       )}
@@ -252,49 +254,21 @@ export function DetailPane({
     const max = Math.round(window.innerHeight * DETAIL_PANE_MAX_VH)
     setDragging(true)
 
-    // One write per frame, same reason as the shell's pane resize: a pointermove
-    // burst delivers several events per paint and only the last one is ever
-    // seen, but each intermediate write costs a relayout.
-    let pending: null | number = null
-    let frame = 0
-
-    const flush = () => {
-      frame = 0
-
-      if (pending !== null) {
-        setPaneHeightOverride(id, pending)
-        pending = null
-      }
-    }
-
     const onMove = (move: globalThis.PointerEvent) => {
-      pending = Math.min(max, Math.max(0, Math.round(startHeight + (startY - move.clientY))))
-
-      if (!frame) {
-        frame = requestAnimationFrame(flush)
-      }
+      setPaneHeightOverride(id, Math.min(max, Math.max(0, Math.round(startHeight + (startY - move.clientY)))))
     }
 
-    // startPointerDrag (not a hand-rolled pointerup listener) because it also
-    // ends on `pointercancel`: on Android the platform steals the pointer
-    // mid-gesture and delivers cancel INSTEAD of up, which with the two-event
-    // version left the pane glued to the finger and leaked the move handler.
-    startPointerDrag(onMove, () => {
-      // Land the released position even if the pointer went up mid-frame.
-      if (frame) {
-        cancelAnimationFrame(frame)
-        flush()
-      }
-
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
       setDragging(false)
-    })
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp, { once: true })
   }
 
   return (
-    <section
-      className="relative flex shrink-0 flex-col border-t border-(--ui-stroke-tertiary) bg-(--ui-chat-surface-background)"
-      data-glass-raised=""
-    >
+    <section className="relative flex shrink-0 flex-col border-t border-(--ui-stroke-tertiary) bg-(--ui-chat-surface-background)">
       <div
         className="group/sash absolute inset-x-0 top-0 z-10 h-1 -translate-y-1/2 cursor-row-resize"
         onDoubleClick={() => setPaneHeightOverride(id, undefined)}
@@ -324,11 +298,9 @@ export function DetailPane({
             </Button>
           </Tip>
           {onClose && (
-            <Tip label={t.common.close}>
-              <Button aria-label={t.common.close} className={ICON_BUTTON} onClick={onClose} size="icon" variant="ghost">
-                <Codicon name="close" size="0.8125rem" />
-              </Button>
-            </Tip>
+            <Button aria-label={t.common.close} className={ICON_BUTTON} onClick={onClose} size="icon" variant="ghost">
+              <Codicon name="close" size="0.8125rem" />
+            </Button>
           )}
         </div>
       </header>
@@ -446,23 +418,27 @@ export function ListStripButton({
 }
 
 interface CapRowProps {
+  /** Rendered in the switch slot instead of the Switch (e.g. an Install
+   *  button for not-yet-installed catalog rows). */
+  action?: ReactNode
   active: boolean
   busy?: boolean
   enabled: boolean
   meta?: ReactNode
   onSelect: () => void
-  onToggle: (checked: boolean) => void
+  onToggle?: (checked: boolean) => void
   rowId?: string
   /** Second line under the name (category, description, status). Rows grow to h-11. */
   subtitle?: ReactNode
   title: string
-  toggleLabel: string
+  toggleLabel?: string
 }
 
 // The one row used by all three lists. Fixed height, always-visible switch —
 // state reads from the switch + dimmed title, toggling never requires
 // selecting first. Off rows dim; the switch itself dims when off.
 export function CapRow({
+  action,
   active,
   busy,
   enabled,
@@ -477,7 +453,11 @@ export function CapRow({
   return (
     <div
       className={cn(
-        'group/row row-hover flex w-full shrink-0 items-center rounded-md hover:text-foreground',
+        // content-visibility:auto lets the browser skip layout/paint for
+        // offscreen rows — the Capabilities lists routinely hold 80+ entries.
+        // Row height is already fixed (h-8/h-11), so skipped rows keep their
+        // exact size and scrollbar geometry never jumps.
+        'group/row row-hover flex w-full shrink-0 items-center rounded-md [content-visibility:auto] hover:text-foreground',
         subtitle ? 'h-11' : 'h-8',
         active ? 'bg-(--ui-row-active-background) text-foreground' : 'text-(--ui-text-secondary)'
       )}
@@ -508,15 +488,19 @@ export function CapRow({
           </span>
         )}
       </RowButton>
-      <Switch
-        aria-label={toggleLabel}
-        checked={enabled}
-        className={cn('me-1.5 shrink-0 cursor-pointer', !enabled && 'opacity-60')}
-        disabled={busy}
-        onCheckedChange={onToggle}
-        size="xs"
-        title={toggleLabel}
-      />
+      {action != null ? (
+        <span className="me-1.5 flex shrink-0 items-center">{action}</span>
+      ) : (
+        <Switch
+          aria-label={toggleLabel ?? title}
+          checked={enabled}
+          className={cn('me-1.5 shrink-0 cursor-pointer', !enabled && 'opacity-60')}
+          disabled={busy}
+          onCheckedChange={onToggle}
+          size="xs"
+          title={toggleLabel ?? title}
+        />
+      )}
     </div>
   )
 }

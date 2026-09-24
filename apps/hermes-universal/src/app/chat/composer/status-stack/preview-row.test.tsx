@@ -1,84 +1,135 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { openExternalLink } from '@/lib/external-link'
-import { $activePreviewPath, $previewTabs, closeAllPreviewTabs } from '@/store/preview'
-import type { PreviewArtifact } from '@/store/preview-status'
-
-vi.mock('@/lib/external-link', () => ({ openExternalLink: vi.fn(async () => {}) }))
+import { $previewTabs, closeRightRail } from '@/store/preview'
+import { $connection } from '@/store/session'
 
 import { PreviewStatusRow } from './preview-row'
 
-const artifact = (over: Partial<PreviewArtifact> = {}): PreviewArtifact => ({
-  cwd: '/repo',
-  id: 'preview.html',
-  label: 'preview.html',
-  target: 'preview.html',
-  ...over
-})
-
-afterEach(() => {
-  cleanup()
-  vi.mocked(openExternalLink).mockClear()
-  closeAllPreviewTabs()
-})
-
 describe('PreviewStatusRow', () => {
-  it('sends an http target to the system browser, not the preview pane', async () => {
+  beforeEach(() => {
+    $connection.set(null)
+    closeRightRail()
+  })
+
+  afterEach(() => {
+    cleanup()
+    $connection.set(null)
+    closeRightRail()
+    vi.restoreAllMocks()
+  })
+
+  it('opens remote non-HTML file artifacts in the in-app preview instead of the local browser bridge', async () => {
+    const remotePath = '/home/agent/report.pdf'
+    const openPreviewInBrowser = vi.fn(async () => undefined)
+
+    $connection.set({ mode: 'remote' } as never)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        api: vi.fn(async () => ({ binary: true, byteSize: 42, mimeType: 'application/pdf' })),
+        normalizePreviewTarget: vi.fn(async () => ({
+          kind: 'file',
+          label: 'report.pdf',
+          path: remotePath,
+          previewKind: 'binary',
+          source: remotePath,
+          url: 'file:///home/agent/report.pdf'
+        })),
+        openPreviewInBrowser
+      }
+    })
+
     render(
       <PreviewStatusRow
-        item={artifact({ id: 'url', label: 'localhost:5173', target: 'http://localhost:5173' })}
+        item={{ cwd: '/home/agent', id: remotePath, label: 'report.pdf', target: remotePath }}
         onDismiss={() => undefined}
       />
     )
 
-    fireEvent.click(screen.getByText('localhost:5173'))
+    fireEvent.click(screen.getByText('report.pdf'))
 
-    await vi.waitFor(() => expect(openExternalLink).toHaveBeenCalledWith('http://localhost:5173'))
-    expect($previewTabs.get()).toHaveLength(0)
+    await waitFor(() => {
+      expect($previewTabs.get()).toEqual([
+        expect.objectContaining({ target: expect.objectContaining({ kind: 'file', path: remotePath }) })
+      ])
+    })
+    expect(openPreviewInBrowser).not.toHaveBeenCalled()
   })
 
-  it('opens a file target in the right-pane viewer, resolved against the captured cwd', async () => {
-    render(<PreviewStatusRow item={artifact()} onDismiss={() => undefined} />)
+  it('keeps local file artifacts on the browser bridge', async () => {
+    const localPath = '/Users/alice/report.pdf'
+    const openPreviewInBrowser = vi.fn(async () => undefined)
 
-    fireEvent.click(screen.getByText('preview.html'))
+    $connection.set({ mode: 'local' } as never)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        normalizePreviewTarget: vi.fn(async () => ({
+          kind: 'file',
+          label: 'report.pdf',
+          path: localPath,
+          previewKind: 'binary',
+          source: localPath,
+          url: 'file:///Users/alice/report.pdf'
+        })),
+        openPreviewInBrowser
+      }
+    })
 
-    await vi.waitFor(() => expect($activePreviewPath.get()).toBe('/repo/preview.html'))
-    expect(openExternalLink).not.toHaveBeenCalled()
+    render(
+      <PreviewStatusRow
+        item={{ cwd: '/Users/alice', id: localPath, label: 'report.pdf', target: localPath }}
+        onDismiss={() => undefined}
+      />
+    )
+
+    fireEvent.click(screen.getByText('report.pdf'))
+
+    await waitFor(() => {
+      expect(openPreviewInBrowser).toHaveBeenCalledWith('file:///Users/alice/report.pdf')
+    })
+    expect($previewTabs.get()).toEqual([])
   })
 
-  it('leaves an absolute file target alone', async () => {
-    render(<PreviewStatusRow item={artifact({ target: '/tmp/out.html' })} onDismiss={() => undefined} />)
+  it('keeps remote HTML on the staged browser-open path, not the in-app pane', async () => {
+    const remotePath = '/home/agent/index.html'
+    const html = '<!doctype html><html><body>hi</body></html>'
+    const dataUrl = `data:text/html;base64,${btoa(html)}`
+    const openPreviewInBrowser = vi.fn(async () => undefined)
+    const saveImageBuffer = vi.fn(async () => '/tmp/staged.html')
 
-    fireEvent.click(screen.getByText('preview.html'))
+    $connection.set({ mode: 'remote' } as never)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        api: vi.fn(async () => dataUrl),
+        normalizePreviewTarget: vi.fn(async () => ({
+          kind: 'file',
+          label: 'index.html',
+          path: remotePath,
+          previewKind: 'html',
+          source: remotePath,
+          url: 'file:///home/agent/index.html'
+        })),
+        openPreviewInBrowser,
+        saveImageBuffer
+      }
+    })
 
-    await vi.waitFor(() => expect($activePreviewPath.get()).toBe('/tmp/out.html'))
-  })
+    render(
+      <PreviewStatusRow
+        item={{ cwd: '/home/agent', id: remotePath, label: 'index.html', target: remotePath }}
+        onDismiss={() => undefined}
+      />
+    )
 
-  it('dismisses through the trailing button without activating the row', () => {
-    const onDismiss = vi.fn()
-    render(<PreviewStatusRow item={artifact()} onDismiss={onDismiss} />)
+    fireEvent.click(screen.getByText('index.html'))
 
-    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }))
-
-    expect(onDismiss).toHaveBeenCalledWith('preview.html')
-    expect($activePreviewPath.get()).toBeNull()
-  })
-
-  it('keeps the preview tooltip label inline inside the portaled decoration', async () => {
-    // A block child collapses Tip's decoration wrapper geometry and
-    // mis-positions the tooltip (desktop #62022).
-    const view = render(<PreviewStatusRow item={artifact()} onDismiss={() => undefined} />)
-
-    fireEvent.pointerMove(screen.getByText('preview.html'), { pointerType: 'mouse' })
-    await screen.findByRole('tooltip')
-
-    const content = document.querySelector<HTMLElement>('[data-slot="tooltip-content"]')
-    const label = content?.firstElementChild?.firstElementChild
-
-    expect(content).not.toBeNull()
-    expect(view.container.contains(content)).toBe(false)
-    expect(label?.classList.contains('inline-flex')).toBe(true)
-    expect(label?.classList.contains('flex')).toBe(false)
+    await waitFor(() => {
+      expect(saveImageBuffer).toHaveBeenCalled()
+      expect(openPreviewInBrowser).toHaveBeenCalledWith('file:///tmp/staged.html')
+    })
+    expect($previewTabs.get()).toEqual([])
   })
 })

@@ -1,511 +1,340 @@
-import { useAuiState } from '@assistant-ui/react'
+import { useAui, useAuiState } from '@assistant-ui/react'
+import { useStore } from '@nanostores/react'
 import { type FC, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { queryVisible } from '@/components/pane-shell/pane-visibility'
+import { useSessionView } from '@/app/chat/session-view'
+import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
+import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { createLongPress } from '@/lib/long-press'
-import { rafCoalesce } from '@/lib/raf-coalesce'
-import { cn } from '@/lib/utils'
-import { requestScrollToTurn } from '@/store/thread-scroll'
+import { useStoreSelector } from '@/lib/use-session-slice'
+import { $hideThreadTimeline } from '@/store/thread-timeline'
 
+import { messageContentText } from './content'
 import {
-  activeTimelineIndex,
   deriveTimelineEntries,
+  EARLIER_TIMELINE_ID,
+  sameTimelineEntries,
+  TIMELINE_REVEAL_EVENT,
   type TimelineEntry,
+  type TimelineRevealRequest,
   type TimelineSourceMessage
 } from './timeline-data'
-import { resolveScrub } from './timeline-scrub'
-import { turnStartElement } from './turn-scroll'
+import { TimelineRail } from './timeline-rail'
+import { useTranscriptWindow } from './transcript-window'
+import { useTimelineHistory } from './use-timeline-history'
 
-const MIN_ENTRIES = 4
 const VIEWPORT = '[data-slot="aui_thread-viewport"]'
-const HOVER_CLOSE_MS = 140
 
-// Touch scrub. The rail is built on hover — the popover opens on mouse-enter and
-// each tick lights its row the same way — so on a phone the preview list never
-// appeared and a tap on a 2px tick jumped blind. A hold opens the list, a drag
-// picks from it, and letting go goes there.
-//
-// The drag is RELATIVE, the way the composer's bubble carousel is: it starts on
-// the turn you are already reading and moves a fixed distance per turn from
-// there (see `timeline-scrub.ts`). Picking the nearest tick to the finger
-// instead made 8px — one tick's height — a whole turn, and capped the gesture's
-// reach at the strip's own height.
-const SCRUB_LONG_PRESS_MS = 280
-const SCRUB_MOVE_TOLERANCE_PX = 12
+/** A kept-alive neighbor must never receive this rail's navigation. */
+export const ownViewport = (root: HTMLElement | null): HTMLElement | null =>
+  (root?.closest('[data-session-anchor]') ?? document).querySelector<HTMLElement>(VIEWPORT)
 
-const ROW_CLASS =
-  'row-hover relative flex w-full min-w-0 max-w-full select-none overflow-hidden rounded-md px-2 py-1 text-start outline-hidden'
+/** Hidden rails do not subscribe to streaming messages or measure layout. */
+export const ThreadTimeline: FC = () => {
+  const paneVisible = usePaneVisible()
+  const hidden = useStore($hideThreadTimeline)
 
-// Surface (border-color/bg/shadow/blur) comes from the shared
-// `[data-slot='thread-timeline-popover']` rule in styles.css, so it's 1:1 with
-// the dropdown/select/dialog menus. We only own layout + the border/radius here.
-const POPOVER_SHELL =
-  'absolute end-full top-1/2 z-50 max-h-[min(22rem,calc(100vh-8rem))] w-80 max-w-[min(20rem,calc(100vw-2rem))] -translate-y-1/2 overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg border p-1 text-popover-foreground transition-[opacity,transform] duration-100 ease-out group-hover/timeline:transition-none'
-
-function userPromptText(content: unknown): string {
-  if (typeof content === 'string') {
-    return content
-  }
-
-  if (!Array.isArray(content)) {
-    return ''
-  }
-
-  let out = ''
-
-  for (const part of content) {
-    if (typeof part === 'string') {
-      out += part
-
-      continue
-    }
-
-    if (!part || typeof part !== 'object') {
-      continue
-    }
-
-    const row = part as { text?: unknown; type?: unknown }
-
-    if ((!row.type || row.type === 'text') && typeof row.text === 'string') {
-      out += row.text
-    }
-  }
-
-  return out
+  return paneVisible && !hidden ? <ActiveThreadTimeline /> : null
 }
 
-/** Index-keyed ref-array setter — `ref={listRef(refs, i)}`. */
-const listRef =
-  <T,>(refs: React.RefObject<(T | null)[]>, index: number) =>
-  (node: T | null) => {
-    refs.current[index] = node
-  }
+const ActiveThreadTimeline: FC = () => {
+  const view = useSessionView()
+  const { t } = useI18n()
+  const history = useTranscriptWindow()
+  const historyIndex = useTimelineHistory()
+  const { entries: indexedEntries, complete: indexComplete, failed: indexFailed, loadMore } = historyIndex
+  const aui = useAui()
+  const auiRef = useRef(aui)
+  auiRef.current = aui
 
-/** Mouse enter/leave pair forwarding `on` to the shared paint(). */
-const hoverProps = (index: number, paint: (index: number, on: boolean) => void) => ({
-  onMouseEnter: () => paint(index, true),
-  onMouseLeave: () => paint(index, false)
-})
-
-/** Right-edge prompt rail — hover previews, click to jump. ≥4 user turns only. */
-export const ThreadTimeline: FC<{ sessionKey?: null | string }> = ({ sessionKey }) => {
-  const sourceSignature = useAuiState(s => {
-    const rows: TimelineSourceMessage[] = []
-
-    for (const message of s.thread.messages) {
-      if (message.role !== 'user') {
-        continue
-      }
-
-      rows.push({ id: message.id, role: 'user', text: userPromptText(message.content) })
-    }
-
-    return JSON.stringify(rows)
-  })
-
-  const entries = useMemo(
-    () => deriveTimelineEntries(JSON.parse(sourceSignature) as TimelineSourceMessage[]),
-    [sourceSignature]
+  // The store contains older prompts even when the runtime/DOM only paints a tail.
+  // Read text only when user IDs change, never for assistant streaming deltas.
+  const storeIds = useStoreSelector(view.$messages, messages =>
+    messages
+      .filter(m => m.role === 'user')
+      .map(m => m.id)
+      .join('\n')
   )
 
+  const runtimeIds = useAuiState(s =>
+    s.thread.messages
+      .filter(m => m.role === 'user')
+      .map(m => m.id)
+      .join('\n')
+  )
+
+  const previous = useRef<TimelineEntry[]>([])
+
+  const entries = useMemo(() => {
+    const all = view.$messages.get()
+
+    const rows: TimelineSourceMessage[] = all.length
+      ? all
+          .filter(m => m.role === 'user')
+          .map(m => ({ id: m.id, rowId: m.rowId, role: m.role, text: messageContentText(m.parts) }))
+      : auiRef.current
+          .thread()
+          .getState()
+          .messages.filter(m => m.role === 'user')
+          .map(m => ({ id: m.id, role: m.role, text: messageContentText(m.content) }))
+
+    const next = deriveTimelineEntries(rows)
+
+    if (sameTimelineEntries(previous.current, next)) {
+      return previous.current
+    }
+
+    previous.current = next
+
+    return next
+    // The IDs are the change signal; the source messages are read only here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeIds, runtimeIds, view])
+
+  const railEntries = useMemo(() => {
+    const indexed = indexedEntries ?? []
+
+    const selected = history.isHistorical
+      ? deriveTimelineEntries(
+          (history.currentMessages ?? []).map(message => ({
+            id: message.id,
+            rowId: message.rowId,
+            role: message.role,
+            text: messageContentText(message.parts)
+          }))
+        )
+      : []
+
+    const loaded = new Map(
+      [...entries, ...selected].filter(entry => entry.rowId !== undefined).map(entry => [entry.rowId, entry])
+    )
+
+    const seen = new Set(indexed.map(entry => entry.rowId))
+
+    const merged = [
+      ...indexed.map(entry => loaded.get(entry.rowId) ?? entry),
+      ...entries.filter(entry => entry.rowId === undefined || !seen.has(entry.rowId))
+    ]
+
+    return (history.olderAvailable || indexedEntries) && !indexComplete
+      ? [{ id: EARLIER_TIMELINE_ID, preview: t.assistant.thread.showEarlier }, ...merged]
+      : merged
+  }, [
+    entries,
+    indexedEntries,
+    indexComplete,
+    history.olderAvailable,
+    history.currentMessages,
+    history.isHistorical,
+    t.assistant.thread.showEarlier
+  ])
+
+  const root = useRef<HTMLDivElement>(null)
+  const jumpFrame = useRef(0)
+  const pending = useRef<AbortController | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
-  const [open, setOpen] = useState(false)
-  const closeTimerRef = useRef<number | undefined>(undefined)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
 
-  // Hover sync lives on the DOM, not in React state — the tick and its popover
-  // row are siblings in different subtrees, so a shared index-keyed paint() lights
-  // both without a re-render (and without coupling them through a parent atom).
-  const tickRefs = useRef<(HTMLSpanElement | null)[]>([])
-  const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
-
-  // Hover sync: light the tick + its popover row, and scroll that row into view
-  // when the list overflows so the hovered prompt is always visible.
-  const paint = useCallback((index: number, on: boolean) => {
-    const tick = tickRefs.current[index]
-
-    if (tick) {
-      tick.style.opacity = on ? '1' : ''
-    }
-
-    const row = rowRefs.current[index]
-    row?.classList.toggle('bg-(--ui-row-hover-background)', on)
-
-    if (on) {
-      row?.scrollIntoView({ block: 'nearest' })
-    }
+  const cancelJump = useCallback(() => {
+    pending.current?.abort()
+    pending.current = null
+    cancelAnimationFrame(jumpFrame.current)
+    setLoadingId(null)
   }, [])
 
-  const keepOpen = useCallback(() => {
-    window.clearTimeout(closeTimerRef.current)
-    setOpen(true)
-  }, [])
+  useEffect(() => cancelJump, [cancelJump, view])
 
-  const closeSoon = useCallback(() => {
-    window.clearTimeout(closeTimerRef.current)
-    closeTimerRef.current = window.setTimeout(() => setOpen(false), HOVER_CLOSE_MS)
-  }, [])
+  const jump = useCallback(
+    async (id: string) => {
+      cancelJump()
 
-  useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
+      if (id === EARLIER_TIMELINE_ID && indexedEntries && !indexComplete && !indexFailed) {
+        await loadMore()
 
-  // ── Touch scrub ───────────────────────────────────────────────────────────
-  // The index currently under the finger, or null when not scrubbing. A ref, not
-  // state: it drives the same DOM-level `paint()` the hover path uses, so a drag
-  // costs no renders.
-  const scrubIndexRef = useRef<null | number>(null)
-  const ticksRef = useRef<HTMLDivElement | null>(null)
-  // Set when a scrub ends, so the `pointerup` that ended it doesn't also fire the
-  // tick's own onClick and jump somewhere else.
-  const scrubbedRef = useRef(false)
-  // Where the hold engaged, and on which entry. Every move is measured from
-  // here — that is what makes the mapping relative.
-  const scrubOriginRef = useRef<null | { index: number; y: number }>(null)
-  // Whether the finger is currently past an end stop, so the "nothing further
-  // along" buzz fires on the crossing rather than every frame beyond it.
-  const endStoppedRef = useRef(false)
-
-  // Read through refs rather than closed over, so `applyScrub` stays stable: the
-  // rAF coalescer is built from it, and rebuilding that mid-gesture (a streamed
-  // message changes `entries`) would drop the pending frame.
-  const activeIndexRef = useRef(activeIndex)
-  const entryCountRef = useRef(entries.length)
-
-  activeIndexRef.current = activeIndex
-  entryCountRef.current = entries.length
-
-  const jumpTo = useCallback(
-    (id: string) => {
-      void triggerHaptic('selection')
-      // The transcript that owns this key does the work — it is the only thing
-      // that can mount a turn the render budget has hidden, and the only thing
-      // that can escape stick-to-bottom to reach one. See `store/thread-scroll`.
-      requestScrollToTurn(sessionKey, id)
-    },
-    [sessionKey]
-  )
-
-  const applyScrub = useCallback(
-    ({ y }: { y: number }) => {
-      const origin = scrubOriginRef.current
-
-      if (!origin) {
         return
       }
 
-      const scrub = resolveScrub(origin.index, y - origin.y, entryCountRef.current)
+      const viewport = ownViewport(root.current)
 
-      if (scrub.atEndStop !== endStoppedRef.current) {
-        endStoppedRef.current = scrub.atEndStop
-
-        // The rail has no track to rubber-band, so this buzz is the only way it
-        // can say there is nothing further in that direction.
-        if (scrub.atEndStop) {
-          void triggerHaptic('warning')
-        }
-      }
-
-      if (scrubIndexRef.current === scrub.index) {
+      if (!viewport) {
         return
       }
 
-      if (scrubIndexRef.current !== null) {
-        paint(scrubIndexRef.current, false)
-      }
+      const controller = new AbortController()
+      pending.current = controller
+      setLoadingId(id)
+      triggerHaptic('selection')
 
-      scrubIndexRef.current = scrub.index
-      paint(scrub.index, true)
-      void triggerHaptic('selection')
-    },
-    [paint]
-  )
+      try {
+        // The list owns loading and render budgets. Request it on THIS viewport,
+        // then wait for its commit rather than clicking a translated button label.
+        const revealed = await new Promise<string | false>(resolve => {
+          let settled = false
 
-  const mover = useMemo(() => rafCoalesce(applyScrub), [applyScrub])
+          const finish = (value: string | false) => {
+            if (settled) {
+              return
+            }
 
-  // Seeds the gesture on the turn the user is already reading, not on whichever
-  // tick the thumb happened to land on — the same reason the bubble row bases
-  // its drag on the ACTIVE bubble rather than the one under the press.
-  const beginScrub = useCallback(
-    (y: number) => {
-      const index = activeIndexRef.current
+            settled = true
+            clearTimeout(timeout)
+            resolve(value)
+          }
 
-      scrubOriginRef.current = { index, y }
-      endStoppedRef.current = false
-      scrubIndexRef.current = index
-      paint(index, true)
-    },
-    [paint]
-  )
+          const timeout = window.setTimeout(() => finish(false), 15000)
+          controller.signal.addEventListener('abort', () => finish(false), { once: true })
 
-  // The long press is built once, so it reads the live callback through a ref
-  // rather than closing over the first render's.
-  const beginScrubRef = useRef(beginScrub)
-  beginScrubRef.current = beginScrub
+          const detail: TimelineRevealRequest = {
+            id,
+            rowId: railEntries.find(entry => entry.id === id)?.rowId,
+            signal: controller.signal,
+            complete: finish
+          }
 
-  const pickupIdRef = useRef<null | number>(null)
+          viewport.dispatchEvent(new CustomEvent(TIMELINE_REVEAL_EVENT, { detail }))
+        })
 
-  const pickup = useRef(
-    createLongPress({
-      moveTolerancePx: SCRUB_MOVE_TOLERANCE_PX,
-      ms: SCRUB_LONG_PRESS_MS,
-      onFire: ({ y }) => {
-        if (pickupIdRef.current === null) {
+        if (!revealed || controller.signal.aborted) {
           return
         }
 
-        setOpen(true)
-        void triggerHaptic('warning')
-        // Capture so a finger that wanders off the 31px rail keeps scrubbing —
-        // which is what gives a 32px-per-turn pitch unlimited reach.
-        ticksRef.current?.setPointerCapture?.(pickupIdRef.current)
-        beginScrubRef.current(y)
-      }
-    })
-  ).current
+        const node = viewport.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(revealed)}"]`)
 
-  const endScrub = useCallback(
-    (jump: boolean) => {
-      const index = scrubIndexRef.current
+        if (!node) {
+          return
+        }
 
-      if (index === null) {
-        return
-      }
+        const start = viewport.scrollTop
+        const turn = node.closest<HTMLElement>('[data-slot="aui_turn-pair"]') ?? node
 
-      paint(index, false)
-      scrubIndexRef.current = null
-      // Cleared so a `pointercancel` arriving after a `pointerup` can't re-apply
-      // the coalescer's last value — `finish()` commits `pending` but does not
-      // clear it, and `applyScrub` bails without an origin.
-      scrubOriginRef.current = null
-      endStoppedRef.current = false
-      scrubbedRef.current = true
-      setOpen(false)
+        const destination = Math.max(
+          0,
+          start + turn.getBoundingClientRect().top - viewport.getBoundingClientRect().top - 8
+        )
 
-      const entry = jump ? entries[index] : undefined
+        const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 170
+        const began = performance.now()
 
-      if (entry) {
-        jumpTo(entry.id)
+        const step = (now: number) => {
+          if (controller.signal.aborted) {
+            return
+          }
+
+          const progress = duration ? Math.min(1, (now - began) / duration) : 1
+          viewport.scrollTop = start + (destination - start) * (1 - (1 - progress) ** 3)
+
+          if (progress < 1) {
+            jumpFrame.current = requestAnimationFrame(step)
+          }
+        }
+
+        jumpFrame.current = requestAnimationFrame(step)
+      } finally {
+        if (pending.current === controller) {
+          setLoadingId(null)
+        }
       }
     },
-    [entries, jumpTo, paint]
+    [cancelJump, indexedEntries, indexComplete, indexFailed, loadMore, railEntries]
   )
 
   useEffect(() => {
-    const viewport = queryVisible<HTMLElement>(VIEWPORT)
+    const viewport = ownViewport(root.current)
 
-    if (!viewport || entries.length === 0) {
+    if (!viewport) {
       return
     }
 
-    let raf = 0
+    let frame = 0
+    const indexes = new Map(railEntries.map((entry, index) => [entry.id, index]))
 
     const compute = () => {
-      raf = 0
+      frame = 0
+
+      if (viewport.dataset.following === 'true' && !history.isHistorical) {
+        setActiveIndex(Math.max(0, railEntries.length - 1))
+
+        return
+      }
 
       const top = viewport.getBoundingClientRect().top
+      let first = -1
+      let active = -1
 
-      const offsets = entries.map(entry => {
-        const node = viewport.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(entry.id)}"]`)
+      // Walk only mounted messages, never every archived prompt in the rail.
+      for (const node of viewport.querySelectorAll<HTMLElement>('[data-message-id]')) {
+        const index = indexes.get(node.dataset.messageId!)
 
-        // The TURN, not the bubble. `[data-message-id]` is on the sticky human
-        // bubble, which reads `--sticky-human-top` for as long as its turn is on
-        // screen — so every partly-visible turn measured as "at the top" and the
-        // lit tick disagreed with where a jump would actually land.
-        return node ? turnStartElement(node).getBoundingClientRect().top - top : null
-      })
+        if (index === undefined) {
+          continue
+        }
 
-      const next = activeTimelineIndex(offsets)
+        if (first === -1) {
+          first = index
+        }
 
-      setActiveIndex(prev => (prev === next ? prev : next))
+        const turn = node.closest<HTMLElement>('[data-slot="aui_turn-pair"]') ?? node
+
+        if (turn.getBoundingClientRect().top - top <= 8) {
+          active = index
+        }
+      }
+
+      setActiveIndex(active === -1 ? Math.max(0, first) : active)
     }
 
-    const onScroll = () => {
-      if (!raf) {
-        raf = requestAnimationFrame(compute)
+    const schedule = () => {
+      if (!frame) {
+        frame = requestAnimationFrame(compute)
       }
     }
 
-    // Initial compute rides the same rAF batching as scroll. A sync call here
-    // reads getBoundingClientRect for every user message while other commit
-    // effects are still writing styles — on a session switch that interleaving
-    // forces a full reflow per read on a large transcript. One rAF later the
-    // reads batch into a single layout pass, and back-to-back entries updates
-    // (prefetch paint, then resume reconcile) coalesce into one compute.
-    onScroll()
-    viewport.addEventListener('scroll', onScroll, { passive: true })
+    const observer = new MutationObserver(schedule)
+    const content = viewport.querySelector('[data-slot="aui_thread-content"]')
+
+    if (content) {
+      observer.observe(content, { childList: true })
+    }
+
+    viewport.addEventListener('scroll', schedule, { passive: true })
+    viewport.addEventListener('wheel', cancelJump, { passive: true })
+    schedule()
 
     return () => {
-      viewport.removeEventListener('scroll', onScroll)
-
-      if (raf) {
-        cancelAnimationFrame(raf)
-      }
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      viewport.removeEventListener('scroll', schedule)
+      viewport.removeEventListener('wheel', cancelJump)
     }
-  }, [entries])
+  }, [cancelJump, railEntries, history.isHistorical])
 
-  if (entries.length < MIN_ENTRIES) {
+  if (!railEntries.length) {
     return null
   }
 
   return (
     <div
       aria-label="Conversation timeline"
-      className="group/timeline pointer-events-auto absolute end-0 top-1/2 z-40 flex -translate-y-1/2 flex-col items-end"
       data-slot="thread-timeline"
       data-suppress-pane-reveal=""
-      onMouseEnter={keepOpen}
-      onMouseLeave={closeSoon}
+      ref={root}
       role="navigation"
+      style={{
+        position: 'absolute',
+        right: 0,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        zIndex: 40,
+        pointerEvents: 'auto',
+        height: `min(${railEntries.length * 0.4375}rem, 50%)`
+      }}
     >
-      <TimelineTicks
+      <TimelineRail
         activeIndex={activeIndex}
-        containerRef={ticksRef}
-        entries={entries}
-        onHover={paint}
-        onJump={id => {
-          // The pointerup that ended a scrub also lands here; the scrub already
-          // jumped to what the finger chose, which is not what it is over.
-          if (scrubbedRef.current) {
-            scrubbedRef.current = false
-
-            return
-          }
-
-          jumpTo(id)
-        }}
-        onPointerCancel={() => {
-          pickup.cancel()
-          pickupIdRef.current = null
-          mover.finish()
-          endScrub(false)
-        }}
-        onPointerDown={event => {
-          // A mouse keeps hover-to-preview and click-to-jump exactly as they were.
-          if (event.pointerType === 'mouse') {
-            return
-          }
-
-          pickupIdRef.current = event.pointerId
-          pickup.down(event.clientX, event.clientY)
-        }}
-        onPointerMove={event => {
-          if (scrubIndexRef.current !== null) {
-            // Coalesced to one apply per frame, as the bubble row does.
-            mover.push({ y: event.clientY })
-
-            return
-          }
-
-          // NOT coalesced: the long press's movement tolerance has to see the
-          // raw stream, or how far the finger wandered would depend on how many
-          // frames the queue happened to run.
-          pickup.move(event.clientX, event.clientY)
-        }}
-        onPointerUp={() => {
-          pickup.up()
-          pickupIdRef.current = null
-          // Commit the last pending frame BEFORE the index is read.
-          mover.finish()
-          endScrub(true)
-        }}
-        tickRefs={tickRefs}
-      />
-      <TimelinePopover
-        activeIndex={activeIndex}
-        entries={entries}
-        onHover={paint}
-        onJump={jumpTo}
-        open={open}
-        rowRefs={rowRefs}
+        entries={railEntries}
+        loadingId={loadingId}
+        onJump={id => void jump(id)}
       />
     </div>
   )
 }
-
-const TimelinePopover: FC<{
-  activeIndex: number
-  entries: TimelineEntry[]
-  onHover: (index: number, on: boolean) => void
-  onJump: (id: string) => void
-  open: boolean
-  rowRefs: React.RefObject<(HTMLButtonElement | null)[]>
-}> = ({ activeIndex, entries, onHover, onJump, open, rowRefs }) => (
-  <div
-    className={cn(
-      POPOVER_SHELL,
-      open ? 'pointer-events-auto opacity-100 translate-x-0' : 'pointer-events-none translate-x-1 opacity-0'
-    )}
-    data-slot="thread-timeline-popover"
-  >
-    {entries.map((entry, index) => (
-      <button
-        aria-label={entry.preview}
-        className={cn(ROW_CLASS, index === activeIndex && 'bg-(--ui-row-active-background) text-foreground')}
-        key={entry.id}
-        onClick={() => onJump(entry.id)}
-        ref={listRef(rowRefs, index)}
-        type="button"
-        {...hoverProps(index, onHover)}
-      >
-        <span className="block w-full min-w-0 truncate font-medium leading-snug text-foreground">{entry.preview}</span>
-      </button>
-    ))}
-  </div>
-)
-
-const TimelineTicks: FC<{
-  activeIndex: number
-  containerRef: React.RefObject<HTMLDivElement | null>
-  entries: TimelineEntry[]
-  onHover: (index: number, on: boolean) => void
-  onJump: (id: string) => void
-  onPointerCancel: () => void
-  onPointerDown: (event: React.PointerEvent) => void
-  onPointerMove: (event: React.PointerEvent) => void
-  onPointerUp: () => void
-  tickRefs: React.RefObject<(HTMLSpanElement | null)[]>
-}> = ({
-  activeIndex,
-  containerRef,
-  entries,
-  onHover,
-  onJump,
-  onPointerCancel,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
-  tickRefs
-}) => (
-  <div
-    // `touch-none` on a coarse pointer: `touch-action` is latched when the
-    // browser decides what a gesture is, so claiming it once the hold fires
-    // would be too late and the scroller would take the drag. The cost is that
-    // a scroll starting inside this ~31px strip doesn't scroll — acceptable on
-    // the one control whose whole purpose is being dragged along.
-    className="flex flex-col items-end py-1 coarse:touch-none"
-    data-slot="thread-timeline-ticks"
-    onPointerCancel={onPointerCancel}
-    onPointerDown={onPointerDown}
-    onPointerMove={onPointerMove}
-    onPointerUp={onPointerUp}
-    ref={containerRef}
-  >
-    {entries.map((entry, index) => (
-      <button
-        aria-label={entry.preview}
-        className="flex h-2 w-7 cursor-pointer items-center justify-end pe-1"
-        key={entry.id}
-        onClick={() => onJump(entry.id)}
-        type="button"
-        {...hoverProps(index, onHover)}
-      >
-        <span
-          className={cn(
-            'block h-px w-3 transition-opacity duration-100 ease-out',
-            index === activeIndex ? 'bg-(--theme-primary)' : 'dither text-(--ui-text-quaternary) opacity-70'
-          )}
-          ref={listRef(tickRefs, index)}
-        />
-      </button>
-    ))}
-  </div>
-)

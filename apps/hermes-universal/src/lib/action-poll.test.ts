@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes', () => ({ getActionStatus: vi.fn() }))
+vi.mock('@/hermes', () => ({  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ getActionStatus: vi.fn() }))
 
 import { getActionStatus } from '@/hermes'
 

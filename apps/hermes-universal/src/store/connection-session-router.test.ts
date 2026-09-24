@@ -7,9 +7,15 @@ const { getGatewayClient, leaseSecondary, releaseSecondary, requestGateway } = v
   requestGateway: vi.fn(async () => 'ambient')
 }))
 
-vi.mock('@/hermes', () => ({ setApiRequestProfile: vi.fn() }))
-vi.mock('@/store/gateway-secondaries', () => ({ leaseSecondary, releaseSecondary }))
-vi.mock('@/store/gateway', async importOriginal => ({
+vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ setApiRequestProfile: vi.fn() }))
+vi.mock('@/store/gateway-secondaries', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  leaseSecondary,
+  releaseSecondary
+}))
+vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getGatewayClient,
   requestGateway
@@ -24,9 +30,10 @@ import { $activeConnection, describeConnection, publishActiveConnection } from '
 // and turns every cross-source assertion here into a green lie. (Verified: drop
 // the `registrySessionRouter.active()` assertion and four of these go red.)
 import { registrySessionRouter } from './connection-session-router'
-import { $gatewayState } from './gateway'
+import { $gatewayState, withGatewayProfile } from './gateway-client'
 import { $gatewaySwitching } from './gateway-switch'
-import { $activeSessionRoute, requestForSession, SessionRouteError } from './session-request-router'
+import { $activeGatewayProfile } from './profile'
+import { $activeSessionRoute, requestForSession, SessionRouteError } from './session-route-dispatch'
 import { forgetSessionSources, spliceRegistrySessionRows } from './session-sources'
 
 const REMOTE: Connection = { authMode: 'none', baseUrl: 'https://gw.test', mode: 'remote' }
@@ -51,11 +58,14 @@ describe('the registry router', () => {
     expect($activeSessionRoute.get().connectionId).toBe('studio')
 
     publishActiveConnection(
-      describeConnection({ ...REMOTE, profile: 'work' }, {
-        connectionId: 'laptop',
-        dialConnectionId: 'laptop',
-        label: 'Laptop'
-      })
+      describeConnection(
+        { ...REMOTE, profile: 'work' },
+        {
+          connectionId: 'laptop',
+          dialConnectionId: 'laptop',
+          label: 'Laptop'
+        }
+      )
     )
 
     expect($activeSessionRoute.get().connectionId).toBe('laptop')
@@ -99,7 +109,11 @@ describe('the registry router', () => {
 
     leaseSecondary.mockResolvedValue({ connectionId: 'laptop', request, scopeKey: 'conn:laptop::default' })
     // The merged rows' tag is what says where a session lives.
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume', { cols: 96 })).resolves.toBe('remote-answer')
 
@@ -118,7 +132,11 @@ describe('the registry router', () => {
       }),
       scopeKey: 'conn:laptop::default'
     })
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume')).rejects.toThrow('boom')
     expect(releaseSecondary).toHaveBeenCalledTimes(1)
@@ -126,9 +144,50 @@ describe('the registry router', () => {
 
   it('reports an unreachable foreign source as a route failure, not a gateway error', async () => {
     leaseSecondary.mockRejectedValue(new Error('unreachable'))
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
-    await expect(requestForSession('s9', 'session.resume')).rejects.toBeInstanceOf(SessionRouteError)
+    await expect(requestForSession('s9', 'session.resume')).rejects.toMatchObject({ kind: 'no-gateway' })
+  })
+
+  // MJXHRM-592: the sign-in notification is already on screen; the route says
+  // why it failed so callers stay quiet about it.
+  it('reports a foreign tunnel that needs sign-in as needs-sign-in', async () => {
+    leaseSecondary.mockRejectedValue({ kind: 'credentials-needed', message: 'needs a passphrase', terminal: true })
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
+
+    const failure = requestForSession('s9', 'session.resume')
+
+    await expect(failure).rejects.toBeInstanceOf(SessionRouteError)
+    await expect(failure).rejects.toMatchObject({ kind: 'needs-sign-in' })
+  })
+
+  // MJXHRM-592: a unified backend runs an RPC that names no profile against its
+  // launch profile, so every primary RPC rides the active one.
+  it('names the active profile on a primary RPC that names none', () => {
+    $activeGatewayProfile.set('work')
+
+    try {
+      expect(withGatewayProfile('session.list', {})).toEqual({ profile: 'work' })
+      // A relay names the profile it delivers to; that is never overwritten.
+      expect(withGatewayProfile('bot_relay.deliver', { message: 'hi', profile: 'home' })).toEqual({
+        message: 'hi',
+        profile: 'home'
+      })
+      // `profiles.*` works ON profiles, keyed by `name` (tui_gateway/methods_profiles.py).
+      expect(withGatewayProfile('profiles.list', { include_sessions: true })).toEqual({ include_sessions: true })
+    } finally {
+      $activeGatewayProfile.set('default')
+    }
+
+    expect(withGatewayProfile('session.list', {})).toEqual({})
   })
 
   it('refuses an ambient dispatch mid-switch and with a closed socket', async () => {
@@ -146,7 +205,11 @@ describe('the registry router', () => {
       request: vi.fn(async () => 'x'),
       scopeKey: 'conn:laptop::default'
     })
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await requestForSession('s9', 'session.resume')
 

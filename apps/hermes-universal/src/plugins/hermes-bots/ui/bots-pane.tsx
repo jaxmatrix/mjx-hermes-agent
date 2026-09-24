@@ -7,24 +7,7 @@
  * verb you can only reach by hovering does not exist on a phone.
  */
 
-import {
-  Button,
-  Codicon,
-  confirm,
-  createTap,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  ErrorState,
-  host,
-  isCoarsePointer,
-  SearchField,
-  StatusDot,
-  usePluginI18n,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Button, Codicon, confirm, createTap, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, ErrorState, universalHost as host, isCoarsePointer, SearchField, StatusDot, usePluginI18n, useValue } from '@hermes/plugin-sdk'
 import { useCallback, useMemo, useState } from 'react'
 
 import { botHandle } from '../ids'

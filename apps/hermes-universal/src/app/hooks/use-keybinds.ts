@@ -1,53 +1,59 @@
 import { useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
-import { commandFocusedBrowser } from '@/app/browser/browser-nav'
-import { toggleHud } from '@/app/hud/hud'
-import { toggleQuickEntry } from '@/app/quick-entry/quick-entry'
+import { closeActiveTab } from '@/app/chat/close-tab'
+import { hudTargetSessionId } from '@/app/hud/handoff'
+import { setTerminalTakeover } from '@/app/right-pane/store'
+import { closeActiveTerminal, createTerminal, cycleTerminal } from '@/app/right-pane/terminal/terminals'
+import { appViewForPath, isOverlayView } from '@/app/routes'
 import {
   activateTreeTabSlot,
-  closeFocusedTabInZone,
-  cycleTreeTabInFocusedZone
+  cycleTreeTabInFocusedZone,
+  isPaneVisible,
+  layoutHasRootSide,
+  togglePaneVisible,
+  toggleTargetZoneTabStrip
 } from '@/components/pane-shell/tree/store'
+import { setWorkspaceScope } from '@/components/pane-shell/workspace-scope'
 import { onReleaseTypingFocus } from '@/components/ui/keyboard-first'
 import { findBarClaimsCombo } from '@/lib/find-in-page'
 import { contributedKeybindHandler, PROFILE_SLOT_COUNT, SESSION_SLOT_COUNT } from '@/lib/keybinds/actions'
-import { comboAllowedInInput, comboFromEvent, isEditableTarget, isShiftPrintableCombo } from '@/lib/keybinds/combo'
+import { handleApprovalKey, releaseApprovalKey } from '@/lib/keybinds/approval-keys'
+import { actionAllowedInInput, comboFromEvent, isEditableTarget } from '@/lib/keybinds/combo'
 import { composerFocusKeysAllowed, isComposerFocusSoftCombo, typeToFocusChar } from '@/lib/keybinds/composer-focus-keys'
-import { setGlobalShortcutDispatch, startGlobalShortcuts } from '@/lib/keybinds/global-shortcut'
-import { toggleInAppBrowser } from '@/store/browser'
 import { openWorktreeDialog } from '@/store/coding-status'
-import { toggleCommandPalette } from '@/store/command-palette'
+import { $commandPaletteOpen, openCommandPalettePage, toggleCommandPalette } from '@/store/command-palette'
 import {
   $findInPage,
   findNext as findNextMatch,
   findPrevious as findPreviousMatch,
   openFindBar
 } from '@/store/find-in-page'
-import { $capture, $comboIndex, endCapture, registerKeybindDispatcher, setBinding } from '@/store/keybinds'
+import { toggleHud } from '@/store/hud'
+import { toggleSimpleMode } from '@/store/interface-mode'
+import { $capture, $comboIndex, endCapture, setBinding } from '@/store/keybinds'
 import {
-  $terminalOpen,
-  FILE_TREE_PANE_ID,
+  cycleSidebarGrouping,
   requestSessionSearchFocus,
-  setTerminalOpen,
-  toggleLeftEdge,
+  setFileBrowserOpen,
+  toggleFileBrowserOpen,
   togglePanesFlipped,
-  toggleRightEdge
+  toggleSidebarOpen
 } from '@/store/layout'
-import { setModelPickerOpen } from '@/store/model'
-import { startNewSession, startNewSessionTab } from '@/store/new-session'
-import { setPaneOpen } from '@/store/panes'
+import { openBrowserTab } from '@/store/preview'
 import {
+  $newChatProfile,
   cycleProfile,
   requestProfileCreate,
   switchProfileToSlot,
   switchToDefaultProfile,
   toggleShowAllProfiles
 } from '@/store/profile'
+import { toggleProfileRailVisible } from '@/store/profile-rail-prefs'
 import { openFolderAsProject } from '@/store/projects'
 import { toggleReview } from '@/store/review'
-import { archiveActiveSession, toggleSelectedPin } from '@/store/session-lookup'
-import { focusOpenSession, reopenLastClosedTile } from '@/store/session-states'
+import { $selectedStoredSessionId, setModelPickerOpen } from '@/store/session'
+import { reopenLastClosedTile } from '@/store/session-states'
 import {
   $switcherOpen,
   closeSwitcher,
@@ -60,35 +66,38 @@ import {
   switcherJustClosed
 } from '@/store/session-switcher'
 import { toggleStatusbarVisible } from '@/store/statusbar-prefs'
-import { closeActiveTerminal, createTerminal, cycleTerminal } from '@/store/terminals'
-import { openAppRoute, openNewWindow } from '@/store/windows'
+import { openNewWindow } from '@/store/windows'
 import { useTheme } from '@/themes/context'
 
-import { requestComposerFocus, requestVoiceToggle } from '../chat/composer/focus'
+import { requestComposerFocus, requestModelMenuToggle, requestVoiceToggle } from '../chat/composer/focus'
+import { handleComposerFocusChord } from '../chat/composer/focus-chord'
+import { handleWindowPaste } from '../chat/composer/paste-to-focus'
+import { openSession } from '../open-session'
 import {
+  $workspaceIsPage,
   AGENTS_ROUTE,
   ARTIFACTS_ROUTE,
+  CAPABILITIES_ROUTE,
   CRON_ROUTE,
   MESSAGING_ROUTE,
+  navigateToWorkspacePage,
+  NEW_CHAT_ROUTE,
   PROFILES_ROUTE,
   sessionRoute,
-  SETTINGS_ROUTE,
-  SKILLS_ROUTE
+  SETTINGS_ROUTE
 } from '../routes'
 
-// Ported from desktop `app/hooks/use-keybinds.ts`. Structure, dispatch and the
-// switcher plumbing are unchanged; the handler bodies point at universal's
-// stores. Actions whose subsystem universal lacks (tab tree, multi-window,
-// worktrees) ship unbound in `lib/keybinds/actions.ts` and simply get no handler
-// here — the dispatcher already no-ops on a missing one.
-//
-// Desktop scopes ⌘1…⌘9 and ⌃Tab to the FOCUSED pane-shell tab strip first, and
-// only falls through to profiles / the session switcher when the focus isn't a
-// tab strip. Universal has no tab tree, so it always takes that fall-through
-// branch — the calls are simply inlined rather than guarded.
 export interface KeybindRuntimeDeps {
   /** Open/close the command center overlay (sessions / system / usage). */
   toggleCommandCenter: () => void
+  /** Drop to a fresh new-session draft. */
+  startFreshSession: () => void
+  /** Open a fresh session as a tab in the main zone (⌘T), leaving the primary. */
+  openNewSessionTab: () => void
+  /** Pin/unpin the active session. */
+  toggleSelectedPin: () => void
+  /** Archive the active session. */
+  archiveSelectedSession: () => void
 }
 
 type HandlerMap = Record<string, () => void>
@@ -98,6 +107,7 @@ type HandlerMap = Record<string, () => void>
 // mode is active (edit overlay / panel rebind) — records the pressed combo.
 export function useKeybinds(deps: KeybindRuntimeDeps): void {
   const navigate = useNavigate()
+  const location = useLocation()
   const { resolvedMode, setMode } = useTheme()
 
   // Keep the latest closures without re-subscribing the listener.
@@ -106,40 +116,45 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
   const profileSwitchHandlers: HandlerMap = {}
 
-  for (let slot = 1; slot <= PROFILE_SLOT_COUNT; slot += 1) {
-    profileSwitchHandlers[`profile.switch.${slot}`] = () => switchProfileToSlot(slot)
-  }
+  // A tab key that lands on the WORKSPACE tab while a full page (skills /
+  // messaging / artifacts / a plugin route) covers it must also route back to
+  // the chat: the workspace pane is already the zone's active tab behind the
+  // page, so fronting it alone changes nothing on screen and the key reads
+  // dead. Mirrors `openSession`'s full-page rule — only a route change puts
+  // the chat back.
+  const leavePageForWorkspaceChat = (paneId: null | string) => {
+    if (paneId === 'workspace' && $workspaceIsPage.get()) {
+      const selected = $selectedStoredSessionId.get()
 
-  // A session that is ALREADY on screen — an open tab or the main thread — is
-  // fronted rather than re-opened. Without this, picking it from the switcher
-  // or the sidebar loaded a second copy into main while its tab sat there
-  // holding the same conversation.
-  const goToSession = (sessionId: null | string) => {
-    if (!sessionId || focusOpenSession(sessionId)) {
-      return
+      navigate(selected ? sessionRoute(selected) : NEW_CHAT_ROUTE)
     }
-
-    navigate(sessionRoute(sessionId))
   }
 
-  // ⌥N jumps straight to the Nth recent session and dismisses the switcher.
+  for (let slot = 1; slot <= PROFILE_SLOT_COUNT; slot += 1) {
+    // ⌘1…⌘9 switch the FOCUSED zone's tab when it's a real tab strip; only a
+    // single-pane (or unfocused) layout falls through to the profile switch.
+    profileSwitchHandlers[`profile.switch.${slot}`] = () => {
+      const pane = activateTreeTabSlot(slot)
+
+      if (pane) {
+        leavePageForWorkspaceChat(pane)
+      } else {
+        switchProfileToSlot(slot)
+      }
+    }
+  }
+
+  const goToSession = (sessionId: null | string) => {
+    if (sessionId) {
+      openSession(sessionId, navigate)
+    }
+  }
+
+  // ^N jumps straight to the Nth recent session and dismisses the switcher.
   const sessionSlotHandlers: HandlerMap = {}
 
   for (let slot = 1; slot <= SESSION_SLOT_COUNT; slot += 1) {
     sessionSlotHandlers[`session.slot.${slot}`] = () => {
-      // The focused chat strip's Nth TAB first; the Nth recent session only
-      // when no multi-tab chat zone has focus.
-      //
-      // (Desktop overloads ⌘1-9 for this and falls through to profiles.
-      // Universal already spends ⌘1-9 on profiles and puts sessions on ⌥1-9,
-      // so there is nothing to overload — the tab meaning simply takes
-      // precedence within the key that already means "session N".)
-      if (activateTreeTabSlot(slot)) {
-        closeSwitcher()
-
-        return
-      }
-
       closeSwitcher()
       goToSession(slotSessionId(slot))
     }
@@ -147,160 +162,154 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
   commitSwitcherRef.current = () => goToSession(commitOnCtrlUp())
 
-  // ⌃Tab belongs to the FOCUSED TAB STRIP when one is in play — that is what
-  // the key means everywhere else in the app — and only falls through to the
-  // recent-session HUD when the focus isn't a chat strip with something to
-  // cycle. Desktop scopes it the same way.
   const stepSession = (direction: 1 | -1) => {
-    if (cycleTreeTabInFocusedZone(direction)) {
-      return
-    }
-
     onSwitcherTabDown()
     goToSession(openOrAdvanceSwitcher(direction))
   }
 
-  // Reveal the file tree and drop the terminal out of the way. Universal's
-  // "file browser" is the FILE_TREE pane; the terminal is its own bottom dock.
+  // ⌃Tab cycles the focused session/main tab strip; only a non-tabbed focus
+  // falls through to the recent-session switcher. Landing on the workspace
+  // under a full page routes back to the chat (same as ⌘1).
+  const cycleTab = (direction: 1 | -1) => {
+    const pane = cycleTreeTabInFocusedZone(direction)
+
+    if (pane) {
+      leavePageForWorkspaceChat(pane)
+    } else {
+      stepSession(direction)
+    }
+  }
+
   const showFiles = () => {
-    setPaneOpen(FILE_TREE_PANE_ID, true)
-    setTerminalOpen(false)
+    setFileBrowserOpen(true)
+    setTerminalTakeover(false)
   }
 
   handlersRef.current = {
-    // Universal's settings overlay routes per-section (`/settings/:id`) rather
-    // than desktop's `?tab=` query; the keybind panel lives at `shortcuts`.
-    'keybinds.openPanel': () => openAppRoute(`${SETTINGS_ROUTE}/shortcuts`),
+    'keybinds.openPanel': () => navigate(`${SETTINGS_ROUTE}?tab=keybinds`),
 
-    // A REBOUND composer.focus chord lands here; the soft `/`/Enter defaults are
-    // intercepted in the dispatcher below so their surface gate can run first.
     'composer.focus': () => requestComposerFocus('active'),
-    'composer.modelPicker': () => setModelPickerOpen(true),
+    // Toggle the composer pill's live model dropdown (pane under the pointer,
+    // else active composer); no chat surface on screen → the full dialog.
+    'composer.modelPicker': () => {
+      if (!requestModelMenuToggle()) {
+        setModelPickerOpen(true)
+      }
+    },
     'composer.voice': requestVoiceToggle,
 
-    'nav.commandPalette': toggleCommandPalette,
-    'nav.commandCenter': deps.toggleCommandCenter,
-    'nav.settings': () => openAppRoute(SETTINGS_ROUTE),
-    'nav.profiles': () => navigate(PROFILES_ROUTE),
-    'nav.skills': () => navigate(SKILLS_ROUTE),
-    'nav.messaging': () => navigate(MESSAGING_ROUTE),
-    'nav.artifacts': () => navigate(ARTIFACTS_ROUTE),
-    'nav.cron': () => openAppRoute(CRON_ROUTE),
-    'nav.agents': () => openAppRoute(AGENTS_ROUTE),
+    // On the Settings overlay, ⌘K scopes to settings search; the second press
+    // (or Esc) still closes as usual via toggle.
+    'nav.commandPalette': () => {
+      if (!$commandPaletteOpen.get() && appViewForPath(location.pathname) === 'settings') {
+        openCommandPalettePage('settings')
 
-    // Same act as the sidebar's New session row and `/new` — create, route,
-    // focus, flash — which is why all three share one helper.
-    'session.new': () => startNewSession(),
-    // ⌘⇧N opens a full app instance in a new native window (desktop only; MJX-104).
+        return
+      }
+
+      toggleCommandPalette()
+    },
+    'nav.commandCenter': deps.toggleCommandCenter,
+    'nav.settings': () => navigate(SETTINGS_ROUTE),
+    'nav.profiles': () => navigate(PROFILES_ROUTE),
+    'nav.capabilities': () => navigateToWorkspacePage(navigate, CAPABILITIES_ROUTE),
+    'nav.messaging': () => navigateToWorkspacePage(navigate, MESSAGING_ROUTE),
+    'nav.artifacts': () => navigateToWorkspacePage(navigate, ARTIFACTS_ROUTE),
+    'nav.cron': () => navigate(CRON_ROUTE),
+    'nav.agents': () => navigate(AGENTS_ROUTE),
+
+    'session.new': () => {
+      // Match the sidebar New Session button. A plain keyboard new chat should
+      // target the current live profile, not a stale per-profile quick-create
+      // selection from a prior action.
+      setWorkspaceScope('sessions')
+      $newChatProfile.set(null)
+      deps.startFreshSession()
+      window.dispatchEvent(new CustomEvent('hermes:new-session-shortcut'))
+    },
+    'session.newTab': () => deps.openNewSessionTab(),
     'session.newWindow': () => void openNewWindow(),
-    // ⌃Tab steps through the recent-session switcher.
-    'session.next': () => stepSession(1),
-    'session.prev': () => stepSession(-1),
+    'session.next': () => cycleTab(1),
+    'session.prev': () => cycleTab(-1),
     ...sessionSlotHandlers,
     'session.focusSearch': requestSessionSearchFocus,
-    'session.togglePin': toggleSelectedPin,
-    // Ships unbound — see lib/keybinds/actions.ts. No-op with no active
-    // session, so a bound chord on a fresh draft does nothing rather than
-    // archiving whatever was last selected.
-    'session.archive': () => void archiveActiveSession(),
-    // ⌘⇧B spins up a new git worktree. openWorktreeDialog resolves the target
-    // (the focused surface's cwd, else the entered project's root) and publishes
-    // it to the ONE mounted dialog, so this no longer tests $repoStatus first and
-    // works from a detached session inside a project. With no repo in reach,
-    // openWorktreeDialog does nothing.
+    'session.togglePin': deps.toggleSelectedPin,
+    'session.archive': deps.archiveSelectedSession,
+    // openWorktreeDialog resolves the target. There is no test for a repo
+    // here, so the key works from a detached session that sits inside a
+    // project, and not only from a session with a repo. When no repo is in
+    // reach, openWorktreeDialog does nothing.
     'workspace.newWorktree': () => void openWorktreeDialog(),
-    // ⌘O — pick a folder and adopt it as a project, then start working in it.
+    // ⌘O: native folder picker → open the folder as a project (upsert) with a
+    // fresh session anchored there.
     'workspace.openFolder': () => void openFolderAsProject(),
 
     // Narrow-viewport reveal is handled inside the store toggles now.
-    // Both are POSITIONAL (see `store/layout.ts`): ⌘B drives whatever sits on the
-    // left of main, ⌘J the right — so they track the titlebar buttons through a
-    // pane swap instead of staying pinned to one sidebar.
-    'view.toggleSidebar': toggleLeftEdge,
-    // ⌘J toggles the file browser — the "secondary panel" toggle.
-    'view.toggleRightSidebar': toggleRightEdge,
+    'view.toggleSidebar': toggleSidebarOpen,
+    'view.cycleSidebarGrouping': cycleSidebarGrouping,
+    // ⌘J toggles the right sidebar — but a layout with no right side (e.g.
+    // terminal-on-bottom) would leave it a dead key, so it falls back to the
+    // terminal there. The single "secondary panel" toggle.
+    'view.toggleRightSidebar': () =>
+      layoutHasRootSide('right') ? toggleFileBrowserOpen() : togglePaneVisible('terminal'),
     'view.toggleReview': toggleReview,
-
-    // ⌘⇧L — the in-app browser (MJXHRM-447). A fresh one lands on about:blank,
-    // where the pane's address field invites an address.
-    'view.toggleBrowser': () => void toggleInAppBrowser(),
-    // The three PAGE chords only answer while focus is inside the pane, so ⌘R
-    // still reloads the window everywhere else. Once focus is inside the GUEST
-    // the host document never sees the key at all — those are handled by the
-    // injected guest script.
-    'browser.back': () => commandFocusedBrowser()?.back(),
-    'browser.forward': () => commandFocusedBrowser()?.forward(),
-    'browser.reload': () => commandFocusedBrowser()?.reload(),
     'view.toggleStatusbar': toggleStatusbarVisible,
+    'view.toggleProfileRail': toggleProfileRailVisible,
+    'view.toggleSimpleMode': toggleSimpleMode,
+    'view.toggleTabStrip': () => void toggleTargetZoneTabStrip(),
     'view.showFiles': showFiles,
-    // ⌘F opens the bar; ⌘G / ⌘⇧G step from anywhere once it is open (the bar
-    // owns those — see findBarClaimsCombo). These two rows exist so a user who
-    // wants dedicated step chords can bind them, and they are no-ops with the
-    // bar closed.
-    'view.findInPage': openFindBar,
-    'view.findNext': findNextMatch,
-    'view.findPrevious': findPreviousMatch,
-    'view.showTerminal': () => setTerminalOpen(!$terminalOpen.get()),
-    // Create first so the area's open-effect ensure sees a non-empty set and
+    'view.showBrowser': openBrowserTab,
+    'view.toggleHud': () => toggleHud(hudTargetSessionId()),
+    'view.showTerminal': () => togglePaneVisible('terminal'),
+    // Create first so the pane's open-effect ensure sees a non-empty set and
     // doesn't also spawn one — net effect is exactly one fresh terminal.
     'view.newTerminal': () => {
       createTerminal()
-      setTerminalOpen(true)
+      setTerminalTakeover(true)
     },
-    // Switch / close only act while the terminal is open (no focus-scoping here,
-    // so this stands in for "terminal is showing").
-    'view.nextTerminal': () => $terminalOpen.get() && cycleTerminal(1),
-    'view.prevTerminal': () => $terminalOpen.get() && cycleTerminal(-1),
-    'view.closeTerminal': () => $terminalOpen.get() && closeActiveTerminal(),
+    // Switch / close only act while the terminal is actually ON SCREEN — ask
+    // the tree, not the toggle store (which stays true behind a stacked
+    // sibling tab or a minimized zone).
+    'view.nextTerminal': () => isPaneVisible('terminal') && cycleTerminal(1),
+    'view.prevTerminal': () => isPaneVisible('terminal') && cycleTerminal(-1),
+    'view.closeTerminal': () => isPaneVisible('terminal') && closeActiveTerminal(),
     'view.flipPanes': togglePanesFlipped,
-
-    // ⌘T new tab, ⌘W close tab, ⌘⇧T reopen the last closed one.
-    //
-    // The main thread is a pane like any other, so "new tab" means: park the
-    // conversation currently in it as its own tab, then start a fresh chat in
-    // the main pane. Both end up in the same strip, which is what the user
-    // sees as two tabs. (An unsaved draft has nothing to park.)
-    'session.newTab': startNewSessionTab,
-    // Fall-through chain, and it deliberately bottoms out in a no-op: ⌘W must
-    // never close the window.
-    // Closes THE TAB THE POINTER IS OVER, not the focused session: the zone
-    // ladder inside `closeFocusedTabInZone` is hover-first, so ⌘W over a
-    // background pane closes that pane's tab rather than the one the last click
-    // happened to focus.
-    //
-    // Nothing tile-shaped here on purpose. ⌘W used to resolve the target,
-    // recognise a `session-tile:` pane and call `requestCloseSessionTile`
-    // itself — a private second copy of the routing that `closeTabPane` already
-    // performs, since a tile's registered pane closer IS
-    // `requestCloseSessionTile` (app/chat/session-tile.tsx). One close verb
-    // means the keybind names the verb and nothing else (MJXHRM-390).
-    'view.closeTab': closeFocusedTabInZone,
+    // ⌘W: close the focused tab (terminal / preview target / zone tree tab).
+    // On the main tab with session tabs stacked, it shifts the next one in —
+    // the loader navigates to that session's route (loads it into main). On
+    // macOS the menu accelerator owns ⌘W and routes through the same
+    // closeActiveTab via IPC (see use-desktop-integrations); this binding is
+    // the Win/Linux path where ⌘W reaches the renderer directly.
+    'view.closeTab': () => void closeActiveTab(id => navigate(sessionRoute(id))),
     'view.reopenTab': reopenLastClosedTile,
+    'view.findInPage': () => {
+      // Suppress on overlay routes so it doesn't collide with overlay-specific
+      // search surfaces (e.g. Settings search bar).
+      if (!isOverlayView(appViewForPath(location.pathname))) {
+        openFindBar()
+      }
+    },
+    // ⌘G / ⌘⇧G are handled by the find bar's own capture-phase listener while
+    // it is open (so they don't collide with `view.toggleReview`). These
+    // registry handlers cover a user-assigned dedicated chord: stepping is a
+    // no-op unless the bar is open with a query, so a bound key can't search
+    // invisibly.
+    'view.findNext': findNextMatch,
+    'view.findPrevious': findPreviousMatch,
 
     'appearance.toggleMode': () => setMode(resolvedMode === 'dark' ? 'light' : 'dark'),
-    // Summon/dismiss the floating HUD window. Shipped unbound (see actions.ts) —
-    // MJXHRM-213 renders the surface and gives it a default chord. The lifecycle
-    // is already whole: opening twice focuses, closing the main window takes it
-    // down with it.
-    'view.toggleHud': () => void toggleHud(),
-    // Summon/dismiss Quick Entry — the one-line capture window (MJXHRM-384).
-    // Ships unbound (see actions.ts): a machine-wide chord is the user's to
-    // choose, and Settings ▸ Keyboard shortcuts is where they choose it.
-    'view.toggleQuickEntry': () => void toggleQuickEntry(),
 
     'profile.default': switchToDefaultProfile,
     ...profileSwitchHandlers,
     'profile.next': () => cycleProfile(1),
     'profile.prev': () => cycleProfile(-1),
     'profile.toggleAll': toggleShowAllProfiles,
-    // The rail owns the create dialog; this just asks it to open (MJX-108).
     'profile.create': requestProfileCreate
   }
 
-  // A keyboard-first overlay (⌘K, the model picker) hands the keyboard back
-  // here when it closes — the composer bus lives on this side, so the primitive
-  // stays ignorant of what "typing" means on any given surface.
-  //
+  // A keyboard-driven overlay closing hands typing back to the composer: Radix
+  // restores focus to the trigger (a toolbar button for the model pill), so
+  // without this the Enter that committed a model also eats the next keystroke.
   // Deferred one frame and skipped when something else editable has claimed
   // focus, because a palette action can legitimately open a dialog or navigate
   // — the release must never steal focus from the surface it just opened.
@@ -316,23 +325,14 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     []
   )
 
-  // OS-level hotkeys go through the same handler map as the in-app ones — an
-  // action's behaviour must not depend on which side of the window boundary the
-  // keypress came from. Only the CLAIM differs, and that lives in
-  // `lib/keybinds/global-shortcut.ts`.
-  useEffect(() => {
-    setGlobalShortcutDispatch(actionId => handlersRef.current[actionId]?.())
-
-    return startGlobalShortcuts()
-  }, [])
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       // An active IME composition owns the keyboard. Windows Chinese IMEs
       // (Microsoft Pinyin, Sogou) use Ctrl+, as their punctuation-mode toggle,
       // so without this guard that keystroke ALSO matched `nav.settings` and
-      // navigated away mid-word, unmounting the composer with an unsent draft
-      // in it. Before capture mode, which would otherwise bind a preedit key.
+      // navigated away mid-word — unmounting the composer and destroying the
+      // unsent draft (#41079). The draft stash below makes navigation safe;
+      // this makes the IME keystroke not navigate at all.
       if (event.isComposing) {
         return
       }
@@ -379,40 +379,35 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
         return
       }
 
-      // An OPEN find bar owns ⌘G / ⌘⇧G / Escape. It listens on `window` in the
-      // capture phase like this dispatcher does, and propagation control cannot
-      // suppress a sibling listener on the same target — so ownership has to be
-      // decided here, by the single owner of combo dispatch. Otherwise ⌘G would
-      // also toggle the review pane and Escape would abort a running turn while
-      // the user only meant to dismiss the bar.
+      // The open find bar owns ⌘G / ⌘⇧G / Escape. Its own capture-phase
+      // listener runs those actions; bail here so the registry doesn't ALSO
+      // fire the action bound to the same combo (⌘G = view.toggleReview,
+      // Escape = composer.cancel, which would abort a live turn). Both
+      // listeners are on `window`, so stopPropagation in the bar can't
+      // suppress this one — the dispatcher has to yield explicitly.
       if ($findInPage.get().active && findBarClaimsCombo(combo)) {
+        return
+      }
+
+      if (handleApprovalKey(event)) {
         return
       }
 
       const actionId = $comboIndex.get().get(combo)
 
-      // Printable → type-to-focus. A Shift+<char> chord is a capital letter
-      // first and a shortcut second, so it comes through here too: `shift+n`
-      // ships as a New session default, and letting the binding win meant a
-      // message could never start with an N (nor an X — `shift+x` flips the
-      // theme). The composer only takes it when it would take any other letter,
-      // so the chord keeps working from a dialog, the terminal or a full page.
-      if (!actionId || isShiftPrintableCombo(combo)) {
+      // Unbound printable → type-to-focus. Bound chords (shift+n, …) win above.
+      if (!actionId) {
         const typeChar = typeToFocusChar(event)
 
         if (typeChar && composerFocusKeysAllowed(event, 'type')) {
           event.preventDefault()
           requestComposerFocus('active', { typeChar })
-
-          return
         }
 
-        if (!actionId) {
-          return
-        }
+        return
       }
 
-      if (isEditableTarget(event.target) && !comboAllowedInInput(combo)) {
+      if (isEditableTarget(event.target) && !actionAllowedInInput(actionId, combo)) {
         return
       }
 
@@ -445,6 +440,10 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     // highlighted session. A window blur (Cmd+Tab away mid-switch) cancels so
     // the overlay never gets stranded waiting for a keyup that never comes.
     const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        releaseApprovalKey()
+      }
+
       if (event.key === 'Tab') {
         onSwitcherTabUp()
       }
@@ -454,7 +453,13 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
       }
     }
 
-    const onBlur = () => switcherActive() && closeSwitcher()
+    const onBlur = () => {
+      releaseApprovalKey()
+
+      if (switcherActive()) {
+        closeSwitcher()
+      }
+    }
 
     // Swallow trailing contextmenu after Ctrl+click commit (Electron main menu).
     const onContextMenu = (event: MouseEvent) => {
@@ -464,22 +469,25 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
       }
     }
 
-    // Announce that THIS window has a combo dispatcher, so a surface that
-    // installs its own fallback listener for satellite roots (the find bar)
-    // stands down here instead of handling the same combo twice.
-    const releaseDispatcher = registerKeybindDispatcher()
-
     window.addEventListener('keydown', onKeyDown, { capture: true })
     window.addEventListener('keyup', onKeyUp, { capture: true })
     window.addEventListener('blur', onBlur)
     window.addEventListener('contextmenu', onContextMenu, { capture: true })
+    // Paste twin of type-to-focus: ⌘V on non-editable chrome routes the
+    // clipboard (text AND images) into the active composer. Bubble phase so
+    // editables' own paste handlers run first and mark the event handled.
+    window.addEventListener('paste', handleWindowPaste)
+    // ⌘/Ctrl+L moves focus to the composer. Bubble phase so capture-phase
+    // claimants run first; the priority ladder lives in focus-chord.ts.
+    window.addEventListener('keydown', handleComposerFocusChord)
 
     return () => {
-      releaseDispatcher()
       window.removeEventListener('keydown', onKeyDown, { capture: true })
       window.removeEventListener('keyup', onKeyUp, { capture: true })
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('contextmenu', onContextMenu, { capture: true })
+      window.removeEventListener('paste', handleWindowPaste)
+      window.removeEventListener('keydown', handleComposerFocusChord)
     }
   }, [])
 }

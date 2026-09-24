@@ -1,5 +1,5 @@
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { deleteLearningNode } from '@/hermes'
+import { deleteLearningNode, type ProfileScope } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
 import { notify } from '@/store/notifications'
 
@@ -9,7 +9,7 @@ export function notifySkillArchived(t: Translations): void {
   notify({ kind: 'success', message: t.skills.skillArchivedMessage, title: t.skills.skillArchivedTitle })
 }
 
-export async function archiveLearningSkill(id: string, profile?: null | string): Promise<void> {
+export async function archiveLearningSkill(id: string, profile?: ProfileScope): Promise<void> {
   const res = await deleteLearningNode(id, profile)
 
   if (!res.ok) {
@@ -32,9 +32,9 @@ interface ArchiveSkillConfirmDialogProps {
   onFailure?: (err: unknown, skillName: string) => void
   onSuccess?: () => void
   open: boolean
-  /** Archive in THIS profile — the Capabilities scope the row came from, not
-   *  whichever profile the app happens to be on. */
-  profile?: null | string
+  /** Capabilities profile-scope override — archive against THIS profile's
+   *  backend; undefined/null keeps the app-wide active profile. */
+  profile?: ProfileScope
   skillId: string
   skillName: string
 }

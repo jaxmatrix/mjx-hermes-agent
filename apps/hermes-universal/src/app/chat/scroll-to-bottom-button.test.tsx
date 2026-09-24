@@ -1,62 +1,112 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { atom } from 'nanostores'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { setSessionApproval } from '@/store/prompts'
-import { onScrollToBottomRequest, resetThreadScroll, setThreadAtBottom } from '@/store/thread-scroll'
-import { seedActiveSession } from '@/test-sessions'
+import { clearAllPrompts, clearApprovalRequest, setApprovalRequest } from '@/store/prompts'
+import { $activeSessionId } from '@/store/session'
+import {
+  onScrollToBottomRequest,
+  publishThreadMessagesBelow,
+  resetThreadScroll,
+  setThreadAtBottom
+} from '@/store/thread-scroll'
 
+import { ComposerSurfaceProvider } from './composer/scope'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
-import { type SessionView, SessionViewProvider } from './session-view'
-
-// The bare button reads the PRIMARY session view, whose `$runtimeId` is
-// `$activeSessionKey` — so seeding an active session is what gives these renders
-// a session key to be scoped by.
-const SESSION = 'sess-1'
-const OTHER = 'sess-2'
 
 function pendingApproval() {
-  seedActiveSession(SESSION)
-  setSessionApproval(SESSION, { command: 'rm -rf /tmp/x', description: 'dangerous command', allowPermanent: true })
+  $activeSessionId.set('sess-1')
+  setApprovalRequest({ command: 'rm -rf /tmp/x', description: 'dangerous command', sessionId: 'sess-1' })
 }
-
-/** A tile's view of another session — what a second open tile renders under.
- *  Only `$runtimeId` is read here; the rest of the surface stays unbuilt. */
-const tileView = (key: string): SessionView =>
-  ({ kind: 'tile', $runtimeId: atom<null | string>(key) }) as unknown as SessionView
 
 afterEach(() => {
   cleanup()
-  setSessionApproval(SESSION, null)
-  setSessionApproval(OTHER, null)
-  resetThreadScroll(SESSION)
-  resetThreadScroll(OTHER)
-  resetThreadScroll('')
+  clearAllPrompts()
+
+  for (const id of ['sess-1', 'sess-a', 'sess-b', 'tile-runtime', 'surface-a', 'surface-b']) {
+    resetThreadScroll(id)
+  }
+
+  $activeSessionId.set(null)
+
+  for (const stack of document.querySelectorAll('[data-approval-stack]')) {
+    stack.remove()
+  }
 })
 
 // `getByRole('button')` excludes aria-hidden nodes, so "queryByRole null" is the
 // control's hidden (parked-at-bottom) state.
 describe('ScrollToBottomButton', () => {
-  it('stays hidden while parked at the bottom', () => {
-    seedActiveSession(SESSION)
-    render(<ScrollToBottomButton />)
+  it('isolates pre-runtime panes using their existing composer surface identity', () => {
+    setThreadAtBottom(false, 'surface-a')
+    publishThreadMessagesBelow(4, { paneVisible: true, sessionId: 'surface-a' })
+    const first = vi.fn()
+    const second = vi.fn()
+    const stopFirst = onScrollToBottomRequest(first, 'surface-a')
+    const stopSecond = onScrollToBottomRequest(second, 'surface-b')
+    render(
+      <>
+        <ComposerSurfaceProvider value="surface-a">
+          <ScrollToBottomButton sessionId={null} />
+        </ComposerSurfaceProvider>
+        <ComposerSurfaceProvider value="surface-b">
+          <ScrollToBottomButton sessionId={null} />
+        </ComposerSurfaceProvider>
+      </>
+    )
+
+    expect(screen.getAllByRole('button')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll to bottom · 4 messages' }))
+    expect(first).toHaveBeenCalledOnce()
+    expect(second).not.toHaveBeenCalled()
+    stopFirst()
+    stopSecond()
+  })
+
+  it('does not light a sibling pane when only one visible session scrolls up', () => {
+    setThreadAtBottom(false, 'sess-a')
+    render(<ScrollToBottomButton sessionId="sess-b" />)
 
     expect(screen.queryByRole('button')).toBeNull()
   })
 
-  it('is a plain jump-to-bottom control when scrolled up with no approval', () => {
-    seedActiveSession(SESSION)
-    setThreadAtBottom(SESSION, false)
-    render(<ScrollToBottomButton />)
+  it("keeps each visible pane's message count when its sibling publishes or unmounts", () => {
+    setThreadAtBottom(false, 'sess-a')
+    setThreadAtBottom(false, 'sess-b')
+    publishThreadMessagesBelow(12, { paneVisible: true, sessionId: 'sess-a' })
+    publishThreadMessagesBelow(3, { paneVisible: true, sessionId: 'sess-b' })
+    render(
+      <>
+        <ScrollToBottomButton sessionId="sess-a" />
+        <ScrollToBottomButton sessionId="sess-b" />
+      </>
+    )
 
-    expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Scroll to bottom · 12 messages' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Scroll to bottom · 3 messages' })).toBeTruthy()
+    act(() => resetThreadScroll('sess-b'))
+    expect(screen.getByRole('button', { name: 'Scroll to bottom · 12 messages' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Scroll to bottom · 3 messages' })).toBeNull()
+  })
+
+  it('stays hidden while parked at the bottom', () => {
+    render(<ScrollToBottomButton sessionId="sess-1" />)
+
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('shows the messages below the viewport when scrolled up with no approval', () => {
+    setThreadAtBottom(false, 'sess-1')
+    publishThreadMessagesBelow(12, { paneVisible: true, sessionId: 'sess-1' })
+    render(<ScrollToBottomButton sessionId="sess-1" />)
+
+    expect(screen.getByRole('button', { name: 'Scroll to bottom · 12 messages' }).textContent).toBe('12 messages')
     expect(screen.queryByText('Approval needed')).toBeNull()
   })
 
   it('morphs into the approval pill when scrolled up with a pending approval', () => {
     pendingApproval()
-    setThreadAtBottom(SESSION, false)
-    render(<ScrollToBottomButton />)
+    setThreadAtBottom(false, 'sess-1')
+    render(<ScrollToBottomButton sessionId="sess-1" />)
 
     expect(screen.getByRole('button', { name: 'Approval needed' })).toBeTruthy()
     expect(screen.getByText('Approval needed')).toBeTruthy()
@@ -64,18 +114,34 @@ describe('ScrollToBottomButton', () => {
 
   it('does not morph while a pending approval is still in view (at bottom)', () => {
     pendingApproval()
-    render(<ScrollToBottomButton />)
+    render(<ScrollToBottomButton sessionId="sess-1" />)
 
     // Parked at bottom → control hidden, so it can't claim "approval needed".
     expect(screen.queryByRole('button')).toBeNull()
   })
 
+  it('labels uncounted content without zero and follows only its own approval', () => {
+    pendingApproval()
+    setThreadAtBottom(false, 'sess-1')
+    setThreadAtBottom(false, 'tile-runtime')
+    const view = render(<ScrollToBottomButton sessionId="tile-runtime" />)
+    expect(screen.getByRole('button', { name: 'Scroll to bottom' }).textContent).toBe('Scroll to bottom')
+
+    act(() => setApprovalRequest({ command: 'x', description: 'd', sessionId: 'tile-runtime', requestId: 'r1' }))
+    expect(screen.getByRole('button', { name: 'Approval needed' })).toBeTruthy()
+    act(() => clearApprovalRequest('tile-runtime', 'r1'))
+    expect(screen.queryByText('Approval needed')).toBeNull()
+    expect(screen.getByRole('button').textContent).toBe('Scroll to bottom')
+
+    view.rerender(<ScrollToBottomButton sessionId="sess-1" />)
+    expect(screen.getByRole('button', { name: 'Approval needed' })).toBeTruthy()
+  })
+
   it('re-arms sticky-bottom on click', () => {
     const handler = vi.fn()
-    seedActiveSession(SESSION)
-    const stop = onScrollToBottomRequest(SESSION, handler)
-    setThreadAtBottom(SESSION, false)
-    render(<ScrollToBottomButton />)
+    const stop = onScrollToBottomRequest(handler, 'sess-1')
+    setThreadAtBottom(false, 'sess-1')
+    render(<ScrollToBottomButton sessionId="sess-1" />)
 
     fireEvent.click(screen.getByRole('button'))
 
@@ -83,77 +149,51 @@ describe('ScrollToBottomButton', () => {
     stop()
   })
 
-  // MJXHRM-381. One button renders per mounted ChatScreen, i.e. per open tile.
-  // On the old global atoms every one of them appeared because ONE thread was
-  // scrolled up, every one of them claimed "Approval needed" because the ACTIVE
-  // session had a pending approval, and clicking any of them pinned every
-  // mounted transcript.
-  it('ignores another session scrolling up', () => {
-    seedActiveSession(SESSION)
-    setThreadAtBottom(OTHER, false)
-    render(<ScrollToBottomButton />)
+  it('scrolls to the session approval stack instead of the bottom when one is pending', () => {
+    pendingApproval()
+    setThreadAtBottom(false, 'sess-1')
+    const bottomHandler = vi.fn()
+    const stopBottom = onScrollToBottomRequest(bottomHandler, 'sess-1')
 
-    expect(screen.queryByRole('button')).toBeNull()
+    const stack = document.createElement('div')
+    stack.setAttribute('data-approval-stack', '')
+    stack.setAttribute('data-session-id', 'sess-1')
+    const scrollIntoView = vi.fn()
+    stack.scrollIntoView = scrollIntoView
+    document.body.appendChild(stack)
+
+    render(<ScrollToBottomButton sessionId="sess-1" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Approval needed' }))
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(bottomHandler).not.toHaveBeenCalled()
+
+    stopBottom()
+    stack.remove()
   })
 
-  // Deliberately a TILE render. On the primary view the old global `$approval` is
-  // a computed over `$activeSessionKey`, so it already answers null for another
-  // session — a primary-view version of this test passes either way and proves
-  // nothing. A tile is where the two readings diverge.
-  it("a tile's button does not borrow the ACTIVE session's approval", () => {
-    seedActiveSession(SESSION)
-    setSessionApproval(SESSION, { command: 'rm -rf /tmp/x', description: 'dangerous command', allowPermanent: true })
-    setThreadAtBottom(OTHER, false)
-    render(
-      <SessionViewProvider value={tileView(OTHER)}>
-        <ScrollToBottomButton />
-      </SessionViewProvider>
-    )
+  it('does not jump into a sibling session’s approval stack', () => {
+    pendingApproval()
+    setThreadAtBottom(false, 'sess-1')
 
-    expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy()
-    expect(screen.queryByText('Approval needed')).toBeNull()
-  })
+    const otherStack = document.createElement('div')
+    otherStack.setAttribute('data-approval-stack', '')
+    otherStack.setAttribute('data-session-id', 'sess-other')
+    const otherScrollIntoView = vi.fn()
+    otherStack.scrollIntoView = otherScrollIntoView
+    document.body.appendChild(otherStack)
 
-  it("a tile's button does morph for its OWN session's approval", () => {
-    seedActiveSession(SESSION)
-    setSessionApproval(OTHER, { command: 'rm -rf /tmp/x', description: 'dangerous command', allowPermanent: true })
-    setThreadAtBottom(OTHER, false)
-    render(
-      <SessionViewProvider value={tileView(OTHER)}>
-        <ScrollToBottomButton />
-      </SessionViewProvider>
-    )
+    const bottomHandler = vi.fn()
+    const stopBottom = onScrollToBottomRequest(bottomHandler, 'sess-1')
 
-    expect(screen.getByRole('button', { name: 'Approval needed' })).toBeTruthy()
-  })
+    render(<ScrollToBottomButton sessionId="sess-1" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Approval needed' }))
 
-  it('pins only its own transcript on click', () => {
-    const mine = vi.fn()
-    const theirs = vi.fn()
-    seedActiveSession(SESSION)
-    const stopMine = onScrollToBottomRequest(SESSION, mine)
-    const stopTheirs = onScrollToBottomRequest(OTHER, theirs)
-    setThreadAtBottom(SESSION, false)
-    render(<ScrollToBottomButton />)
+    expect(otherScrollIntoView).not.toHaveBeenCalled()
+    // No stack tagged for this session exists, so it falls back to the bottom.
+    expect(bottomHandler).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByRole('button'))
-
-    expect(mine).toHaveBeenCalledTimes(1)
-    expect(theirs).not.toHaveBeenCalled()
-    stopMine()
-    stopTheirs()
-  })
-
-  it("a tile's button follows its own session, not the active one", () => {
-    seedActiveSession(SESSION)
-    setThreadAtBottom(SESSION, false)
-    render(
-      <SessionViewProvider value={tileView(OTHER)}>
-        <ScrollToBottomButton />
-      </SessionViewProvider>
-    )
-
-    // The ACTIVE session is scrolled up; this tile's is not.
-    expect(screen.queryByRole('button')).toBeNull()
+    stopBottom()
+    otherStack.remove()
   })
 })

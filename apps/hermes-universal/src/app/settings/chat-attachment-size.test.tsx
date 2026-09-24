@@ -9,24 +9,32 @@
 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { flushSync } from 'react-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hermes', () => ({
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  peekConfigReadOrigin: () => undefined,
+  retainConfigReadOrigin: (record: object) => record,
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestProfile: vi.fn(),
-  getHermesConfigRecord: vi.fn(async () => ({})),
-  getHermesConfigSchema: vi.fn(async () => ({ fields: {} })),
+  getHermesConfigRecord: vi.fn(async () => ({ display: { show_reasoning: false }, timezone: 'UTC' })),
+  getHermesConfigSchema: vi.fn(async () => ({
+    fields: {
+      'display.show_reasoning': { type: 'boolean' },
+      timezone: { type: 'string' }
+    }
+  })),
   saveHermesConfig: vi.fn(async () => ({ ok: true }))
 }))
 
-// Rust re-clamps and answers with what it stored, so the row has to follow that
-// answer rather than the keystrokes — mocked at the same IPC boundary the store
-// test uses.
-const { invoke } = vi.hoisted(() => ({
-  invoke: vi.fn(async (_cmd: string, args: { maxMb: number }) => args.maxMb)
-}))
+const dataUrlSet = vi.hoisted(() => vi.fn())
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+const desktopWindow = window as unknown as { hermesDesktop?: Window['hermesDesktop'] }
+const initialHermesDesktop = desktopWindow.hermesDesktop
 
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
@@ -45,11 +53,46 @@ const renderChat = () =>
     </MemoryRouter>
   )
 
-const field = () => screen.findByRole('spinbutton', { name: 'Max attachment / preview size in megabytes' })
+const field = async () => {
+  // ConfigSection remounts headerSlot once schema/config arrive — wait for a
+  // schema field so AttachmentSizeRow is on its final mount before we edit.
+  await screen.findByRole('switch')
+
+  return screen.getByRole('spinbutton', { name: 'Max preview / image load size in megabytes' })
+}
+
+/** React 18 batches the change — blur must run after the draft updates. */
+async function editCap(input: HTMLElement, value: string) {
+  flushSync(() => {
+    fireEvent.change(input, { target: { value } })
+  })
+
+  if (value === '') {
+    expect(input).toHaveValue(null)
+  } else {
+    expect(input).toHaveValue(Number(value))
+  }
+
+  fireEvent.blur(input)
+}
 
 beforeEach(() => {
-  invoke.mockReset()
-  invoke.mockImplementation(async (_cmd: string, args: { maxMb: number }) => args.maxMb)
+  dataUrlSet.mockReset()
+  dataUrlSet.mockImplementation(async (maxMb: number) => ({
+    defaultMaxMb: DATA_URL_READ_DEFAULT_MAX_MB,
+    maxBytes: maxMb * 1024 * 1024,
+    maxMb
+  }))
+  desktopWindow.hermesDesktop = {
+    dataUrlReadMax: {
+      get: vi.fn(async () => ({
+        defaultMaxMb: DATA_URL_READ_DEFAULT_MAX_MB,
+        maxBytes: 24 * 1024 * 1024,
+        maxMb: 24
+      })),
+      set: dataUrlSet
+    }
+  } as unknown as Window['hermesDesktop']
   // Seed AWAY from the default so a row that ignores the store and renders 16
   // fails instead of accidentally matching.
   $dataUrlReadMaxMb.set(24)
@@ -57,6 +100,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  desktopWindow.hermesDesktop = initialHermesDesktop
   $dataUrlReadMaxMb.set(DATA_URL_READ_DEFAULT_MAX_MB)
   queryClient.clear()
 })
@@ -68,22 +112,20 @@ describe('Chat → max attachment / preview size', () => {
     const input = await field()
     expect(input).toHaveValue(24)
 
-    fireEvent.change(input, { target: { value: '32' } })
-    fireEvent.blur(input)
+    await editCap(input, '32')
 
-    expect($dataUrlReadMaxMb.get()).toBe(32)
-    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('set_data_url_read_max', { maxMb: 32 }))
+    await vi.waitFor(() => expect($dataUrlReadMaxMb.get()).toBe(32))
+    expect(dataUrlSet).toHaveBeenCalledWith(32)
   })
 
   it('clamps a value past the ceiling instead of accepting it', async () => {
     renderChat()
 
     const input = await field()
-    fireEvent.change(input, { target: { value: '99999' } })
-    fireEvent.blur(input)
+    await editCap(input, '99999')
 
-    expect($dataUrlReadMaxMb.get()).toBe(4096)
-    expect(input).toHaveValue(4096)
+    await vi.waitFor(() => expect($dataUrlReadMaxMb.get()).toBe(4096))
+    await vi.waitFor(() => expect(input).toHaveValue(4096))
   })
 
   // `Number('')` is 0, which the clamp reads as the 1 MB floor — i.e. every
@@ -92,22 +134,24 @@ describe('Chat → max attachment / preview size', () => {
     renderChat()
 
     const input = await field()
-    fireEvent.change(input, { target: { value: '' } })
-    fireEvent.blur(input)
+    await editCap(input, '')
 
-    expect($dataUrlReadMaxMb.get()).toBe(16)
+    await vi.waitFor(() => expect($dataUrlReadMaxMb.get()).toBe(16))
   })
 
   // The disagreeing case: Rust is free to store something else, and the row must
   // end up showing THAT. Otherwise Settings promises a cap the refusal message
   // and the reader do not use.
   it('follows the cap Rust reports back when it differs from the ask', async () => {
-    invoke.mockResolvedValueOnce(64)
+    dataUrlSet.mockImplementationOnce(async () => ({
+      defaultMaxMb: DATA_URL_READ_DEFAULT_MAX_MB,
+      maxBytes: 64 * 1024 * 1024,
+      maxMb: 64
+    }))
     renderChat()
 
     const input = await field()
-    fireEvent.change(input, { target: { value: '32' } })
-    fireEvent.blur(input)
+    await editCap(input, '32')
 
     await vi.waitFor(() => expect(input).toHaveValue(64))
     expect($dataUrlReadMaxMb.get()).toBe(64)

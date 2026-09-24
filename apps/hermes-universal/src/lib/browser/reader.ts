@@ -1,7 +1,7 @@
 import { evalInGuest } from '@/lib/browser/host'
 import { $browserState } from '@/store/browser'
 import { unwrapJson } from '@/store/browser-console'
-import { $activePreviewTarget, isArtifactTab, isBrowserTab } from '@/store/preview'
+import { $previewTarget } from '@/store/preview'
 
 /**
  * The page reader behind `read_preview`.
@@ -63,10 +63,8 @@ const ARTIFACT_TAB = 'Generated artifact — its content is in the conversation 
  * booting, a just-navigated document and an eval timeout all fall through to
  * the identity answer with a `note` naming the right next step (rule 8).
  */
-export async function readActiveBrowserPage(
-  options: PreviewReadOptions = {}
-): Promise<null | PreviewReadResult> {
-  const target = $activePreviewTarget.get()
+export async function readActiveBrowserPage(options: PreviewReadOptions = {}): Promise<null | PreviewReadResult> {
+  const target = $previewTarget.get()
 
   if (!target) {
     // The one honest null: there is no preview at all, and the tool reports
@@ -74,12 +72,12 @@ export async function readActiveBrowserPage(
     return null
   }
 
-  if (isArtifactTab(target.path)) {
-    return identity('artifact', '', target.name, ARTIFACT_TAB, target.path)
+  if (target.kind === 'artifact') {
+    return identity('artifact', '', target.label, ARTIFACT_TAB, target.url)
   }
 
-  if (!isBrowserTab(target.path)) {
-    return identity('file', '', target.name, FILE_TAB, target.path)
+  if (target.kind === 'file') {
+    return identity('file', '', target.label, FILE_TAB, target.path ?? target.source)
   }
 
   const page = $browserState.get()

@@ -20,13 +20,16 @@
  *    client's transport was detached.
  */
 
-import { requestGateway } from '@/store/gateway'
-import { type ApprovalRequest, setSessionApproval } from '@/store/prompts'
-import type { PendingApprovalPayload, SessionResumeResponse } from '@/types/hermes'
+import { requestGateway } from '@/store/gateway-client'
+import { type ApprovalRequest, setSessionApproval } from '@/store/prompt-session-bridge'
+import type { PendingApprovalPayload, SessionResumeResult } from '@/types/hermes'
 
 /** The client-side request an `approval.request` payload (or its replay
  *  snapshot) describes. Both shapes come from `_approval_request_payload`. */
-export function readApprovalPayload(payload: PendingApprovalPayload): ApprovalRequest {
+export function readApprovalPayload(
+  payload: PendingApprovalPayload,
+  sessionId: string | null = null
+): ApprovalRequest {
   return {
     requestId: typeof payload.request_id === 'string' ? payload.request_id : undefined,
     command: typeof payload.command === 'string' ? payload.command : '',
@@ -36,7 +39,8 @@ export function readApprovalPayload(payload: PendingApprovalPayload): ApprovalRe
     choices: Array.isArray(payload.choices)
       ? payload.choices.filter((choice): choice is string => typeof choice === 'string')
       : undefined,
-    smartDenied: payload.smart_denied === true
+    smartDenied: payload.smart_denied === true,
+    sessionId
   }
 }
 
@@ -83,7 +87,7 @@ export async function replayPendingApproval(sessionId: string, key: string): Pro
     return false
   }
 
-  const request = readApprovalPayload(pending)
+  const request = readApprovalPayload(pending, sessionId)
 
   setSessionApproval(key, request)
 
@@ -100,14 +104,14 @@ export async function replayPendingApproval(sessionId: string, key: string): Pro
  * `applyResumedClarify` fills for clarify, and the reason
  * `_live_session_payload` reports `pending_approval` at all.
  */
-export function applyResumedApproval(key: string, resumed: Pick<SessionResumeResponse, 'pending_approval'>): boolean {
+export function applyResumedApproval(key: string, resumed: Pick<SessionResumeResult, 'pending_approval'>): boolean {
   const pending = resumed.pending_approval
 
   if (!pending || typeof pending.request_id !== 'string') {
     return false
   }
 
-  setSessionApproval(key, readApprovalPayload(pending))
+  setSessionApproval(key, readApprovalPayload(pending, key))
 
   return true
 }

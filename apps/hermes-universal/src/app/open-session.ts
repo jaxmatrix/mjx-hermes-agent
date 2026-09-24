@@ -1,54 +1,202 @@
 /**
- * ONE door for "open this session".
+ * One door for "open this session" — every surface (sidebar, ⌘K, notifications,
+ * session switcher, refs, cron/artifacts) goes through here so a chat that's
+ * already a tile (or the main tab) is JUMPED TO instead of yanked into main.
  *
- * Every surface that can name a session — the sidebar, the command palette, a
- * notification, an agent-written `@session:` chip — has to make the same three
- * decisions: is it already on screen, does it take over the main chat, and does
- * a modifier mean "beside" instead of "instead of". Answering those in each
- * caller is how the same session ends up open twice.
- *
- * Ported from desktop `app/open-session.ts`. The window intent is deliberately
- * absent: universal's satellite windows are a different mechanism, and a chip
- * click has no need of one.
+ * Intents:
+ *   - `in-place` (sidebar click / Enter) — focus existing tile/main if on
+ *     screen; else load into main (same as the left sessions sidebar).
+ *   - `stack` (⌘K, notifications — anything that opens a chat from outside the
+ *     workspace) — like `tab`, but may spend main or an open blank draft tab
+ *     when either is empty.
+ *   - `tab` (⌘/⌃-click / ⌘-Enter / session refs) — focus if already on screen,
+ *     else open as a stacked session tab (never steals main from under you).
+ *   - `window` (⇧⌘-click) — pop into its own window; falls back to `tab` when
+ *     the bridge has no session-window support.
  */
+import type { WorkspaceMode } from '@/contrib/types'
+import { $activeSessionId, $selectedStoredSessionId, markSessionRead } from '@/store/session'
+import type { SessionProfileRoute } from '@/store/session-request-router'
+import {
+  focusedSessionNeedsRoute,
+  focusedSessionWorkspaceScope,
+  focusOpenSession,
+  openSessionTile,
+  reuseBlankDraftTile,
+  setSessionTileWorkspaceScope
+} from '@/store/session-states'
+import { canOpenSessionWindow, openSessionInNewWindow } from '@/store/windows'
 
-import { openSession as loadSession } from '@/store/session'
-import { focusOpenSession, openSessionTile, reuseBlankDraftTile } from '@/store/session-states'
+import { $workspaceIsPage, sessionRoute } from './routes'
+
+export type OpenSessionIntent = 'in-place' | 'main' | 'stack' | 'tab' | 'window'
+
+export type OpenSessionNavigate = (to: string, options?: { replace?: boolean }) => void
+
+export interface OpenSessionWorkspaceScope {
+  ownerRoute?: SessionProfileRoute
+  workspaceMode: WorkspaceMode
+  workspaceOwnerKey?: string
+  workspaceTabTitle?: string
+}
 
 /**
- * - `in-place` — a click / Enter. Front it if it is already on screen,
- *   otherwise load it into the main chat.
- * - `tab` — a modifier-click or a session ref. Front it if it is on screen,
- *   otherwise open it BESIDE what is there. Never takes over the main chat.
+ * Is the main tab holding a conversation worth preserving?
+ *
+ * A loaded chat may still be mid-turn, so replacing it with something else
+ * throws away work the user can see. A blank draft has nothing to lose, which
+ * is what lets the sidebar "+" and a `stack` open take the cheaper main path
+ * instead of stacking a tab nobody asked for.
  */
-export type OpenSessionIntent = 'in-place' | 'tab'
+export function mainChatOccupied(activeSessionId: null | string, selectedStoredSessionId: null | string): boolean {
+  return Boolean(activeSessionId || selectedStoredSessionId)
+}
 
-/** Open a stored session. No-op on an empty id. */
-export function openSessionRef(storedSessionId: string, intent: OpenSessionIntent = 'in-place'): void {
-  const id = storedSessionId.trim()
+/** Read modifiers the way session rows do — meta OR ctrl for tab, +shift for
+ *  window. `base` is what an unmodified select means for the caller: the
+ *  sidebar spends main (`in-place`), a palette-style open doesn't (`stack`). */
+export function openSessionIntentFromModifiers(
+  event?: null | { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
+  base: OpenSessionIntent = 'in-place'
+): OpenSessionIntent {
+  if (!event) {
+    return base
+  }
 
-  if (!id) {
+  const mod = Boolean(event.metaKey || event.ctrlKey)
+
+  if (mod && event.shiftKey) {
+    return 'window'
+  }
+
+  if (mod) {
+    return 'tab'
+  }
+
+  return base
+}
+
+/** Every door that opens a saved chat from a picker-like surface (the /resume
+ * overlay, ⌘K session search, an artifact's "open chat") preserves the
+ * workspace of the tab the user acted from. `intent` is the caller's unmodified
+ * meaning (`in-place` for the overlay and artifacts, `stack` for ⌘K, or the
+ * ⌘/⇧⌘ modifier result); a Bot-scoped `in-place` becomes `stack` so the chat
+ * lands in the Bot tab instead of the Sessions main. */
+export function openSessionFromPicker(
+  storedSessionId: string,
+  navigate: OpenSessionNavigate,
+  intent: OpenSessionIntent = 'in-place'
+): void {
+  const workspaceScope = focusedSessionWorkspaceScope()
+  const resolved = workspaceScope.workspaceMode === 'bots' && intent === 'in-place' ? 'stack' : intent
+
+  openSession(storedSessionId, navigate, resolved, workspaceScope)
+}
+
+/**
+ * @param navigate Required for `in-place` (route into main when not on screen).
+ *   `tab` / `window` ignore it — pass a no-op when you don't have a router handle.
+ */
+export function openSession(
+  storedSessionId: string,
+  navigate: OpenSessionNavigate,
+  intent: OpenSessionIntent = 'in-place',
+  workspaceScope: OpenSessionWorkspaceScope = { workspaceMode: 'sessions' }
+): void {
+  if (!storedSessionId) {
     return
   }
 
-  // Already on screen in either sense (a tile, or loaded in main): front it.
-  // Opening it again would duplicate a conversation the user is looking at.
-  if (focusOpenSession(id)) {
-    return
-  }
+  // Any explicit open/focus means the user has seen the finished-turn marker.
+  // Must run BEFORE the focus short-circuits below: clicking a session that is
+  // already on screen (open tile, or the main session) would otherwise return
+  // at focusOpenSession and never clear its unread dot.
+  markSessionRead(storedSessionId)
+  setSessionTileWorkspaceScope(storedSessionId, workspaceScope)
+  const botWorkspaceScope = workspaceScope.workspaceMode === 'bots' ? workspaceScope : undefined
 
-  if (intent === 'tab') {
-    // Nothing to jump to, but an open tab may still be an empty "New session" —
-    // that IS the tab the user would have typed into, so spend it rather than
-    // stacking a second blank one beside it.
-    if (reuseBlankDraftTile(id)) {
+  let resolved: OpenSessionIntent = intent
+
+  if (resolved === 'window') {
+    if (canOpenSessionWindow()) {
+      void openSessionInNewWindow(storedSessionId)
+
       return
     }
 
-    openSessionTile(id, 'right')
+    // No pop-out support → treat like a new tab.
+    resolved = 'tab'
+  }
+
+  if (resolved === 'main') {
+    // Canonical relationship chats explicitly own the main workspace. Route
+    // even when the session is already open as a tile; resumeSession removes
+    // that redundant tile when the main surface binds.
+    navigate(sessionRoute(storedSessionId))
 
     return
   }
 
-  void loadSession(id)
+  // A `stack` open arrives from outside the workspace, so unlike a sidebar
+  // click it can't assume main is spendable: it behaves like `tab`, except main
+  // IS fair game while it's only a blank draft, and an already-open blank draft
+  // tab is spent before a new one is stacked.
+  let spendBlankDraft = false
+
+  if (resolved === 'stack') {
+    // A Bot-scoped picker is already inside a session tab, so its blank draft
+    // is the surface the user expects `/resume` to replace. Main may be empty
+    // or hidden behind the Bots workspace; treating that as an in-place open
+    // routes the saved chat elsewhere while leaving the visible blank tab
+    // active. Force the tab path so it first focuses an existing target, then
+    // spends the scoped blank draft before stacking a new tab.
+    spendBlankDraft =
+      Boolean(botWorkspaceScope) || mainChatOccupied($activeSessionId.get(), $selectedStoredSessionId.get())
+    resolved = spendBlankDraft ? 'tab' : 'in-place'
+  }
+
+  if (resolved === 'tab') {
+    // Already on screen? Front it. openSessionTile would no-op on main without
+    // focusing, or try to relocate an existing tile — neither is right for a
+    // soft "open beside" link.
+    const focused = focusOpenSession(storedSessionId, workspaceScope)
+
+    if (focused) {
+      if (focusedSessionNeedsRoute(focused, $workspaceIsPage.get())) {
+        navigate(sessionRoute(storedSessionId))
+      }
+
+      return
+    }
+
+    // Nothing to jump to, but an open tab may still be an empty "New session" —
+    // that's the tab the user would have typed into, so spend it rather than
+    // stacking a second blank one beside it.
+    if (
+      spendBlankDraft &&
+      (botWorkspaceScope
+        ? reuseBlankDraftTile(storedSessionId, botWorkspaceScope)
+        : reuseBlankDraftTile(storedSessionId))
+    ) {
+      return
+    }
+
+    if (botWorkspaceScope) {
+      openSessionTile(storedSessionId, 'center', undefined, undefined, botWorkspaceScope)
+    } else {
+      openSessionTile(storedSessionId, 'center')
+    }
+
+    focusOpenSession(storedSessionId, workspaceScope)
+
+    return
+  }
+
+  // Already on screen (open tile, or the main session)? Jump to its tab;
+  // otherwise load it into main. From a full page (artifacts, skills, …) a
+  // `'main'` hit still has to route back: fronting the workspace tab alone
+  // leaves the page showing.
+  if (focusedSessionNeedsRoute(focusOpenSession(storedSessionId, workspaceScope), $workspaceIsPage.get())) {
+    navigate(sessionRoute(storedSessionId))
+  }
 }

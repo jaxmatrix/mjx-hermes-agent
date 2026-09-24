@@ -1,83 +1,106 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as WindowsModule from '@/store/windows'
-
-// Same shim as use-statusbar-items.test.tsx: keep the health poller / getStatus off
-// the network while the panel renders.
-vi.mock('@/store/system-status', async () => {
-  const { atom } = await import('nanostores')
-
-  return {
-    $appVersion: atom<string | null>('1.2.3'),
-    $gatewayRestarting: atom(false),
-    $inferenceStatus: atom(null),
-    $statusSnapshot: atom(null),
-    runGatewayRestart: vi.fn()
-  }
-})
-
-// The panel's platform seam: on Android this launches the native screen Activity,
-// elsewhere it navigates in-app. Both are the same call from here. Partial — the rest
-// of the module (isSecondaryWindow &c.) is read at import time across the store graph.
-vi.mock('@/store/windows', async importOriginal => ({
-  ...(await importOriginal<typeof WindowsModule>()),
-  openAppRoute: vi.fn()
+const mocks = vi.hoisted(() => ({
+  notifyError: vi.fn(),
+  reconnectGateway: vi.fn<() => Promise<void>>()
 }))
 
-import { openAppRoute } from '@/store/windows'
+vi.mock('@/components/ui/tooltip', () => ({
+  Tip: ({ children }: { children: React.ReactNode }) => <>{children}</>
+}))
 
-import { GatewayMenuPanel, type GatewaySwitchAffordance } from './gateway-menu-panel'
+vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  getLogs: vi.fn().mockResolvedValue({ lines: [] })
+}))
 
-const renderPanel = (gatewaySwitch: GatewaySwitchAffordance, onClose = vi.fn()) => {
+vi.mock('@/i18n', () => ({
+  useI18n: () => ({
+    t: {
+      commandCenter: { restartGateway: 'Restart gateway' },
+      shell: {
+        gatewayMenu: {
+          checkingInference: 'Checking inference',
+          connected: 'Connected',
+          connecting: 'Connecting',
+          disconnected: 'Disconnected',
+          inferenceNotReady: 'Inference not ready',
+          inferenceReady: 'Inference ready',
+          messagingPlatforms: 'Messaging platforms',
+          offline: 'Offline',
+          openSystem: 'Open system panel',
+          recentActivity: 'Recent activity',
+          reconnectGateway: 'Reconnect gateway',
+          viewAllLogs: 'View all logs'
+        }
+      }
+    }
+  })
+}))
+
+vi.mock('@/store/gateway-reconnect', () => ({
+  reconnectGateway: mocks.reconnectGateway
+}))
+
+vi.mock('@/store/notifications', () => ({
+  notifyError: mocks.notifyError
+}))
+
+vi.mock('@/store/system-actions', () => ({
+  runGatewayRestart: vi.fn()
+}))
+
+import { GatewayMenuPanel } from './gateway-menu-panel'
+
+const renderPanel = (gatewayState: string) =>
   render(
-    <MemoryRouter>
-      <GatewayMenuPanel
-        gatewayState="open"
-        gatewaySwitch={gatewaySwitch}
-        inferenceStatus={null}
-        onClose={onClose}
-        onOpenSystem={vi.fn()}
-        statusSnapshot={null}
-      />
-    </MemoryRouter>
+    <GatewayMenuPanel
+      gatewayState={gatewayState}
+      inferenceStatus={null}
+      onClose={vi.fn()}
+      onOpenSystem={vi.fn()}
+      statusSnapshot={null}
+    />
   )
 
-  return { onClose }
-}
-
-beforeEach(() => {
-  vi.mocked(openAppRoute).mockClear()
-})
-
-describe('GatewayMenuPanel — gateway switch affordance', () => {
-  // The phone never mounts the Statusbar, so this popover (in the right drawer's
-  // Status list) is where "Change gateway" has to live — and the drawer is too
-  // cramped for the connect form, so it hands off to Settings ▸ Gateway.
-  it('leaves for Settings ▸ Gateway in `link` mode', () => {
-    const { onClose } = renderPanel('link')
-
-    fireEvent.click(screen.getByRole('button', { name: /change gateway/i }))
-
-    expect(openAppRoute).toHaveBeenCalledWith('/settings/gateway')
-    expect(onClose).toHaveBeenCalled()
-    // No inline form — that's the whole point of this mode.
-    expect(screen.queryByRole('button', { name: /hide gateway settings/i })).not.toBeInTheDocument()
+describe('GatewayMenuPanel reconnect action', () => {
+  beforeEach(() => {
+    mocks.reconnectGateway.mockReset().mockResolvedValue(undefined)
+    mocks.notifyError.mockReset()
   })
 
-  it('expands the inline configurator in `embedded` mode', () => {
-    renderPanel('embedded')
+  afterEach(() => cleanup())
 
-    fireEvent.click(screen.getByRole('button', { name: /change gateway/i }))
+  it('shows reconnect while disconnected and disables it in flight', async () => {
+    let finish: (() => void) | undefined
+    mocks.reconnectGateway.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
 
-    expect(openAppRoute).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: /hide gateway settings/i })).toBeInTheDocument()
+    renderPanel('closed')
+
+    const reconnect = screen.getByRole('button', { name: 'Reconnect gateway' })
+    fireEvent.click(reconnect)
+    fireEvent.click(reconnect)
+
+    expect(mocks.reconnectGateway).toHaveBeenCalledOnce()
+    expect((reconnect as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => finish?.())
   })
 
-  it('offers nothing in `none` mode', () => {
-    renderPanel('none')
+  it('allows recovery when an open socket stops delivering', async () => {
+    renderPanel('open')
+    await act(async () => undefined)
 
-    expect(screen.queryByRole('button', { name: /change gateway/i })).not.toBeInTheDocument()
+    const reconnect = screen.getByRole('button', { name: 'Reconnect gateway' })
+    await act(async () => fireEvent.click(reconnect))
+    expect(mocks.reconnectGateway).toHaveBeenCalledOnce()
   })
 })

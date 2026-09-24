@@ -31,7 +31,10 @@ vi.mock('@/store/profile', () => ({ $activeGatewayProfile: { get: () => profile.
 import type * as PlatformModule from '@/lib/platform'
 
 import { $terminalFontFamily } from './terminal-font'
-import { TERMINAL_FONT_EVENT, type TerminalFontChangedPayload } from './terminal-font-sync'
+import { initTerminalFontSync, TERMINAL_FONT_EVENT, type TerminalFontChangedPayload } from './terminal-font-sync'
+
+// `boot.ts` arms it in the app; importing the module starts nothing.
+initTerminalFontSync()
 
 /** Deliver an event the way Tauri would — to every registered listener. */
 function deliver(payload: unknown): void {

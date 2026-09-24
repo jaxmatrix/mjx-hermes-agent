@@ -4,10 +4,6 @@
 // turn-end completion cue (completion-sound.ts): this one RISES (open/ready),
 // the completion cue settles (done). Reuses the same lightweight WebAudio
 // synthesis approach — no asset file to ship.
-//
-// Ported verbatim from apps/desktop/src/lib/wake-sound.ts. Gates on the same
-// $hapticsMuted seam as universal's completion-sound.ts (@/store/haptics), so
-// muting turn-end sounds also silences this — matching desktop's behaviour.
 
 import { getAudioContext } from '@/lib/audio-context'
 import { $hapticsMuted } from '@/store/haptics'

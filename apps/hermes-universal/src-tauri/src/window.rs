@@ -1,11 +1,12 @@
 //! Native multi-window support: MJX-104 (desktop session/instance pop-outs),
 //! MJX-142 (iOS UIScene), MJX-141 (Android Activity). Opens an internal app route
 //! in a new `WebviewWindow`: a single chat session (frameless, `?win=secondary`),
-//! a full app instance, or an activity screen (Settings / Command Center,
-//! `?win=activity&screen=…`). Windows are built on the main thread (gtk/WKWebView
-//! requirement), mirroring `oauth.rs`. Rust-side creation bypasses the ACL; each
-//! new window's JS surface is scoped by the `session-*` / `instance-*` / `settings`
-//! / `command-center` capability globs in `capabilities/default.json`.
+//! a full app instance, a Browser pop-out (`?win=browser&tab=…`), or an activity
+//! screen (Settings / Command Center, `?win=activity&screen=…`). Windows are built
+//! on the main thread (gtk/WKWebView requirement), mirroring `oauth.rs`. Rust-side
+//! creation bypasses the ACL; each new window's JS surface is scoped by the
+//! `session-*` / `instance-*` / `tile-*` / `browser-*` / `settings` /
+//! `command-center` capability globs in `capabilities/default.json`.
 //!
 //! Platform model:
 //! - Desktop: real multi-window. Session/instance pop-outs open frameless windows;
@@ -93,6 +94,58 @@ pub const SATELLITE_WINDOW_CLOSED_EVENT: &str = "hermes://satellite-window-close
 pub fn is_satellite_window_label(label: &str) -> bool {
     label.starts_with("sat-")
 }
+
+/// Label prefix for a popped-out Browser window (`capabilities/default.json`
+/// scopes the JS surface with a matching `browser-*` glob).
+#[cfg(any(desktop, target_os = "ios"))]
+const BROWSER_LABEL_PREFIX: &str = "browser";
+
+/// Emitted to every window when a Browser pop-out is destroyed, carrying the
+/// `$previewTabs` id so the primary window can dock the tab again.
+///
+/// Native-side for the same reason as [`TILE_WINDOW_CLOSED_EVENT`]: a torn-down
+/// WebKitGTK view is the least reliable place to send a message from.
+pub const BROWSER_WINDOW_CLOSED_EVENT: &str = "hermes://browser-window-closed";
+
+/// Whether a destroyed window was a Browser pop-out. The label is SLUGGED
+/// (`url:browser-x` → `browser-url-browser-x`) and therefore not the tab id, so
+/// [`take_browser_tab_id`] recovers the original from the map
+/// [`open_browser_window`] wrote.
+pub fn is_browser_window_label(label: &str) -> bool {
+    label.starts_with("browser-")
+}
+
+/// label → `$previewTabs` id, so destroy can emit the tab id Electron's
+/// `hermes:browser-popout:closed` carries. Entries leave on destroy (or when a
+/// later open of the same tab replaces them).
+#[cfg(any(desktop, target_os = "ios"))]
+fn browser_tab_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    use std::sync::{Mutex, OnceLock};
+    static MAP: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Drop the label's tab id (if any) and return it for the close event.
+pub fn take_browser_tab_id(label: &str) -> Option<String> {
+    #[cfg(any(desktop, target_os = "ios"))]
+    {
+        browser_tab_map().lock().ok()?.remove(label)
+    }
+    #[cfg(not(any(desktop, target_os = "ios")))]
+    {
+        let _ = label;
+        None
+    }
+}
+
+#[cfg(any(desktop, target_os = "ios"))]
+const BROWSER_WINDOW_WIDTH: f64 = 960.0;
+#[cfg(any(desktop, target_os = "ios"))]
+const BROWSER_WINDOW_HEIGHT: f64 = 720.0;
+#[cfg(any(desktop, target_os = "ios"))]
+const BROWSER_WINDOW_MIN_WIDTH: f64 = 480.0;
+#[cfg(any(desktop, target_os = "ios"))]
+const BROWSER_WINDOW_MIN_HEIGHT: f64 = 400.0;
 
 // There is deliberately no "a full app window was destroyed" event here any more
 // (MJXHRM-437). It existed for one thing: OS hotkeys were claimed by a webview,
@@ -373,6 +426,36 @@ fn satellite_route(route: Option<&str>) -> String {
     }
 }
 
+/// Optional `profile=` query before the HashRouter `#` — session ids are scoped
+/// per profile, so a HUD opened on a non-primary conversation must adopt that
+/// backend at boot (Electron `buildHudWindowUrl` / #82285). Empty / absent → no
+/// override (legacy primary-profile boot).
+#[cfg(desktop)]
+fn satellite_profile_query(profile: Option<&str>) -> String {
+    let Some(raw) = profile.map(str::trim).filter(|s| !s.is_empty()) else {
+        return String::new();
+    };
+    // Refuse anything that could leave the query string or smuggle a second
+    // `win=` / `#`. Profile keys are short identifiers; encode the rest.
+    if raw.contains('&') || raw.contains('#') || raw.contains('?') || raw.contains('=') {
+        return String::new();
+    }
+    format!(
+        "&profile={}",
+        percent_encoding::utf8_percent_encode(raw, percent_encoding::NON_ALPHANUMERIC)
+    )
+}
+
+#[cfg(desktop)]
+fn satellite_url(surface: &str, route: Option<&str>, profile: Option<&str>) -> String {
+    format!(
+        "index.html?win={}{}{}",
+        surface,
+        satellite_profile_query(profile),
+        satellite_route(route)
+    )
+}
+
 /// Open (or re-focus) a satellite.
 ///
 /// `surface` names one of [`SATELLITES`]; anything else is refused. The caller
@@ -394,6 +477,7 @@ pub async fn open_satellite_window(
     webview: tauri::WebviewWindow,
     surface: String,
     route: Option<String>,
+    profile: Option<String>,
 ) -> Result<SatelliteWindow, String> {
     let caller = webview.label().to_string();
     if is_satellite_window_label(&caller) {
@@ -404,11 +488,7 @@ pub async fn open_satellite_window(
 
     let spec = satellite_spec(&surface).ok_or_else(|| format!("unknown surface {surface}"))?;
     let label = format!("sat-{}", spec.surface);
-    let url = format!(
-        "index.html?win={}{}",
-        spec.surface,
-        satellite_route(route.as_deref())
-    );
+    let url = satellite_url(spec.surface, route.as_deref(), profile.as_deref());
 
     // Which output the user is on, before anything touches the main thread: on
     // Hyprland this is a blocking round trip over a Unix socket, and the main
@@ -575,7 +655,11 @@ fn build_satellite(
 /// call gets a clear refusal rather than "unknown command".
 #[cfg(mobile)]
 #[tauri::command]
-pub async fn open_satellite_window(_surface: String, _route: Option<String>) -> Result<(), String> {
+pub async fn open_satellite_window(
+    _surface: String,
+    _route: Option<String>,
+    _profile: Option<String>,
+) -> Result<(), String> {
     Err("unsupported_platform".to_string())
 }
 
@@ -957,6 +1041,82 @@ pub async fn open_instance_window(app: tauri::AppHandle) -> Result<(), String> {
     open_or_focus(app, format!("instance-{n}"), "index.html".to_string()).await
 }
 
+/// Pop the in-app Browser into its own OS window / scene (Electron
+/// `hermes:window:openBrowser`). One window per tab: the label is derived from
+/// the `$previewTabs` id, so a second pop-out of the same tab focuses the
+/// window that already exists. Closing it emits [`BROWSER_WINDOW_CLOSED_EVENT`]
+/// with that same id so the primary window can dock the tab again.
+#[cfg(any(desktop, target_os = "ios"))]
+#[tauri::command]
+pub async fn open_browser_window(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    let id = tab_id.trim();
+    if !url_safe(id) {
+        return Err("unsupported tab id".to_string());
+    }
+    // `?win=browser` MUST sit in the search string before the HashRouter `#`,
+    // or the router swallows it as part of the route — same contract as
+    // Electron's `buildBrowserWindowUrl`.
+    let url = format!("index.html?win=browser&tab={id}#/");
+    let label = slug_label(BROWSER_LABEL_PREFIX, id);
+    if let Ok(mut map) = browser_tab_map().lock() {
+        map.insert(label.clone(), id.to_string());
+    }
+    open_or_focus_sized(
+        app,
+        label,
+        url,
+        BROWSER_WINDOW_WIDTH,
+        BROWSER_WINDOW_HEIGHT,
+        BROWSER_WINDOW_MIN_WIDTH,
+        BROWSER_WINDOW_MIN_HEIGHT,
+    )
+    .await
+}
+
+/// Like [`open_or_focus`], but with an explicit size — Browser pop-outs are
+/// wider than a session tile (Electron's 960×720).
+#[cfg(any(desktop, target_os = "ios"))]
+async fn open_or_focus_sized(
+    app: tauri::AppHandle,
+    label: String,
+    url: String,
+    width: f64,
+    height: f64,
+    min_width: f64,
+    min_height: f64,
+) -> Result<(), String> {
+    let (tx, rx) = oneshot::channel::<Result<(), String>>();
+    let app_main = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(existing) = app_main.get_webview_window(&label) {
+            #[cfg(desktop)]
+            let _ = existing.unminimize();
+            let _ = existing.show();
+            let _ = existing.set_focus();
+            let _ = tx.send(Ok(()));
+            return;
+        }
+        #[allow(unused_mut)]
+        let mut builder = WebviewWindowBuilder::new(&app_main, &label, WebviewUrl::App(url.into()))
+            .title("Hermes (MJX)")
+            .inner_size(width, height)
+            .min_inner_size(min_width, min_height);
+        #[cfg(desktop)]
+        {
+            builder = builder.decorations(false);
+            builder = builder.transparent(cfg!(any(target_os = "macos", target_os = "windows")));
+        }
+        let build = builder.build();
+        let _ = tx.send(
+            build
+                .map(|_| ())
+                .map_err(|e| format!("could not open window: {e}")),
+        );
+    })
+    .map_err(|e| format!("failed to schedule window: {e}"))?;
+    rx.await.map_err(|_| "failed to open window".to_string())?
+}
+
 // Android: session/instance pop-outs are not wired yet (needs Activity scaffolding,
 // MJX-141). The frontend gates the affordance off on Android; these stubs keep the
 // command names registered so a stray call returns a clear error.
@@ -984,6 +1144,12 @@ pub async fn open_tile_window(
     _session_id: Option<String>,
     _watch: Option<bool>,
 ) -> Result<String, String> {
+    Err("unsupported_platform".to_string())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn open_browser_window(_app: tauri::AppHandle, _tab_id: String) -> Result<(), String> {
     Err("unsupported_platform".to_string())
 }
 
@@ -1577,6 +1743,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn satellite_url_carries_profile_before_the_hash() {
+        assert_eq!(
+            satellite_url("hud", Some("/sess-1"), Some("work")),
+            "index.html?win=hud&profile=work#/sess-1"
+        );
+        assert_eq!(
+            satellite_url("hud", Some("/abc"), None),
+            "index.html?win=hud#/abc"
+        );
+        assert_eq!(
+            satellite_url("hud", Some("/abc"), Some("  ")),
+            "index.html?win=hud#/abc"
+        );
+        // Smuggled query/hash refuse rather than reach the URL.
+        assert_eq!(
+            satellite_url("hud", Some("/abc"), Some("a&win=main")),
+            "index.html?win=hud#/abc"
+        );
+    }
+
     /// The label a satellite is built under. `sat-*` is the capability glob in
     /// `capabilities/default.json` and the namespace `surface/mod.rs` keys
     /// ownership on; a registry entry that fell outside it would open a window
@@ -1612,8 +1799,36 @@ mod tests {
             "a detached tile is not the app"
         );
 
+        assert_eq!(
+            window_to_reveal(&["browser-url-browser-abc".to_string()]),
+            None,
+            "a Browser pop-out is not the app"
+        );
+
         // Nothing left at all: the caller builds `main` instead.
         assert_eq!(window_to_reveal(&[]), None);
+    }
+
+    /// A Browser pop-out's label is slugged, so destroy has to recover the
+    /// original `$previewTabs` id from the map `open_browser_window` wrote —
+    /// emitting the label would dock nothing.
+    #[test]
+    fn a_browser_popout_label_round_trips_its_tab_id() {
+        assert!(is_browser_window_label("browser-url-browser-abc"));
+        assert!(!is_browser_window_label("tile-url-browser-abc"));
+        assert!(!is_browser_window_label("sat-browser"));
+
+        let label = "browser-url-browser-abc";
+        browser_tab_map()
+            .lock()
+            .expect("map")
+            .insert(label.to_string(), "url:browser-abc".to_string());
+
+        assert_eq!(
+            take_browser_tab_id(label).as_deref(),
+            Some("url:browser-abc")
+        );
+        assert_eq!(take_browser_tab_id(label), None, "a second take is empty");
     }
 
     /// `main` is the window the user thinks of as Hermes, so it wins over any

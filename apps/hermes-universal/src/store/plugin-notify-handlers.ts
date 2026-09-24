@@ -97,6 +97,9 @@ export function invokePluginNotifyAction(
 interface NotifyExtra {
   notifyId?: unknown
   activate?: unknown
+  /** A button's own target, by action id (`lib/hermes-desktop/notifications`).
+   *  Desktop's rule: a button that names one goes there, not to the body's. */
+  actionActivate?: unknown
 }
 
 const asId = (value: unknown): null | string => (typeof value === 'string' && value ? value : null)
@@ -120,7 +123,8 @@ export function handleNotificationActivation(payload: Options & { actionId?: str
   // happened in a different process's memory. `navigateDeepLinkPath` then
   // applies the same route guard a `hermes://` link gets, so an activation can
   // never reach a path a deep link could not.
-  const activate = asId(extra.activate)
+  const own = actionId && extra.actionActivate && typeof extra.actionActivate === 'object' ? extra.actionActivate : {}
+  const activate = asId((own as Record<string, unknown>)[actionId ?? '']) ?? asId(extra.activate)
 
   if (activate) {
     const path = resolveHermesOpenPath(activate)

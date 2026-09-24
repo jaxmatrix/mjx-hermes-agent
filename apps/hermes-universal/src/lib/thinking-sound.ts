@@ -1,34 +1,27 @@
-// Ambient "thinking" sound for a voice conversation. While the agent works
-// (status === 'thinking') no audio flows at all, which — hands-free, not looking
-// at the screen — reads as "it died" through a long tool stretch. A calm, quiet,
-// repeating pair of soft bubble blips fills that dead air.
+// Ambient "thinking" sound for the desktop voice conversation. While the agent
+// works (status === 'thinking') no audio flows, which reads as "it died" during
+// long thinking/tool stretches. A calm, quiet, repeating pair of soft bubble
+// blips fills the gap — same WebAudio oscillator synthesis approach as
+// wake-sound.ts / completion-sound.ts (no asset to ship), mirroring the
+// backend's numpy-synthesized blips in tools/voice_mode.py so CLI and desktop
+// sound alike.
 //
-// Ported from apps/desktop/src/lib/thinking-sound.ts. Same WebAudio oscillator
-// synthesis as universal's wake-sound.ts / completion-sound.ts (no asset to
-// ship), and the same two gates: the shared sound mute ($hapticsMuted) and the
-// backend's own `voice.thinking_sound` config key ($thinkingSoundEnabled,
-// default true — hermes_cli/config_defaults.py:1624). The pitches match the
-// backend's numpy-synthesized blips in tools/voice_mode.py so the CLI, desktop
-// and universal all sound alike.
-//
-// WHO DRIVES IT — universal's voice loop is a module-level actor, not a React
-// effect (MJX-96), so the driver is `syncThinkingSound`, subscribed to
-// `$voiceConversation` by the conversation controller. Desktop's equivalent is a
-// `useEffect` in its composer hook; here a re-render is not a state transition
-// and must not be one, or a conversation that blips forever is one missed render
-// away.
+// Honours the shared sound-mute toggle ($hapticsMuted) and the
+// voice.thinking_sound config gate ($thinkingSoundEnabled). Stops instantly on
+// stopThinkingSound() — callers fire it the moment TTS starts, the mic re-arms,
+// or the conversation ends.
 
 import { getAudioContext } from '@/lib/audio-context'
 import { $hapticsMuted } from '@/store/haptics'
 import type { VoiceConversationState } from '@/store/voice-conversation'
 import { $thinkingSoundEnabled } from '@/store/voice-prefs'
 
-let timer: null | number = null
+let timer: number | null = null
 let blipIndex = 0
 
-// One soft "blub": a short sine with a gentle downward pitch glide and a smooth
+// One soft "blub": short sine with a gentle downward pitch glide and a smooth
 // attack into an exponential decay — no clicks, deliberately quiet.
-function blub(ac: AudioContext, freq: number): void {
+function blub(ac: AudioContext, freq: number) {
   const t0 = ac.currentTime + 0.01
   const dur = 0.16
   const osc = ac.createOscillator()
@@ -59,9 +52,7 @@ export function startThinkingSound(): void {
   }
 
   const tick = () => {
-    // Re-read the mute on every blip rather than latching it at start: muting
-    // mid-turn has to take effect on the next blip, not the next conversation.
-    if (!$hapticsMuted.get()) {
+    if ($hapticsMuted.get() === false) {
       const ac = getAudioContext()
 
       if (ac) {
@@ -75,11 +66,20 @@ export function startThinkingSound(): void {
     }
 
     blipIndex += 1
-    // ~0.8–1.2 s spacing with slight randomization so it reads organic.
+    // ~0.8-1.2s spacing with slight randomization so it reads organic.
     timer = window.setTimeout(tick, 800 + Math.random() * 400)
   }
 
   timer = window.setTimeout(tick, 400)
+}
+
+/** Keep thinking blips aligned with the voice-conversation status atom. */
+export function syncThinkingSound(state: VoiceConversationState): void {
+  if (state.status === 'thinking') {
+    startThinkingSound()
+  } else {
+    stopThinkingSound()
+  }
 }
 
 /** Stop the thinking blips instantly (idempotent). */
@@ -88,27 +88,4 @@ export function stopThinkingSound(): void {
     window.clearTimeout(timer)
     timer = null
   }
-}
-
-/**
- * The single decision: blips play only while a conversation this app owns is
- * actually waiting on the agent.
- *
- * Every other status stops them — `speaking` (the reply itself is the audio),
- * `listening`/`transcribing` (the mic is live and blips would be captured as
- * speech), and `idle`/inactive (the conversation ended). Muting the conversation
- * stops them too: a muted conversation is one the user has stepped away from.
- *
- * Expressed as one pure-ish function of the whole state so there is no
- * transition to forget — the failure mode of a per-call-site stop is blips that
- * outlive the conversation, and nothing on screen explains them.
- */
-export function syncThinkingSound(state: VoiceConversationState): void {
-  if (state.active && !state.muted && state.status === 'thinking') {
-    startThinkingSound()
-
-    return
-  }
-
-  stopThinkingSound()
 }

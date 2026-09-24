@@ -1,12 +1,19 @@
 import { atom } from 'nanostores'
 
-import { Codecs, persistentAtom } from '@/lib/persisted'
+import { persistBoolean, storedBoolean } from '@/lib/storage'
+import { modeBound } from '@/store/interface-mode'
 
-const TAKEOVER_KEY = 'hermes.terminalTakeover'
+const TAKEOVER_KEY = 'hermes.desktop.terminalTakeover'
 
-// Seam: desktop pairs a plain atom with storedBoolean/persistBoolean from
-// @/lib/storage; universal's persistentAtom does both in one.
-export const $terminalTakeover = persistentAtom(TAKEOVER_KEY, false, Codecs.bool)
+// Simple mode rests the terminal closed without touching this preference; ⌃`
+// still brings it up for the session.
+const $terminalTakeoverPref = atom(storedBoolean(TAKEOVER_KEY, false))
+
+$terminalTakeoverPref.subscribe(active => persistBoolean(TAKEOVER_KEY, active))
+
+export const $terminalTakeover = modeBound('terminalOpen', $terminalTakeoverPref, active =>
+  $terminalTakeoverPref.set(active)
+)
 
 export const setTerminalTakeover = (active: boolean) => $terminalTakeover.set(active)
 

@@ -24,7 +24,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   confirm,
   holdKeepAwake,
-  host: {
+  universalHost: {
     activeConnectionId: () => 'local',
     agents: vi.fn(async () => ({ agents: [], sources: [] })),
     connections: vi.fn(async () => []),

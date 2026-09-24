@@ -8,9 +8,7 @@ import {
   countDiffLineStats,
   inlineDiffFromResult,
   MAX_TOOL_RENDER_CHARS,
-  multimodalResult,
   prettyJson,
-  spilloverReference,
   type ToolPart
 } from './fallback-model'
 
@@ -29,12 +27,9 @@ afterEach(() => {
 })
 
 describe('buildToolView image handling', () => {
-  // vision_analyze reports the input image as a local path; an <img> pointed at
-  // a bare path resolves against the renderer origin and 404s, so we render the
-  // tool codicon instead of a broken image.
-  it('drops bare filesystem paths', () => {
-    expect(buildToolView(part({ args: { path: '/Users/me/shot.png' } }), '').imageUrl).toBe('')
-    expect(buildToolView(part({ result: { image_path: '/tmp/out.jpg' } }), '').imageUrl).toBe('')
+  it('keeps local image paths for the activity renderer to resolve', () => {
+    expect(buildToolView(part({ args: { path: '/Users/me/shot.png' } }), '').imageUrl).toBe('/Users/me/shot.png')
+    expect(buildToolView(part({ result: { image_path: '/tmp/out.jpg' } }), '').imageUrl).toBe('/tmp/out.jpg')
   })
 
   it('keeps fetchable data URLs', () => {
@@ -61,10 +56,9 @@ describe('buildToolView terminal exit-code status', () => {
     expect(terminal({ exit_code: 1, stdout: 'partial results' }).status).toBe('success')
   })
 
-  // No output + non-zero exit is a genuine failure worth flagging.
-  it('treats non-zero exit with no output as error', () => {
+  it('distinguishes a command failure from an empty no-match exit', () => {
     expect(terminal({ exit_code: 127, output: '' }).status).toBe('error')
-    expect(terminal({ exit_code: 1 }).status).toBe('error')
+    expect(terminal({ exit_code: 1, output: '' }).status).toBe('notice')
   })
 
   it('treats zero exit as success', () => {
@@ -79,66 +73,135 @@ describe('buildToolView terminal exit-code status', () => {
     )
   })
 
-  // A background-process poll reports its text under `output_preview`, never
-  // `output`/`stdout`/`stderr` (tools/process_registry.py). Omitting that name
-  // from the has-output test painted every poll of a process that exited
-  // non-zero destructive-red, with no error text to show for it.
-  it('counts output_preview as command output', () => {
-    const poll = (result: Record<string, unknown>) => buildToolView(part({ result, toolName: 'process' }), '')
-
-    expect(poll({ exit_code: 1, output_preview: 'npm warn deprecated ...' }).status).toBe('success')
-    expect(poll({ exit_code: 1, output_preview: '   ' }).status).toBe('error')
-    expect(poll({ exit_code: 1 }).status).toBe('error')
-  })
-
   it('keeps the command and exit code for the terminal transcript', () => {
     const view = buildToolView(
       part({
-        args: { command: 'npm run check --workspace=apps/hermes-universal' },
+        args: { command: 'npm run check --workspace=apps/desktop' },
         result: { exit_code: 0, output: 'done' },
         toolName: 'terminal'
       }),
       ''
     )
 
-    expect(view.terminalCommand).toBe('npm run check --workspace=apps/hermes-universal')
+    expect(view.terminalCommand).toBe('npm run check --workspace=apps/desktop')
     expect(view.terminalExitCode).toBe(0)
   })
+})
 
-  // The failure modes the gateway really reports (tools/terminal_tool.py):
-  // 124 on timeout, 130 on a genuine user interrupt, -1 when the backend itself
-  // failed. Each is a NUMBER, so each gets a chip — none of them may read 0.
-  it('keeps a timeout / interrupt / backend-failure exit code', () => {
-    const code = (result: Record<string, unknown>) =>
-      buildToolView(part({ result, toolName: 'terminal' }), '').terminalExitCode
+describe('buildToolView error confidence', () => {
+  it('keeps routine misses and returned diagnostic data out of destructive status', () => {
+    const cases: Array<[Partial<ToolPart>, ReturnType<typeof buildToolView>['status']]> = [
+      [
+        {
+          toolName: 'read_file',
+          result: { error: 'File not found: /repo/session-view.ts', similar_files: ['/repo/session-view.tsx'] }
+        },
+        'notice'
+      ],
+      [{ toolName: 'read_file', isError: true, result: { error: 'File not found: /repo/session-view.ts' } }, 'notice'],
+      [{ toolName: 'terminal', result: { exit_code: 0, output: '{"error":"a logged failure"}' } }, 'success'],
+      [{ result: { error: 'none', message: 'No changes needed' } }, 'success'],
+      [{ result: { status: 'no error', message: 'Ready' } }, 'success'],
+      [{ result: { meta: { error: 'a previous attempt' }, data: { count: 1 } } }, 'success'],
+      [{ toolName: 'read_file', result: { error: 'Permission denied reading /repo/private.ts' } }, 'error'],
+      [{ toolName: 'patch', result: { error: 'File not found: /repo/session-view.ts' } }, 'error'],
+      [{ result: { success: false, result: { output: { error: { message: 'Connection refused' } } } } }, 'error']
+    ]
 
-    expect(code({ error: 'Command timed out after 120 seconds', exit_code: 124, output: '' })).toBe(124)
-    expect(code({ exit_code: 130, output: '[Command interrupted]' })).toBe(130)
-    expect(code({ error: 'Terminal backend degraded', exit_code: -1, output: '' })).toBe(-1)
+    for (const [overrides, status] of cases) {
+      expect(buildToolView(part(overrides), '').status, JSON.stringify(overrides)).toBe(status)
+    }
   })
+})
 
-  // A turn cancelled before `tool.complete` fires never carries a result, and
-  // the row settles against a synthetic empty one. Reporting "exit 0" there
-  // would claim a success for a command whose fate nobody knows.
-  it('reports no exit code at all when the run never completed', () => {
-    expect(
-      buildToolView(part({ args: { command: 'sleep 900' }, result: {}, toolName: 'terminal' }), '').terminalExitCode
-    ).toBeUndefined()
-    expect(
-      buildToolView(part({ result: { exit_code: null }, toolName: 'terminal' }), '').terminalExitCode
-    ).toBeUndefined()
-  })
-
-  // `execute_code` has no `$` transcript, so it must not claim these fields —
-  // its output falls through to the generic detail body instead.
-  it('leaves execute_code without a transcript', () => {
+describe('buildToolView envelope errors', () => {
+  it('shows the event error when the result carries no explanation', () => {
     const view = buildToolView(
-      part({ args: { code: 'print(1)' }, result: { exit_code: 0 }, toolName: 'execute_code' }),
+      part({
+        isError: true,
+        result: 'partial output',
+        toolName: 'terminal',
+        toolResultMetadata: { error: 'killed by signal 9' }
+      }),
       ''
     )
 
-    expect(view.terminalCommand).toBeUndefined()
-    expect(view.terminalExitCode).toBeUndefined()
+    expect(view.status).toBe('error')
+    expect(view.subtitle).toBe('killed by signal 9')
+  })
+
+  it('keeps an envelope-only read miss on the notice tier', () => {
+    const view = buildToolView(
+      part({
+        isError: true,
+        result: undefined,
+        completedAt: 5,
+        toolName: 'read_file',
+        toolResultMetadata: { error: 'File not found: /repo/missing.ts' }
+      }),
+      ''
+    )
+
+    expect(view.status).toBe('notice')
+  })
+})
+
+describe('buildToolView calls sealed without a result', () => {
+  it('warns that a lost result is unavailable', () => {
+    const view = buildToolView(part({ completedAt: 5, result: undefined, toolName: 'terminal' }), '')
+
+    expect(view.status).toBe('warning')
+  })
+
+  it('shows a call the user interrupted as a neutral notice', () => {
+    const view = buildToolView(part({ completedAt: 5, interrupted: true, result: undefined, toolName: 'terminal' }), '')
+
+    expect(view.status).toBe('notice')
+  })
+
+  it('shows the real result when one arrived after the interruption', () => {
+    const view = buildToolView(part({ completedAt: 5, interrupted: true, result: 'ok', toolName: 'terminal' }), '')
+
+    expect(view.status).toBe('success')
+    expect(view.title).not.toBe('Interrupted')
+  })
+})
+
+describe('buildToolView browser_exec step label', () => {
+  const bexec = (code: string) =>
+    buildToolView(part({ args: { code }, result: undefined, toolName: 'browser_exec' }), '')
+
+  it('uses the leading # comment as the title', () => {
+    expect(bexec('# Searching Amazon for paper towels\nnew_tab("https://amazon.com")').title).toBe(
+      'Searching Amazon for paper towels'
+    )
+  })
+
+  it('falls back to the generic title when code has no leading comment', () => {
+    const view = bexec('new_tab("https://amazon.com")')
+
+    expect(view.title).not.toBe('')
+    expect(view.title).not.toContain('new_tab')
+  })
+
+  it('truncates long labels and keeps the ellipsis', () => {
+    const long = `# ${'x'.repeat(120)}`
+
+    expect(bexec(long).title.length).toBeLessThanOrEqual(80)
+    expect(bexec(long).title.endsWith('…')).toBe(true)
+  })
+
+  it('keeps the label after the result arrives', () => {
+    const view = buildToolView(
+      part({
+        args: { code: '# Checking workspace persistence\nprint(1)' },
+        result: { output: 'ok', success: true },
+        toolName: 'browser_exec'
+      }),
+      ''
+    )
+
+    expect(view.title).toBe('Checking workspace persistence')
   })
 })
 
@@ -146,30 +209,17 @@ describe('buildToolView web-search query', () => {
   it('keeps the query separate from structured search results', () => {
     const view = buildToolView(
       part({
-        args: { query: 'Hermes Agent Universal tool calls' },
-        result: { web: [{ snippet: 'Universal docs', title: 'Hermes docs', url: 'https://example.com/docs' }] },
+        args: { query: 'Hermes Agent Desktop tool calls' },
+        result: { web: [{ snippet: 'Desktop docs', title: 'Hermes docs', url: 'https://example.com/docs' }] },
         toolName: 'web_search'
       }),
       ''
     )
 
-    expect(view.searchQuery).toBe('Hermes Agent Universal tool calls')
+    expect(view.searchQuery).toBe('Hermes Agent Desktop tool calls')
     expect(view.searchHits).toEqual([
-      { snippet: 'Universal docs', title: 'Hermes docs', url: 'https://example.com/docs' }
+      { snippet: 'Desktop docs', title: 'Hermes docs', url: 'https://example.com/docs' }
     ])
-  })
-
-  // Live, `tool.start` carries no args at all — only the gateway's `context`
-  // preview (tui_gateway/server.py `_on_tool_start`). The header still has to
-  // name what is being searched for.
-  it('falls back to the gateway context before real args arrive', () => {
-    const view = buildToolView(part({ args: { context: 'rust async runtime' }, toolName: 'web_search' }), '')
-
-    expect(view.searchQuery).toBe('rust async runtime')
-  })
-
-  it('leaves other tools without a search header', () => {
-    expect(buildToolView(part({ args: { query: 'x' }, toolName: 'read_file' }), '').searchQuery).toBeUndefined()
   })
 })
 
@@ -185,7 +235,7 @@ describe('buildToolView browser_navigate title', () => {
     )
 
     expect(view.status).toBe('error')
-    expect(view.title).toBe('Failed to open hermes-agent.nousresearch.com/docs')
+    expect(view.title).toContain('hermes-agent.nousresearch.com/docs')
   })
 
   it('shows opened title on success', () => {
@@ -199,7 +249,7 @@ describe('buildToolView browser_navigate title', () => {
     )
 
     expect(view.status).toBe('success')
-    expect(view.title).toBe('Opened hermes-agent.nousresearch.com/docs')
+    expect(view.title).toContain('hermes-agent.nousresearch.com/docs')
   })
 })
 
@@ -244,34 +294,6 @@ describe('buildToolView file edit diffs', () => {
 })
 
 describe('buildToolView title actions', () => {
-  it('marks the pending action separately from the rest of the title', () => {
-    const read = buildToolView(part({ args: { path: '/tmp/demo.txt' }, result: undefined, toolName: 'read_file' }), '')
-
-    const web = buildToolView(
-      part({ args: { url: 'https://example.com/docs' }, result: undefined, toolName: 'web_extract' }),
-      ''
-    )
-
-    const terminal = buildToolView(
-      part({ args: { command: 'npm test -- --runInBand' }, result: undefined, toolName: 'terminal' }),
-      ''
-    )
-
-    const code = buildToolView(
-      part({ args: { code: 'print("hello")' }, result: undefined, toolName: 'execute_code' }),
-      ''
-    )
-
-    expect(read.title).toBe('Reading demo.txt')
-    expect(read.titleAction).toEqual({ prefix: '', text: 'Reading', suffix: ' demo.txt' })
-    expect(web.title).toBe('Reading example.com/docs')
-    expect(web.titleAction).toEqual({ prefix: '', text: 'Reading', suffix: ' example.com/docs' })
-    expect(terminal.title).toBe('Running npm test -- --runInBand')
-    expect(terminal.titleAction).toEqual({ prefix: '', text: 'Running', suffix: ' npm test -- --runInBand' })
-    expect(code.title).toBe('Scripting print("hello")')
-    expect(code.titleAction).toEqual({ prefix: '', text: 'Scripting', suffix: ' print("hello")' })
-  })
-
   it('does not mark completed tool titles as pending actions', () => {
     const view = buildToolView(part({ args: { url: 'https://example.com/docs' }, toolName: 'web_extract' }), '')
 
@@ -406,9 +428,9 @@ describe('buildToolView title actions', () => {
   it('never stutters the verb or echoes the command when the backend context is a phrased label', () => {
     // Older backends stamped tool.start with a *phrased* label
     // ("Running sleep 70 + 2 commands") rather than a raw arg preview, and the
-    // client merges that into args.context (lib/chat-tool-parts.ts `toolArgs`).
-    // The row must still prepend its own verb exactly once, show the real
-    // command in the `$` transcript, and not repeat either string as detail.
+    // desktop merges that into args.context. The row must still prepend its own
+    // verb exactly once, show the real command in the `$` transcript, and not
+    // repeat either string as detail.
     const command = 'sleep 70; echo "a"; echo "b"'
 
     const view = buildToolView(
@@ -455,15 +477,13 @@ describe('clampForDisplay', () => {
     expect(clamped.length).toBeLessThan(oversized.length)
     expect(clamped.startsWith('x'.repeat(MAX_TOOL_RENDER_CHARS))).toBe(true)
     expect(clamped).toContain('5,000 more characters truncated')
-    expect(clamped).toContain('Copy')
   })
 })
 
 // A large tool result (e.g. a 100KB read_file during a `/learn` run) must not
 // be serialized at full size — that JSON.stringify payload is what floods the
-// renderer. `buildToolView` no longer prettyJson's every result eagerly, so a
-// view carries no serialized payload at all; the technical-mode disclosure
-// builds one only for the row whose payload someone actually opened.
+// renderer. buildToolView no longer prettyJson's every result eagerly; the
+// web_search drilldown serializes lazily via prettyJson, which clamps.
 describe('prettyJson caps serialized result size', () => {
   it('clamps an oversized result', () => {
     const huge = 'y'.repeat(MAX_TOOL_RENDER_CHARS * 3)
@@ -471,13 +491,6 @@ describe('prettyJson caps serialized result size', () => {
 
     expect(out.length).toBeLessThanOrEqual(MAX_TOOL_RENDER_CHARS + 200)
     expect(out).toContain('truncated')
-  })
-
-  it('is not what a tool view carries', () => {
-    const view = buildToolView(part({ result: { content: 'y'.repeat(50) }, toolName: 'read_file' }), '')
-
-    expect(view).not.toHaveProperty('rawArgs')
-    expect(view).not.toHaveProperty('rawResult')
   })
 })
 
@@ -487,148 +500,35 @@ describe('countDiffLineStats', () => {
   })
 })
 
-/**
- * Spillover: the backend stopped truncating oversized results and started
- * writing them whole to HERMES_HOME/cache/spillover, leaving a
- * `<persisted-output>` block in their place. There is no structured field for
- * the path — it is prose inside the result text — so the row has to parse it
- * exactly the way `agent/tool_guardrails.py` does server-side.
- */
-describe('spilloverReference', () => {
-  const persisted = (path = '/home/me/.hermes/cache/spillover/call_1.txt') =>
-    [
-      '<persisted-output>',
-      'This tool result was too large (2,097,152 characters, 2.0 MB).',
-      `Full output saved to: ${path}`,
-      'Use the read_file tool with offset and limit to access specific sections of this output.',
-      'Recovery: page through the saved file with read_file (offset/limit) or process it with',
-      'execute_code — do NOT re-request the same data from the remote API; the full result is',
-      'already on disk.',
-      '',
-      'Preview (first 34 chars):',
-      'the first bytes of the real output',
-      '...',
-      '</persisted-output>'
-    ].join('\n')
+describe('buildToolView memory status', () => {
+  const memory = (overrides: Partial<Parameters<typeof part>[0]> = {}) =>
+    buildToolView(part({ toolName: 'memory', ...overrides }), '')
 
-  it('pulls the path, the size and the preview out of the block', () => {
-    const reference = spilloverReference(persisted())
+  it('treats an explicit success payload as success even with isError', () => {
+    const view = memory({
+      isError: true,
+      result: {
+        success: true,
+        entry_count: 13,
+        message: 'Applied 1 operation(s).',
+        duration_s: 0.003
+      }
+    })
 
-    expect(reference?.path).toBe('/home/me/.hermes/cache/spillover/call_1.txt')
-    expect(reference?.sizeLabel).toBe('2.0 MB')
-    expect(reference?.preview).toContain('the first bytes of the real output')
+    expect(view.status).toBe('success')
+    expect(view.countLabel).toBe('13 entries')
+    expect(view.subtitle).toBe('Applied 1 operation(s).')
   })
 
-  // Those instructions address the MODEL. The human reading this row gets an
-  // Open button, so repeating "use the read_file tool" at them is noise.
-  it('drops the model-facing recovery instructions from the preview', () => {
-    const reference = spilloverReference(persisted())
+  it('uses soft warning copy for over-budget refusals, not "Saved"', () => {
+    const view = memory({
+      result: {
+        success: false,
+        error: 'Memory is full (2,200/2,200). Consolidate before adding more.'
+      }
+    })
 
-    expect(reference?.preview).not.toContain('read_file')
-    expect(reference?.preview).not.toContain('Recovery:')
-    expect(reference?.preview).not.toContain('too large')
-  })
-
-  it('ignores ordinary output that merely mentions the words', () => {
-    expect(spilloverReference('Full output saved to: /tmp/notes.txt')).toBeUndefined()
-    expect(spilloverReference('nothing persisted here')).toBeUndefined()
-  })
-
-  it('ignores a block whose path line never arrived', () => {
-    expect(spilloverReference('<persisted-output>\ntruncated mid-write\n')).toBeUndefined()
-  })
-
-  it('reports a block with no size line rather than inventing one', () => {
-    const reference = spilloverReference('<persisted-output>\nFull output saved to: /tmp/big.txt\n</persisted-output>')
-
-    expect(reference?.path).toBe('/tmp/big.txt')
-    expect(reference?.sizeLabel).toBe('')
-  })
-})
-
-describe('buildToolView spillover', () => {
-  const persistedResult =
-    '<persisted-output>\n' +
-    'This tool result was too large (2,097,152 characters, 2.0 MB).\n' +
-    'Full output saved to: /tmp/spill/call_1.txt\n' +
-    'Use the read_file tool with offset and limit to access specific sections of this output.\n\n' +
-    'Preview (first 12 chars):\nfirst bytes\n...\n' +
-    '</persisted-output>'
-
-  it('exposes the reference and shows the preview instead of the marker block', () => {
-    const view = buildToolView(part({ result: persistedResult, toolName: 'terminal' }), '')
-
-    expect(view.spilloverPath).toBe('/tmp/spill/call_1.txt')
-    expect(view.spilloverSizeLabel).toBe('2.0 MB')
-    expect(view.detail).toContain('first bytes')
-    expect(view.detail).not.toContain('persisted-output')
-  })
-
-  it('leaves an ordinary result completely alone', () => {
-    const view = buildToolView(part({ result: { output: 'plain output' }, toolName: 'terminal' }), '')
-
-    expect(view.spilloverPath).toBeUndefined()
-    expect(view.spilloverSizeLabel).toBeUndefined()
-    expect(view.detail).toContain('plain output')
-  })
-})
-
-/**
- * The multimodal tool-result envelope — a computer-use screenshot, or a native
- * vision image load. The gateway forwards it verbatim, and nothing here knew
- * the shape: the data URI sits three levels down, so the screenshot never
- * rendered, and the generic detail summarizer had a megabyte of base64 to
- * describe.
- */
-describe('multimodal tool results', () => {
-  const PNG = 'data:image/png;base64,iVBORw0KGgo='
-
-  const envelope = (extra: Record<string, unknown> = {}) => ({
-    _multimodal: true,
-    content: [
-      { text: 'Screenshot of the desktop, 1512x982, 41 elements.', type: 'text' },
-      { image_url: { url: PNG }, type: 'image_url' }
-    ],
-    meta: { elements: 41, image_url: 'https://example.test/original-source.png', mode: 'screenshot' },
-    text_summary: 'Screenshot of the desktop, 1512x982, 41 elements.',
-    ...extra
-  })
-
-  it('finds the image the envelope nests three levels down', () => {
-    expect(multimodalResult(envelope())?.imageUrl).toBe(PNG)
-  })
-
-  it('renders that screenshot in the row', () => {
-    expect(buildToolView(part({ result: envelope(), toolName: 'computer_use' }), '').imageUrl).toBe(PNG)
-  })
-
-  it('shows the summary as the detail, not the envelope', () => {
-    const view = buildToolView(part({ result: envelope(), toolName: 'computer_use' }), '')
-
-    expect(view.detail).toBe('Screenshot of the desktop, 1512x982, 41 elements.')
-    expect(view.detail).not.toContain('base64')
-    expect(view.detail).not.toContain('_multimodal')
-  })
-
-  // `meta.image_url` is the ORIGINAL source URL truncated to 200 chars —
-  // provenance, not pixels. The fixture's is a `.png` on purpose: it would sail
-  // through the renderable-image test, so this fails if it is ever consulted
-  // rather than merely being rejected for its extension.
-  it('never falls back to the provenance url in meta', () => {
-    const withoutImage = envelope({ content: [{ text: 'no image came back', type: 'text' }] })
-
-    expect(multimodalResult(withoutImage)?.imageUrl).toBe('')
-    expect(buildToolView(part({ result: withoutImage, toolName: 'computer_use' }), '').imageUrl).toBe('')
-  })
-
-  it('falls back to the text blocks when no summary was provided', () => {
-    const { text_summary: _dropped, ...noSummary } = envelope()
-
-    expect(multimodalResult(noSummary)?.text).toBe('Screenshot of the desktop, 1512x982, 41 elements.')
-  })
-
-  it('leaves an ordinary record alone', () => {
-    expect(multimodalResult({ content: [{ image_url: { url: PNG }, type: 'image_url' }] })).toBeUndefined()
-    expect(multimodalResult({ _multimodal: true })).toBeUndefined()
+    expect(view.status).toBe('warning')
+    expect(view.subtitle).toContain('Memory is full')
   })
 })

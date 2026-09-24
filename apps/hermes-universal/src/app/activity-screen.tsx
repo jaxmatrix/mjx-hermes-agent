@@ -1,13 +1,13 @@
 import { useCallback } from 'react'
 
-import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
-import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
 import { MobileSurfaceShell } from '@/app/shell/mobile-surface-shell'
 import { SidebarProvider } from '@/app/shell/sidebar'
 import { NotificationStack } from '@/components/notifications'
+import { DesktopOnboardingOverlay } from '@/components/onboarding'
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
 import { useStore } from '@/store/atom'
-import { $onboardingActive } from '@/store/onboarding'
+import { requestGateway } from '@/store/gateway-client'
+import { $activeGatewayProfile } from '@/store/profile'
 import { returnHome } from '@/store/windows'
 
 // Native activity-screen root (MJX-141). On Android, the windowable surfaces
@@ -27,8 +27,8 @@ import { returnHome } from '@/store/windows'
 export function ActivityScreenRoot() {
   // Publishes the visual-viewport vars `html.is-mobile #root` is sized from
   // (styles.css). Mounted HERE rather than left to `MobileSurfaceShell`: the
-  // onboarding branch below returns before that shell, and its API-key fields are
-  // exactly the kind of focused input that moves the visual viewport.
+  // DesktopOnboardingOverlay (mounted below) can hold API-key fields that move
+  // the visual viewport.
   useKeyboardInset()
 
   // Opening a session belongs in the main chat activity, so "open session" here just
@@ -37,27 +37,14 @@ export function ActivityScreenRoot() {
     void returnHome()
   }, [])
 
-  const onboarding = useStore($onboardingActive)
+  const activeProfile = useStore($activeGatewayProfile)
 
-  // Settings ▸ Providers lives on this surface, and both of its setup
-  // affordances are state-driven: a provider row sets `$connectProvider`, and
-  // Settings ▸ Model's "Set up provider" falls through to `openOnboarding()`.
-  // Neither renders anything on its own, so without these two mounted the
-  // triggers this screen DOES show would silently do nothing here while working
-  // in the chat shell (which mounts both).
-  if (onboarding) {
-    return (
-      <SidebarProvider>
-        <OnboardingScreen />
-        <NotificationStack />
-      </SidebarProvider>
-    )
-  }
-
+  // Settings ▸ Providers lives on this surface; desktop's onboarding overlay owns
+  // first-run and manual provider connect (same as MobileController / wiring).
   return (
     <SidebarProvider>
       <MobileSurfaceShell onHome={goHome} onOpenSession={goHome} />
-      <ProviderConnectOverlay />
+      <DesktopOnboardingOverlay enabled profile={activeProfile} requestGateway={requestGateway} />
       <NotificationStack />
     </SidebarProvider>
   )

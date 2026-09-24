@@ -1,31 +1,17 @@
 /**
- * Install user themes from external sources (pasted VS Code theme JSON or a
- * Marketplace extension). Ported from apps/desktop/src/themes/install.ts.
+ * Install desktop themes from external sources.
  *
- * The network + `.vsix` unzip runs natively in Rust (`src-tauri/src/marketplace.rs`),
- * reached from `@/store/marketplace`. Rust hands back the raw theme JSON; we
- * parse + convert + persist here so the conversion stays in one testable place.
+ * The heavy lifting (network + .vsix unzip) lives in the Electron main process
+ * (`electron/vscode-marketplace.ts`), reached via `window.hermesDesktop.themes`.
+ * Main hands back the raw theme JSON; we parse + convert + persist here so the
+ * conversion stays in one unit-testable place.
  */
+
+import type { DesktopMarketplaceThemeResult } from '@/global'
 
 import type { DesktopTheme } from './types'
 import { installUserTheme } from './user-themes'
 import { convertVscodeColorTheme, parseVscodeTheme, vscodeThemeSlug } from './vscode'
-
-/** One color theme an extension contributes (raw JSONC text). */
-export interface MarketplaceThemeFile {
-  label: string
-  /** VS Code's `uiTheme` for this entry (vs-dark / vs / hc-black). */
-  uiTheme?: string
-  /** Raw theme JSON (JSONC) text, parsed + converted here. */
-  contents: string
-}
-
-/** The color themes a single Marketplace extension contributes. */
-export interface MarketplaceThemeResult {
-  extensionId: string
-  displayName: string
-  themes: MarketplaceThemeFile[]
-}
 
 /** A `publisher.extension` id, e.g. `dracula-theme.theme-dracula`. */
 export const MARKETPLACE_ID_RE = /^[\w-]+\.[\w-]+$/
@@ -49,7 +35,7 @@ export function installVscodeThemeFromText(text: string, opts?: { label?: string
  * toggle switches between the real variants. A single-variant extension fills
  * both slots with its one palette (the toggle is a no-op, as it must be).
  */
-export function buildThemeFromMarketplace(result: MarketplaceThemeResult): DesktopTheme {
+export function buildThemeFromMarketplace(result: DesktopMarketplaceThemeResult): DesktopTheme {
   if (!result.themes.length) {
     throw new Error(`"${result.extensionId}" does not contribute any color themes.`)
   }
@@ -81,4 +67,26 @@ export function buildThemeFromMarketplace(result: MarketplaceThemeResult): Deskt
     ...(terminal ? { terminal } : {}),
     ...(darkTerminal ? { darkTerminal } : {})
   }
+}
+
+/**
+ * Download a Marketplace extension and install the theme family it contributes
+ * (see `buildThemeFromMarketplace`). Returns the single installed theme.
+ */
+export async function installVscodeThemeFromMarketplace(id: string): Promise<DesktopTheme> {
+  const trimmed = id.trim()
+
+  if (!MARKETPLACE_ID_RE.test(trimmed)) {
+    throw new Error('Expected a Marketplace id like "publisher.extension".')
+  }
+
+  const api = window.hermesDesktop?.themes
+
+  if (!api?.fetchMarketplace) {
+    throw new Error('Marketplace install is only available in the desktop app.')
+  }
+
+  const result = await api.fetchMarketplace(trimmed)
+
+  return installUserTheme(buildThemeFromMarketplace(result))
 }

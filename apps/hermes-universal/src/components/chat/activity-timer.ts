@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { useViewedInterval } from '@/hooks/use-viewed-interval'
+
 // Module-level registry so timers survive component unmount/remount (e.g.
 // when a tool row scrolls out and back). Keyed by caller-supplied timerKey;
 // anonymous timers (no key) start fresh each mount.
-// Ported from apps/desktop/src/components/chat/activity-timer.ts.
 const startedAtByKey = new Map<string, number>()
 
 // Durations of things that have already finished, kept beside the origins that
@@ -39,12 +40,10 @@ export function formatElapsed(seconds: number): string {
  * Seconds since the timer's origin, reported once a second while `active`.
  *
  * Origin, in order: an explicit `since` timestamp, else the `timerKey`'s
- * registry entry (which survives unmount/remount), else mount time. Pass `since`
- * when the thing being measured started at a moment the caller knows and that
- * moment isn't the mount — an anonymous timer reports the COMPONENT's age, and
- * a component that is mounted permanently and merely hidden (the thread's
- * always-rendered loading row) reports the age of the thread. Desktop's
- * signature; universal's port had dropped the third argument.
+ * registry entry (survives unmount/remount), else mount time. Pass `since` when
+ * the thing being measured started at a moment the caller knows and that moment
+ * isn't the mount — otherwise an anonymous timer reports the component's age,
+ * which is only the same number by accident.
  */
 export function useElapsedSeconds(active = true, timerKey?: string, since?: number): number {
   const start = useRef(since ?? startedAt(timerKey))
@@ -56,23 +55,20 @@ export function useElapsedSeconds(active = true, timerKey?: string, since?: numb
     lastKey.current = timerKey
   }
 
+   
   useEffect(() => {
-    if (!active) {
-      return
-    }
-
     if (since !== undefined) {
       start.current = since
     } else if (timerKey) {
       start.current = startedAt(timerKey)
     }
 
-    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - start.current) / 1000)))
-    tick()
-    const id = window.setInterval(tick, 1000)
-
-    return () => window.clearInterval(id)
+    if (active) {
+      setElapsed(Math.max(0, Math.floor((Date.now() - start.current) / 1000)))
+    }
   }, [active, since, timerKey])
+
+  useViewedInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - start.current) / 1000))), 1000, active)
 
   return elapsed
 }
@@ -102,9 +98,11 @@ export function useMeasuredDuration(active: boolean, timerKey: string): null | n
     if (active) {
       setWatching(true)
     } else if (watching) {
+      const finalElapsed = Math.max(elapsed, Math.floor((Date.now() - startedAt(timerKey)) / 1000))
+
       setWatching(false)
-      durationByKey.set(timerKey, elapsed)
-      setMeasured(elapsed)
+      durationByKey.set(timerKey, finalElapsed)
+      setMeasured(finalElapsed)
     }
   }, [active, elapsed, timerKey, watching])
 

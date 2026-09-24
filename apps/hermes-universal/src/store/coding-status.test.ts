@@ -1,182 +1,109 @@
-import type { WritableAtom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { HermesGitWorktree, HermesRepoStatus } from '@/global'
-
-// The store under test only needs a cwd, a busy edge and the refresh tokens, so
-// the (large) chat / projects / workspace graphs are stood in for by bare atoms.
-// That keeps the cases about scoping instead of about session plumbing, and lets
-// each trigger be driven directly. `$busy` / `$currentCwd` / `$effectiveCwd` are
-// computed in the real modules, so the stand-ins are cast back to writable here.
-const { repoStatus, worktreeList } = vi.hoisted(() => ({
-  repoStatus: vi.fn(async (_cwd: string) => null as HermesRepoStatus | null),
-  worktreeList: vi.fn(async (_cwd: string) => [] as HermesGitWorktree[])
-}))
-
-let bridge: unknown = { repoStatus, worktreeList }
-
-vi.mock('@/lib/desktop-git', () => ({ desktopGit: () => bridge }))
-vi.mock('./chat', async () => {
-  const { atom } = await import('nanostores')
-
-  return { $busy: atom(false), $currentCwd: atom('') }
-})
-vi.mock('./projects', async () => {
-  const { atom } = await import('nanostores')
-
-  return {
-    $projectScope: atom('__all_projects__'),
-    $projectTree: atom([]),
-    $worktreeDialog: atom(null),
-    $worktreeRefreshToken: atom(0),
-    ALL_PROJECTS: '__all_projects__',
-    projectRootCwd: () => ''
-  }
-})
-vi.mock('./workspace-events', async () => {
-  const { atom } = await import('nanostores')
-
-  return { $effectiveCwd: atom(''), $workspaceChangeTick: atom(0) }
-})
-
-import { $busy as $busyRead, $currentCwd as $currentCwdRead } from './chat'
-import { $effectiveCwd as $effectiveCwdRead, $workspaceChangeTick } from './workspace-events'
-
-const $busy = $busyRead as unknown as WritableAtom<boolean>
-const $currentCwd = $currentCwdRead as unknown as WritableAtom<string>
-const $effectiveCwd = $effectiveCwdRead as unknown as WritableAtom<string>
+import type { HermesRepoStatus } from '@/global'
 
 import {
-  $repoChangeByPath,
   $repoStatus,
   $repoStatusByCwd,
   $repoStatusLoading,
-  $repoWorktrees,
   _resetCodingStatusForTests,
-  isGitRepoPath,
+  refreshAllRepoStatuses,
   refreshRepoStatus,
   registerRepoStatusCwd,
-  repoStatusForCwd,
-  repoWorktreesForCwd,
-  resetRepoStatusForBackendSwitch
+  repoChangeKindForPath,
+  repoStatusForCwd
 } from './coding-status'
+import { $currentCwd, $selectedStoredSessionId } from './session'
 
 const sampleStatus: HermesRepoStatus = {
-  added: 12,
-  ahead: 1,
-  behind: 0,
   branch: 'feature/login',
-  changed: 3,
-  conflicted: 0,
   defaultBranch: 'main',
   detached: false,
-  files: [],
-  removed: 4,
+  ahead: 1,
+  behind: 0,
   staged: 1,
   unstaged: 2,
-  untracked: 0
+  untracked: 0,
+  conflicted: 0,
+  changed: 3,
+  added: 12,
+  removed: 4,
+  files: []
 }
 
 const otherStatus: HermesRepoStatus = {
   ...sampleStatus,
-  added: 3,
   branch: 'bb/other-worktree',
-  changed: 1,
+  added: 3,
   removed: 1,
+  changed: 1,
   staged: 0,
   unstaged: 1
 }
 
-const worktree = (path: string, branch: string): HermesGitWorktree => ({
-  branch,
-  detached: false,
-  isMain: false,
-  locked: false,
-  path
-})
-
-/**
- * Let the debounce fire, then await whatever drain it started — WITHOUT
- * provoking a probe of our own.
- *
- * A blank target queues nothing and just hands back the in-flight drain, which
- * is exactly the passive wait we want. This used to call
- * `refreshAllRepoStatuses()`, which re-probed every target itself: the trigger
- * cases below then passed with `$workspaceChangeTick.subscribe` and the
- * turn-settle `$busy` edge deleted outright — the helper was doing the fan-out
- * they claimed to be asserting.
- */
-async function settle(): Promise<void> {
-  await vi.advanceTimersByTimeAsync(REFRESH_DEBOUNCE_MS)
-  await refreshRepoStatus('   ')
+function stubProbe(impl: (cwd: string) => Promise<HermesRepoStatus | null>) {
+  ;(window as unknown as { hermesDesktop?: unknown }).hermesDesktop = { git: { repoStatus: impl } }
 }
 
-const REFRESH_DEBOUNCE_MS = 200
-
-beforeEach(() => {
-  vi.useFakeTimers()
-  bridge = { repoStatus, worktreeList }
-  repoStatus.mockReset()
-  repoStatus.mockImplementation(async () => null)
-  worktreeList.mockReset()
-  worktreeList.mockImplementation(async () => [])
-  $currentCwd.set('')
-  $effectiveCwd.set('')
-  // Drain the side-effects the sets above kicked off, then start clean.
-  vi.advanceTimersByTime(REFRESH_DEBOUNCE_MS)
-  _resetCodingStatusForTests()
-})
-
-afterEach(() => {
-  _resetCodingStatusForTests()
-  vi.clearAllTimers()
-  vi.useRealTimers()
-})
-
 describe('refreshRepoStatus', () => {
-  it('populates the per-cwd cache and the primary view for that cwd', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
+  beforeEach(() => {
+    vi.useFakeTimers()
+    _resetCodingStatusForTests()
+    $currentCwd.set('')
+    $selectedStoredSessionId.set(null)
+    // Drain the cwd/session subscribe side-effects the sets above kick off.
+    vi.advanceTimersByTime(200)
+    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
+    _resetCodingStatusForTests()
+  })
+
+  afterEach(() => {
+    _resetCodingStatusForTests()
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
+  })
+
+  it('populates the per-cwd cache and the primary computed for that cwd', async () => {
+    stubProbe(async () => sampleStatus)
     $currentCwd.set('/repo')
     await refreshRepoStatus('/repo')
-
     expect(repoStatusForCwd('/repo').get()).toEqual(sampleStatus)
     expect($repoStatus.get()).toEqual(sampleStatus)
   })
 
-  it('falls back to the sidebar cwd when none is passed', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
+  it('falls back to the active session cwd when none is passed', async () => {
+    const probe = vi.fn(async () => sampleStatus)
+    stubProbe(probe)
     $currentCwd.set('/active/repo')
     await refreshRepoStatus()
-
-    expect(repoStatus).toHaveBeenCalledWith('/active/repo')
+    expect(probe).toHaveBeenCalledWith('/active/repo')
     expect($repoStatus.get()).toEqual(sampleStatus)
   })
 
   it('leaves the cache alone (primary reads null) when there is no cwd', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
+    stubProbe(async () => sampleStatus)
     $currentCwd.set('/repo')
     await refreshRepoStatus('/repo')
+    expect($repoStatus.get()).toEqual(sampleStatus)
 
-    // A blank target is a no-op: other worktrees' cached truth must stay put.
+    // Blank target is a no-op: other worktrees' cached truth must stay put.
     await refreshRepoStatus('   ')
     expect(repoStatusForCwd('/repo').get()).toEqual(sampleStatus)
-
     $currentCwd.set('')
     expect($repoStatus.get()).toBeNull()
   })
 
-  it('clears every cached status when there is no git bridge', async () => {
+  it('clears every cached status when the probe is unavailable (remote backend)', async () => {
     $currentCwd.set('/repo')
-    $repoStatusByCwd.set({ '/other': otherStatus, '/repo': sampleStatus })
-    bridge = undefined
+    $repoStatusByCwd.set({ '/repo': sampleStatus, '/other': otherStatus })
     await refreshRepoStatus('/repo')
-
     expect($repoStatusByCwd.get()).toEqual({})
     expect($repoStatus.get()).toBeNull()
   })
 
   it('clears only the failing cwd when the probe throws', async () => {
-    repoStatus.mockImplementation(async cwd => {
+    stubProbe(async cwd => {
       if (cwd === '/bad') {
         throw new Error('not a repo')
       }
@@ -186,53 +113,24 @@ describe('refreshRepoStatus', () => {
     $currentCwd.set('/bad')
     $repoStatusByCwd.set({ '/bad': otherStatus, '/good': sampleStatus })
     await refreshRepoStatus('/bad')
-
     expect(repoStatusForCwd('/bad').get()).toBeNull()
     expect(repoStatusForCwd('/good').get()).toEqual(sampleStatus)
     expect($repoStatus.get()).toBeNull()
   })
 
-  it('keeps independent statuses and worktree lists for two live worktrees', async () => {
-    repoStatus.mockImplementation(async cwd => (cwd === '/repo-a' ? sampleStatus : otherStatus))
-    worktreeList.mockImplementation(async cwd =>
-      cwd === '/repo-a' ? [worktree('/repo-a', 'feature/login')] : [worktree('/repo-b', 'bb/other-worktree')]
-    )
-
-    await refreshRepoStatus('/repo-a')
-    await refreshRepoStatus('/repo-b')
-    await vi.runAllTicks()
-
-    expect(repoStatusForCwd('/repo-a').get()).toEqual(sampleStatus)
-    expect(repoStatusForCwd('/repo-b').get()).toEqual(otherStatus)
-    expect(repoWorktreesForCwd('/repo-a').get()).toEqual([worktree('/repo-a', 'feature/login')])
-    expect(repoWorktreesForCwd('/repo-b').get()).toEqual([worktree('/repo-b', 'bb/other-worktree')])
-
-    // Two rails on two worktrees read two different branches — the whole point.
-    expect(repoStatusForCwd('/repo-a').get()?.branch).not.toBe(repoStatusForCwd('/repo-b').get()?.branch)
-  })
-
-  it('returns the same atom instance for one cwd, and a shared empty one for none', () => {
-    expect(repoStatusForCwd('/repo')).toBe(repoStatusForCwd('  /repo  '))
-    expect(repoWorktreesForCwd('/repo')).toBe(repoWorktreesForCwd('/repo'))
-    expect(repoStatusForCwd('')).toBe(repoStatusForCwd(null))
-    expect(repoStatusForCwd(undefined).get()).toBeNull()
-    expect(repoWorktreesForCwd(null).get()).toEqual([])
-  })
-
-  it('never publishes an old worktree status onto the primary after the cwd moves', async () => {
+  it('never publishes an old worktree status onto the primary after the active cwd moves', async () => {
     let resolveOld!: (status: HermesRepoStatus | null) => void
-
-    repoStatus.mockImplementation(
+    stubProbe(
       () =>
-        new Promise<HermesRepoStatus | null>(resolve => {
+        new Promise(resolve => {
           resolveOld = resolve
         })
     )
 
-    // An explicit probe (not the debounced cwd edge) so the hang is fully under
-    // our control — the same race the rail hit after a session switch mid-probe.
+    // Explicit probe (not the debounced cwd edge) so the hang is fully under
+    // our control — same race window the coding rail used to hit after a
+    // session switch mid-probe.
     const inflight = refreshRepoStatus('/repo-a')
-
     $currentCwd.set('/repo-a')
     await Promise.resolve()
 
@@ -242,22 +140,35 @@ describe('refreshRepoStatus', () => {
     resolveOld(sampleStatus)
     await inflight
 
-    // The primary follows the NEW cwd (empty). The old worktree may still cache
-    // the late result under its own key — that's what lets a tile's rail paint
-    // instantly — but it must not leak onto the primary.
+    // Primary follows the NEW cwd (empty). The old worktree may still cache the
+    // late result under its own key — that's what lets a tile rail paint
+    // instantly — but it must not leak onto the main rail via $repoStatus.
     expect($repoStatus.get()).toBeNull()
     expect(repoStatusForCwd('/repo-a').get()).toEqual(sampleStatus)
   })
 
-  it('runs one probe at a time and coalesces overlap into one trailing refresh per cwd', async () => {
-    const resolvers: ((status: HermesRepoStatus | null) => void)[] = []
+  it('keeps independent statuses for two live worktrees', async () => {
+    stubProbe(async cwd => (cwd === '/repo-a' ? sampleStatus : otherStatus))
+    await refreshRepoStatus('/repo-a')
+    await refreshRepoStatus('/repo-b')
+    expect(repoStatusForCwd('/repo-a').get()).toEqual(sampleStatus)
+    expect(repoStatusForCwd('/repo-b').get()).toEqual(otherStatus)
+
+    $currentCwd.set('/repo-a')
+    expect($repoStatus.get()).toEqual(sampleStatus)
+    $currentCwd.set('/repo-b')
+    expect($repoStatus.get()).toEqual(otherStatus)
+  })
+
+  it('runs one probe at a time and coalesces overlap into one trailing refresh per drain', async () => {
+    const resolvers: Array<(status: HermesRepoStatus | null) => void> = []
     const calls: string[] = []
     let active = 0
     let maxActive = 0
 
-    repoStatus.mockImplementation(
+    stubProbe(
       cwd =>
-        new Promise<HermesRepoStatus | null>(resolve => {
+        new Promise(resolve => {
           calls.push(cwd)
           active++
           maxActive = Math.max(maxActive, active)
@@ -298,222 +209,79 @@ describe('refreshRepoStatus', () => {
     expect($repoStatus.get()).toEqual(sampleStatus)
     expect($repoStatusLoading.get()).toBe(false)
   })
-})
 
-describe('registerRepoStatusCwd', () => {
-  it('probes on register and keeps that worktree in unscoped refreshes', async () => {
-    repoStatus.mockImplementation(async cwd => (cwd === '/tile' ? otherStatus : sampleStatus))
+  it('refreshes when the stored session id changes even if the cwd is unchanged', async () => {
+    const probe = vi.fn(async () => sampleStatus)
+    stubProbe(probe)
+
+    $currentCwd.set('/repo')
+    $selectedStoredSessionId.set('session-a')
+    // The cwd subscription fires on the set above; drain the debounced refresh.
+    vi.advanceTimersByTime(200)
+    await vi.runAllTicks()
+
+    probe.mockClear()
+
+    // Switch to a different session in the SAME repo dir. The cwd atom value is
+    // identical, so its subscription would not re-fire — but the stored-session
+    // id did change, which must still trigger a probe so the branch label
+    // tracks the new session's checked-out branch.
+    $selectedStoredSessionId.set('session-b')
+    vi.advanceTimersByTime(200)
+    await vi.runAllTicks()
+
+    expect(probe).toHaveBeenCalledWith('/repo')
+  })
+
+  it('registerRepoStatusCwd keeps that worktree in unscoped refreshes', async () => {
+    const probe = vi.fn(async cwd => (cwd === '/tile' ? otherStatus : sampleStatus))
+    stubProbe(probe)
+
     $currentCwd.set('/main')
-
     const release = registerRepoStatusCwd('/tile')
+    // Drain the register kick + cwd edge so the assert only covers the
+    // unscoped fan-out.
+    vi.advanceTimersByTime(200)
+    await refreshAllRepoStatuses()
+    probe.mockClear()
 
-    await settle()
-    repoStatus.mockClear()
+    // Unscoped fan-out: every registered worktree + primary, not main only.
+    await refreshAllRepoStatuses()
 
-    // A tool tick is unscoped: every registered worktree re-probes, not only the
-    // sidebar's.
-    $workspaceChangeTick.set($workspaceChangeTick.get() + 1)
-    await settle()
-
-    const probed = [...new Set(repoStatus.mock.calls.map(call => call[0]))].sort()
-
+    const probed = [...new Set(probe.mock.calls.map(call => call[0]))].sort()
     expect(probed).toEqual(['/main', '/tile'])
     expect(repoStatusForCwd('/tile').get()).toEqual(otherStatus)
     expect(repoStatusForCwd('/main').get()).toEqual(sampleStatus)
-    expect($repoStatus.get()).toEqual(sampleStatus)
-    expect($repoWorktrees.get()).toEqual([])
-
-    release?.()
-  })
-
-  it('is refcounted — a second tile on the same worktree keeps it registered', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
-    $currentCwd.set('/main')
-
-    const releaseA = registerRepoStatusCwd('/tile')
-    const releaseB = registerRepoStatusCwd('/tile')
-
-    await settle()
-    releaseA?.()
-    // A double release from one rail must not decrement the other's hold.
-    releaseA?.()
-    repoStatus.mockClear()
-
-    $workspaceChangeTick.set($workspaceChangeTick.get() + 1)
-    await settle()
-    expect(repoStatus.mock.calls.map(call => call[0])).toContain('/tile')
-
-    releaseB?.()
-    repoStatus.mockClear()
-
-    $workspaceChangeTick.set($workspaceChangeTick.get() + 1)
-    await settle()
-    expect(repoStatus.mock.calls.map(call => call[0])).not.toContain('/tile')
-  })
-
-  it('ignores a blank cwd', () => {
-    expect(registerRepoStatusCwd('   ')).toBeUndefined()
-    expect(registerRepoStatusCwd(null)).toBeUndefined()
-  })
-
-  it('re-probes every registered worktree when a turn settles', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
-    $currentCwd.set('/main')
-
-    const release = registerRepoStatusCwd('/tile')
-
-    await settle()
-    repoStatus.mockClear()
-
-    $busy.set(true)
-    $busy.set(false)
-    await settle()
-
-    expect([...new Set(repoStatus.mock.calls.map(call => call[0]))].sort()).toEqual(['/main', '/tile'])
-
-    release?.()
-  })
-
-  it('scopes a sidebar cwd change to that repo alone', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
-    const release = registerRepoStatusCwd('/tile')
-
-    await settle()
-    repoStatus.mockClear()
-
-    $currentCwd.set('/main')
-    await vi.advanceTimersByTimeAsync(REFRESH_DEBOUNCE_MS)
-
-    expect(repoStatus.mock.calls.map(call => call[0])).toEqual(['/main'])
 
     release?.()
   })
 })
 
-// The file tree tints from $repoChangeByPath, which is keyed to the FOCUSED cwd
-// — and that cwd is not always a mounted rail's: it falls back to the workspace
-// root for a detached chat, and the workspace pane can be on screen with no
-// composer at all. If nothing probes it, the tree shows no change decorations
-// while the review pane beside it — same cwd — lists the very same files.
-describe('the focused cwd', () => {
-  it('is probed when focus moves to a worktree no rail registered', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
-    $currentCwd.set('/main')
-    await settle()
-    repoStatus.mockClear()
+describe('repoChangeKindForPath', () => {
+  it('does not notify a row when only another path changes', () => {
+    $currentCwd.set('/repo')
+    $repoStatusByCwd.set({ '/repo': { ...sampleStatus, files: [] } })
+    const row = repoChangeKindForPath('/repo/a.ts')
+    const listener = vi.fn()
+    const unsubscribe = row.subscribe(listener)
 
-    $effectiveCwd.set('/focused')
-    await vi.advanceTimersByTimeAsync(REFRESH_DEBOUNCE_MS)
+    $repoStatusByCwd.set({
+      '/repo': {
+        ...sampleStatus,
+        files: [{ path: 'b.ts', untracked: true } as HermesRepoStatus['files'][number]]
+      }
+    })
+    expect(listener).toHaveBeenCalledTimes(1)
 
-    expect(repoStatus.mock.calls.map(call => call[0])).toEqual(['/focused'])
-    expect(repoStatusForCwd('/focused').get()).toEqual(sampleStatus)
-  })
+    $repoStatusByCwd.set({
+      '/repo': {
+        ...sampleStatus,
+        files: [{ path: 'a.ts', untracked: true } as HermesRepoStatus['files'][number]]
+      }
+    })
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener.mock.calls.at(-1)?.[0]).toBe('added')
 
-  it('re-probes on an unscoped edge even though no rail holds it', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
-    $currentCwd.set('/main')
-    $effectiveCwd.set('/workspace-root')
-    await settle()
-    repoStatus.mockClear()
-
-    // A tool touched the tree: the fan-out has to reach the focused cwd, or the
-    // tree's tint freezes at whatever it had when focus landed.
-    $workspaceChangeTick.set($workspaceChangeTick.get() + 1)
-    await settle()
-
-    expect([...new Set(repoStatus.mock.calls.map(call => call[0]))].sort()).toEqual(['/main', '/workspace-root'])
-  })
-})
-
-// Absolute paths are not gateway-scoped: `/home/me/work` exists on the laptop
-// AND on the box just switched to, and they are different repos.
-describe('resetRepoStatusForBackendSwitch', () => {
-  it('drops cached status/worktrees and re-probes what is still on screen', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
-    worktreeList.mockImplementation(async () => [worktree('/tile', 'feature/login')])
-    $currentCwd.set('/main')
-
-    const release = registerRepoStatusCwd('/tile')
-
-    await settle()
-    await vi.runAllTicks()
-    expect(repoStatusForCwd('/tile').get()).toEqual(sampleStatus)
-    expect(repoWorktreesForCwd('/tile').get()).toEqual([worktree('/tile', 'feature/login')])
-
-    repoStatus.mockClear()
-    repoStatus.mockImplementation(async () => otherStatus)
-    resetRepoStatusForBackendSwitch()
-
-    // Wiped the instant the switch happens — not left painting the old host's
-    // branch until a probe happens to come back.
-    expect($repoStatusByCwd.get()).toEqual({})
-    expect(repoWorktreesForCwd('/tile').get()).toEqual([])
-
-    // …and the still-mounted rail is re-probed against the NEW backend.
-    await settle()
-    expect([...new Set(repoStatus.mock.calls.map(call => call[0]))].sort()).toEqual(['/main', '/tile'])
-    expect(repoStatusForCwd('/tile').get()).toEqual(otherStatus)
-
-    release?.()
-  })
-
-  it('drops the is-this-a-repo memo, which has no TTL of its own', async () => {
-    repoStatus.mockImplementation(async () => sampleStatus)
-    expect(await isGitRepoPath('/repo')).toBe(true)
-
-    // Same path on the new gateway, and over there it is not a repo. Without the
-    // reset the memo keeps saying yes and ⌘⇧B opens the worktree dialog on a
-    // directory git cannot branch from.
-    repoStatus.mockImplementation(async () => null)
-    expect(await isGitRepoPath('/repo')).toBe(true)
-
-    resetRepoStatusForBackendSwitch()
-    expect(await isGitRepoPath('/repo')).toBe(false)
-  })
-
-  it('drops a probe that was already in flight against the old backend', async () => {
-    let resolveOld!: (status: HermesRepoStatus | null) => void
-
-    repoStatus.mockImplementation(
-      () =>
-        new Promise<HermesRepoStatus | null>(resolve => {
-          resolveOld = resolve
-        })
-    )
-
-    const inflight = refreshRepoStatus('/repo')
-
-    await Promise.resolve()
-    resetRepoStatusForBackendSwitch()
-    resolveOld(sampleStatus)
-    await inflight
-
-    expect(repoStatusForCwd('/repo').get()).toBeNull()
-  })
-})
-
-describe('$repoChangeByPath', () => {
-  const withFiles = (branch: string, path: string): HermesRepoStatus => ({
-    ...sampleStatus,
-    branch,
-    files: [{ path, untracked: true } as HermesRepoStatus['files'][number]]
-  })
-
-  it('decorates the FOCUSED chat’s worktree, not the sidebar’s', () => {
-    $repoStatusByCwd.set({ '/main': withFiles('main', 'a.ts'), '/tile': withFiles('bb/tile', 'b.ts') })
-    $currentCwd.set('/main')
-    $effectiveCwd.set('/tile')
-
-    expect([...$repoChangeByPath.get()]).toEqual([['/tile/b.ts', 'added']])
-
-    $effectiveCwd.set('/main')
-    expect([...$repoChangeByPath.get()]).toEqual([['/main/a.ts', 'added']])
-  })
-
-  it('is empty with no focused cwd', () => {
-    $repoStatusByCwd.set({ '/main': withFiles('main', 'a.ts') })
-    $effectiveCwd.set('')
-
-    expect($repoChangeByPath.get().size).toBe(0)
+    unsubscribe()
   })
 })

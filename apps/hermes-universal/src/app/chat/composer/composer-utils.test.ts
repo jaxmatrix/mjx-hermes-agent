@@ -1,117 +1,208 @@
-/**
- * The composer's completion popover opens on the keystroke and fills a beat
- * later (60ms debounce + an RPC). Tab pressed inside that window fell through to
- * the browser and moved focus out of the composer — the popover appeared to eat
- * the key and take the caret with it.
- *
- * `swallowsTriggerTab` is that decision, and it is a function precisely so it can
- * be pinned here: the keydown handler it is called from lives inside `ChatBar`,
- * which cannot be mounted in a unit test.
- */
+import type { Unstable_TriggerItem } from '@assistant-ui/core'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { describe, expect, it } from 'vitest'
+import {
+  acceptsTriggerCompletion,
+  implicitSlashAcceptIndex,
+  isPendingDraftPersistCurrent,
+  liveComposerDraft,
+  type PendingDraftPersist,
+  shouldDisableComposerInput,
+  slashArgStage,
+  slashChipKindForItem,
+  slashCommandToken,
+  type TriggerAcceptInput
+} from './composer-utils'
+import { normalizeComposerEditorDom, RICH_INPUT_SLOT } from './rich-editor'
 
-import { composerEnterIntent, swallowsTriggerTab } from './composer-utils'
+const item = (group: string): Unstable_TriggerItem =>
+  ({ id: 'x', type: 'slash', label: 'x', metadata: { group } }) as unknown as Unstable_TriggerItem
 
-const inFlight = { itemCount: 0, key: 'Tab', loading: true, open: true }
-
-describe('swallowsTriggerTab', () => {
-  it('swallows Tab while the open popover has nothing to offer yet', () => {
-    expect(swallowsTriggerTab(inFlight)).toBe(true)
-  })
-
-  // Tab with items ACCEPTS the highlighted one (and descends into a folder), so
-  // this branch must not claim it first.
-  it('leaves Tab to the accept branch once items have landed', () => {
-    expect(swallowsTriggerTab({ ...inFlight, itemCount: 3 })).toBe(false)
-  })
-
-  it('leaves Tab alone when nothing is in flight', () => {
-    expect(swallowsTriggerTab({ ...inFlight, loading: false })).toBe(false)
-  })
-
-  // No popover, no claim: Tab out of the composer is how the keyboard reaches
-  // the rest of the app, and swallowing it here would be a focus trap.
-  it('never claims Tab with no popover open', () => {
-    expect(swallowsTriggerTab({ ...inFlight, open: false })).toBe(false)
-  })
-
-  it('claims Tab only — every other key still types or navigates', () => {
-    for (const key of ['Enter', ' ', 'ArrowDown', 'Escape', 'a', 'Backspace']) {
-      expect(swallowsTriggerTab({ ...inFlight, key })).toBe(false)
+describe('shouldDisableComposerInput', () => {
+  it.each(['idle', 'connecting', 'closed', 'error'] as const)(
+    'keeps the draft editable while the gateway is %s',
+    gatewayState => {
+      expect(shouldDisableComposerInput(true, gatewayState)).toBe(false)
     }
+  )
+
+  it('fails closed when connection atoms disagree about an open gateway', () => {
+    expect(shouldDisableComposerInput(true, 'open')).toBe(true)
+  })
+
+  it.each(['idle', 'connecting', 'open', 'closed', 'error'] as const)(
+    'never disables an otherwise enabled composer while the gateway is %s',
+    gatewayState => {
+      expect(shouldDisableComposerInput(false, gatewayState)).toBe(false)
+    }
+  )
+})
+
+describe('slashArgStage', () => {
+  it('is true only once the query is past the command name', () => {
+    expect(slashArgStage('personality')).toBe(false)
+    expect(slashArgStage('personality alice')).toBe(true)
   })
 })
 
-/**
- * The Enter family. Four gestures share one key and the ORDER between them is
- * the entire rule, so it lives in one function rather than emerging from four
- * branches scattered through a 1400-line component.
- *
- * Two bugs were hiding in that order:
- *
- *  - Shift+Enter was never claimed at all. It fell through to the webview's own
- *    `insertLineBreak`, whose DOM differs per engine, and `normalizeComposerEditorDom`
- *    then deleted the newline on WebKit — "Shift+Enter does nothing on macOS".
- *    Claiming it has to happen BEFORE the completion menu, whose accept test was
- *    `Enter || Tab || space` with no shift guard.
- *  - The message-EDIT composer sent on `Enter && !shiftKey` with no modifier
- *    guard, so ⌘+Enter — the queue chord everywhere else — re-ran the turn and
- *    rewound the conversation, with no undo.
- */
-
-const plain = { completionOpen: false, ctrlKey: false, key: 'Enter', metaKey: false, shiftKey: false }
-
-describe('composerEnterIntent', () => {
-  it('sends on a plain Enter', () => {
-    expect(composerEnterIntent(plain)).toBe('send')
+describe('slashCommandToken', () => {
+  it('extracts the lowercased /command token', () => {
+    expect(slashCommandToken('Personality alice')).toBe('/personality')
+    expect(slashCommandToken('model')).toBe('/model')
   })
 
-  it('breaks the line on Shift+Enter', () => {
-    expect(composerEnterIntent({ ...plain, shiftKey: true })).toBe('line-break')
+  it('handles an empty query', () => {
+    expect(slashCommandToken('')).toBe('/')
+  })
+})
+
+describe('slashChipKindForItem', () => {
+  it('maps completion groups to chip kinds', () => {
+    expect(slashChipKindForItem(item('Skills'))).toBe('skill')
+    expect(slashChipKindForItem(item('Themes'))).toBe('theme')
+    expect(slashChipKindForItem(item('Commands'))).toBe('command')
+  })
+})
+
+describe('acceptsTriggerCompletion', () => {
+  const press = (key: string, overrides: Partial<TriggerAcceptInput> = {}) =>
+    acceptsTriggerCompletion({
+      activeExplicit: false,
+      freeTextArgStage: false,
+      key,
+      kind: '/',
+      query: 'personality alic',
+      ...overrides
+    })
+
+  it('accepts on Enter / Tab / Space for a finite option list', () => {
+    expect(press('Enter')).toBe(true)
+    expect(press('Tab')).toBe(true)
+    expect(press(' ')).toBe(true)
   })
 
-  it('queues on Cmd+Enter and on Ctrl+Enter', () => {
-    expect(composerEnterIntent({ ...plain, metaKey: true })).toBe('queue')
-    expect(composerEnterIntent({ ...plain, ctrlKey: true })).toBe('queue')
+  it('ignores keys that are neither navigation nor acceptance', () => {
+    expect(press('a')).toBe(false)
+    expect(press('Escape')).toBe(false)
   })
 
-  it('never sends on Cmd+Enter — a composer with no queue must do NOTHING', () => {
-    // The edit composer's whole bug: `queue` is an intent it ignores, and
-    // ignoring is the correct outcome. Anything that resolved to `send` here
-    // would re-run the turn.
-    expect(composerEnterIntent({ ...plain, metaKey: true })).not.toBe('send')
-    expect(composerEnterIntent({ ...plain, ctrlKey: true })).not.toBe('send')
+  it('lets an `@` mention take a literal space', () => {
+    expect(press(' ', { kind: '@', query: 'src/comp' })).toBe(false)
+    expect(press('Enter', { kind: '@', query: 'src/comp' })).toBe(true)
   })
 
-  it('breaks the line even with the completion menu open', () => {
-    // The regression that made Shift+Enter unreliable in the middle of a
-    // sentence: typing `@fi` opens the menu, and the menu used to accept on any
-    // Enter.
-    expect(composerEnterIntent({ ...plain, completionOpen: true, shiftKey: true })).toBe('line-break')
+  it('types a space on a bare `/ ` instead of accepting', () => {
+    expect(press(' ', { query: '' })).toBe(false)
   })
 
-  it('gives a plain Enter to the open completion menu', () => {
-    expect(composerEnterIntent({ ...plain, completionOpen: true })).toBe('accept-completion')
+  // The `/goal <prose>` class: the popover may be live over free-form text, so
+  // the keys that mean something else in prose must keep meaning it.
+  it('sends the prose rather than the unchosen first row', () => {
+    expect(press('Enter', { freeTextArgStage: true, query: 'goal ship the redesign' })).toBe(false)
+    expect(press(' ', { freeTextArgStage: true, query: 'goal ship the' })).toBe(false)
   })
 
-  it('gives Cmd+Enter to the open completion menu too', () => {
-    // Preserved from the shipped handler, where the popover branch ran ahead of
-    // the queue branch and had no modifier guard. Changing it would be a
-    // separate decision, not a side effect of this one.
-    expect(composerEnterIntent({ ...plain, completionOpen: true, metaKey: true })).toBe('accept-completion')
+  it('accepts on Enter once the user has arrowed to a row deliberately', () => {
+    expect(press('Enter', { activeExplicit: true, freeTextArgStage: true, query: 'goal stat' })).toBe(true)
   })
 
-  it('leaves Shift+Cmd+Enter alone', () => {
-    // Claimed by nothing today; it must not fall into `send` by accident.
-    expect(composerEnterIntent({ ...plain, metaKey: true, shiftKey: true })).toBe('pass-through')
-    expect(composerEnterIntent({ ...plain, ctrlKey: true, shiftKey: true })).toBe('pass-through')
+  it('keeps Tab as the explicit accept even over free text', () => {
+    expect(press('Tab', { freeTextArgStage: true, query: 'goal stat' })).toBe(true)
+  })
+})
+
+describe('implicitSlashAcceptIndex', () => {
+  const rows = ['/compress', '/review', '/resume']
+
+  it('completes a prefix of the highlighted row', () => {
+    expect(implicitSlashAcceptIndex('com', rows, 0, false)).toBe(0)
   })
 
-  it('ignores every key that is not Enter', () => {
-    for (const key of ['Tab', ' ', 'Escape', 'ArrowUp', 'a', 'Backspace']) {
-      expect(composerEnterIntent({ ...plain, key })).toBe('pass-through')
-      expect(composerEnterIntent({ ...plain, key, shiftKey: true })).toBe('pass-through')
-    }
+  it('keeps a fully typed command even when another row is highlighted', () => {
+    expect(implicitSlashAcceptIndex('review', rows, 0, false)).toBe(1)
+  })
+
+  it('does not steal when the typed token is not a prefix of any row', () => {
+    expect(implicitSlashAcceptIndex('review', ['/compress', '/resume'], 0, false)).toBeNull()
+  })
+
+  it('takes the only prefix match when the highlight is a leftover', () => {
+    expect(implicitSlashAcceptIndex('rev', ['/compress', '/review', '/resume'], 0, false)).toBe(1)
+  })
+
+  it('honours an arrowed pick even when it is not a prefix', () => {
+    expect(implicitSlashAcceptIndex('review', rows, 0, true)).toBe(0)
+  })
+
+  it('matches an arg-stage prefix against the full completion text', () => {
+    expect(implicitSlashAcceptIndex('personality alic', ['/personality alice', '/personality none'], 0, false)).toBe(0)
+  })
+})
+
+describe('isPendingDraftPersistCurrent (#54527 integrity guard)', () => {
+  it('accepts a write when the pending entry still matches what was captured', () => {
+    const entry: PendingDraftPersist = { scope: 'session-a', text: 'hello' }
+
+    expect(isPendingDraftPersistCurrent(entry, entry)).toBe(true)
+    expect(isPendingDraftPersistCurrent({ scope: 'session-a', text: 'hello' }, entry)).toBe(true)
+  })
+
+  it('rejects when the pending slot was cleared (session swap / newer flush already committed)', () => {
+    const entry: PendingDraftPersist = { scope: 'session-a', text: 'hello' }
+
+    expect(isPendingDraftPersistCurrent(null, entry)).toBe(false)
+  })
+
+  it('rejects when the pending slot now belongs to a different session (the #54527 misroute shape)', () => {
+    const captured: PendingDraftPersist = { scope: 'session-a', text: 'carefully composed prompt' }
+    const supersededBy: PendingDraftPersist = { scope: 'session-b', text: 'different draft' }
+
+    expect(isPendingDraftPersistCurrent(supersededBy, captured)).toBe(false)
+  })
+
+  it('rejects when the pending slot was replaced by a newer keystroke in the same session', () => {
+    const captured: PendingDraftPersist = { scope: 'session-a', text: 'first draft' }
+    const supersededBy: PendingDraftPersist = { scope: 'session-a', text: 'first draft continued' }
+
+    expect(isPendingDraftPersistCurrent(supersededBy, captured)).toBe(false)
+  })
+
+  it('rejects when nothing was ever captured', () => {
+    expect(isPendingDraftPersistCurrent(null, null)).toBe(false)
+  })
+})
+
+/** Real contentEditable, built the way `empty-composer.test.ts` builds one. */
+function editorWith(text: string): HTMLDivElement {
+  const el = document.createElement('div')
+
+  el.dataset.slot = RICH_INPUT_SLOT
+  el.contentEditable = 'true'
+  el.append(document.createTextNode(text))
+  normalizeComposerEditorDom(el)
+  document.body.append(el)
+
+  return el
+}
+
+// editorWith appends to the shared JSDOM body; empty it so the element does not
+// leak into other cases in this file.
+afterEach(() => {
+  document.body.replaceChildren()
+})
+
+describe('liveComposerDraft (stale-mirror guard for the ArrowUp recall)', () => {
+  it('reads the live editor text even when the mirror is still empty', () => {
+    // The race this exists for: a keystroke or paste flushed only by the
+    // coalesced rAF, so `draftRef.current` holds the pre-keystroke text while
+    // the editor already holds what the user typed. The recall guard must see
+    // the typed text, not the stale empty mirror.
+    const editor = editorWith('just typed this')
+
+    expect(liveComposerDraft(editor, '')).toBe('just typed this')
+  })
+
+  it('falls back to the mirror before the editor mounts', () => {
+    expect(liveComposerDraft(null, 'mirrored draft')).toBe('mirrored draft')
   })
 })

@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Same shim as use-statusbar-items.test.tsx: keep the health poller / getStatus
@@ -40,14 +40,14 @@ describe('MobileStatusList', () => {
 
     expect(screen.getByText('Status')).toBeInTheDocument()
     expect(screen.getByText('System')).toBeInTheDocument()
-    // The Plugins section always exists: it leads with the manage row (the phone's
-    // only route to Settings ▸ Plugins), heading + row label both reading "Plugins".
-    expect(screen.getAllByText('Plugins')).toHaveLength(2)
+    // The Plugins section heading covers the manage row — the word appears once
+    // (desktop-shaped: heading, not heading + duplicate row label).
+    expect(screen.getAllByText('Plugins')).toHaveLength(1)
   })
 
   // Before this, an id claimed by no SECTION was dropped on the floor — which is
   // every plugin contribution, since SECTIONS lists only core ids.
-  it('surfaces an unclaimed contribution in the Plugins section, after the manage row', () => {
+  it('surfaces an unclaimed contribution in the Plugins section', () => {
     const dispose = registry.register({
       area: 'statusBar.left',
       data: { detail: '3', id: 'demo:queue', label: 'Queue', variant: 'text' },
@@ -59,16 +59,15 @@ describe('MobileStatusList', () => {
 
     expect(screen.getByText('Queue')).toBeInTheDocument()
 
-    // The manage row leads the section, whichever bar group the contribution
-    // arrived in.
+    // Section heading, then the contribution (and any other unclaimed core rows).
     const labels = screen.getAllByText(/^(Plugins|Queue)$/).map(el => el.textContent)
-    expect(labels.at(-2)).toBe('Plugins')
-    expect(labels.at(-1)).toBe('Queue')
+    expect(labels[0]).toBe('Plugins')
+    expect(labels).toContain('Queue')
 
     dispose()
   })
 
-  it('shows the plugin inventory counts, flagging failures', () => {
+  it('does not paint plugin-record inventory counts on the status list', () => {
     $pluginRecords.set({
       broken: { id: 'broken', kind: 'disk', name: 'broken', status: 'error' },
       kanban: { id: 'kanban', kind: 'disk', name: 'kanban', status: 'loaded' },
@@ -77,8 +76,10 @@ describe('MobileStatusList', () => {
 
     renderList()
 
-    // Loaded count, plus the failure — a disabled plugin is neither.
-    expect(screen.getByText('1 · 1 failed')).toBeInTheDocument()
+    // Inventory lives on Settings ▸ Plugins; the statusbar no longer emits a
+    // `plugins` row with loaded/failed counts. The trailing section heading remains.
+    expect(screen.getByText('Plugins')).toBeInTheDocument()
+    expect(screen.queryByText('1 · 1 failed')).not.toBeInTheDocument()
   })
 
   it('passes a render contribution through untouched — no row rewriting', () => {

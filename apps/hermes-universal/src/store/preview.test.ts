@@ -1,199 +1,316 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { $pendingClose, resolvePendingClose } from './close-confirm'
+import { $rightRailActiveTabId, selectRightRailTab } from './layout'
 import {
-  $activePreviewPath,
-  $activePreviewTarget,
+  $previewServerRestart,
+  $previewServerRestartStatus,
   $previewTabs,
-  closeAllPreviewTabs,
-  closePreviewTab,
-  previewCloseTargets,
-  requestCloseAllPreviewTabs,
-  requestCloseOtherPreviewTabs,
-  requestClosePreviewTab,
-  requestClosePreviewTabsToRight,
-  selectPreviewTab,
-  setPreviewTarget
+  $previewTarget,
+  beginPreviewServerRestart,
+  closePreviewForSource,
+  closePreviewMatching,
+  closeRightRail,
+  closeRightRailTab,
+  commitBrowserTabLocation,
+  newBrowserTab,
+  openPreview,
+  previewTabId,
+  type PreviewTarget,
+  progressPreviewServerRestart,
+  renderedHtmlTarget,
+  setPreviewRenderMode
 } from './preview'
-import { $dirtyPreviewPaths, setPreviewDirty } from './preview-edit'
-import { $previewCaps, $previewModes, setPreviewCaps, setPreviewMode } from './preview-view'
 
-afterEach(() => {
-  // Drain any prompt a test parked, so one test's unanswered question cannot
-  // de-duplicate the next test's.
-  while ($pendingClose.get()) {
-    resolvePendingClose($pendingClose.get()!.token, false)
-  }
+function fileTarget(source: string): PreviewTarget {
+  return { kind: 'file', label: source, path: source, previewKind: 'html', source, url: `file://${source}` }
+}
 
-  closeAllPreviewTabs()
-})
+function urlTarget(source: string): PreviewTarget {
+  return { kind: 'url', label: source, source, url: source }
+}
 
-describe('preview tabs store', () => {
-  it('opens a tab (basename label) and makes it active', () => {
-    setPreviewTarget('/repo/src/app.ts')
-    expect($previewTabs.get()).toEqual([{ name: 'app.ts', path: '/repo/src/app.ts' }])
-    expect($activePreviewPath.get()).toBe('/repo/src/app.ts')
-    expect($activePreviewTarget.get()?.name).toBe('app.ts')
+function artifactTarget(id: string): PreviewTarget {
+  return { kind: 'artifact', label: id, source: id, url: id }
+}
+
+describe('preview store', () => {
+  beforeEach(() => {
+    $previewServerRestart.set(null)
+    closeRightRail()
+    window.localStorage.clear()
   })
 
-  it('re-activates an already-open tab instead of duplicating it', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
-    setPreviewTarget('/a.ts')
-    expect($previewTabs.get().map(t => t.path)).toEqual(['/a.ts', '/b.ts'])
-    expect($activePreviewPath.get()).toBe('/a.ts')
+  afterEach(() => {
+    $previewServerRestart.set(null)
+    closeRightRail()
+    window.localStorage.clear()
   })
 
-  it('closing the active tab falls back to the last remaining, then null', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
-    closePreviewTab('/b.ts')
-    expect($activePreviewPath.get()).toBe('/a.ts')
-    closePreviewTab('/a.ts')
-    expect($activePreviewPath.get()).toBeNull()
+  it('does not notify status subscribers for restart progress text', () => {
+    const statuses: string[] = []
+    const unsubscribe = $previewServerRestartStatus.subscribe(status => statuses.push(status))
+
+    beginPreviewServerRestart('task-1', 'http://localhost:5174')
+    progressPreviewServerRestart('task-1', 'first line')
+    progressPreviewServerRestart('task-1', 'second line')
+    unsubscribe()
+
+    expect(statuses).toEqual(['idle', 'running'])
   })
 
-  it('closeOthers keeps only the given tab; closeAll clears everything', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
-    setPreviewTarget('/c.ts')
-    requestCloseOtherPreviewTabs('/b.ts')
-    expect($previewTabs.get().map(t => t.path)).toEqual(['/b.ts'])
-    expect($activePreviewPath.get()).toBe('/b.ts')
-    closeAllPreviewTabs()
-    expect($previewTabs.get()).toEqual([])
-    expect($activePreviewPath.get()).toBeNull()
+  it('opens the pane and fronts the new tab', () => {
+    openPreview(fileTarget('/work/demo.html'))
+
+    expect($rightRailActiveTabId.get()).toBe('file:file:///work/demo.html')
+    expect($previewTarget.get()?.path).toBe('/work/demo.html')
   })
 
-  // MJXHRM-409. The fourth verb of the shared close group — the rail offered
-  // three, and the label for the fourth had been sitting in the translations
-  // wired to nothing.
-  it('closeToRight drops everything past the given tab and rehomes the active one', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
-    setPreviewTarget('/c.ts')
+  it('gives every kind of target its own tab, side by side', () => {
+    openPreview(fileTarget('/work/demo.html'))
+    openPreview(urlTarget('http://localhost:5174'))
+    openPreview(artifactTarget('session-1:dashboard'))
 
-    requestClosePreviewTabsToRight('/a.ts')
-
-    expect($previewTabs.get().map(t => t.path)).toEqual(['/a.ts'])
-    // `/c.ts` was active and is gone, so the anchor takes over rather than
-    // leaving the rail pointed at a closed file.
-    expect($activePreviewPath.get()).toBe('/a.ts')
+    expect($previewTabs.get().map(tab => tab.target.kind)).toEqual(['file', 'url', 'artifact'])
   })
 
-  it('closeToRight leaves the active tab alone when it survives', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
-    setPreviewTarget('/c.ts')
-    selectPreviewTab('/a.ts')
+  // A Browser tab is a VESSEL, so a link hands its page to the browser you are
+  // already looking at. New tabs are something you ask for (`newBrowserTab`) —
+  // otherwise an agent opening five pages leaves five Browsers behind.
+  it('navigates the open Browser rather than stacking a second one', () => {
+    openPreview(urlTarget('https://news.ycombinator.com'))
+    openPreview(urlTarget('https://www.reddit.com'))
 
-    requestClosePreviewTabsToRight('/b.ts')
+    const urlTabs = $previewTabs.get().filter(tab => tab.target.kind === 'url')
 
-    expect($previewTabs.get().map(t => t.path)).toEqual(['/a.ts', '/b.ts'])
-    expect($activePreviewPath.get()).toBe('/a.ts')
+    expect(urlTabs).toHaveLength(1)
+    expect(urlTabs[0].target.url).toBe('https://www.reddit.com')
+    expect($rightRailActiveTabId.get()).toBe(urlTabs[0].id)
   })
 
-  it('closeToRight is a no-op on the rightmost tab and on an unknown one', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
+  it('commits the live page onto a Browser tab without changing its id', () => {
+    openPreview(urlTarget('https://news.ycombinator.com'))
+    const id = $previewTabs.get()[0].id
 
-    requestClosePreviewTabsToRight('/b.ts')
-    requestClosePreviewTabsToRight('/nope.ts')
+    commitBrowserTabLocation(id, 'https://news.ycombinator.com/item?id=1', 'Item')
 
-    expect($previewTabs.get().map(t => t.path)).toEqual(['/a.ts', '/b.ts'])
+    expect($previewTabs.get()).toHaveLength(1)
+    expect($previewTabs.get()[0].id).toBe(id)
+    expect($previewTabs.get()[0].target.url).toBe('https://news.ycombinator.com/item?id=1')
+    expect($previewTabs.get()[0].target.label).toBe('Item')
   })
 
-  // Every door out has to forget the per-path state, not just the tile's ✕ —
-  // a dirty flag left behind keeps claiming unsaved work in a tab that is gone.
-  it.each([
-    ['requestClosePreviewTab', () => requestClosePreviewTab('/a.ts')],
-    ['requestCloseOtherPreviewTabs', () => requestCloseOtherPreviewTabs('/b.ts')],
-    ['requestClosePreviewTabsToRight', () => requestClosePreviewTabsToRight('/b.ts')],
-    ['requestCloseAllPreviewTabs', () => requestCloseAllPreviewTabs()]
-  ])('%s forgets the closed tab’s view mode, caps and dirty flag', (_name, close) => {
-    setPreviewTarget('/b.ts')
-    setPreviewTarget('/a.ts')
-    setPreviewMode('/a.ts', 'diff')
-    setPreviewCaps('/a.ts', { rendered: true, source: true })
-    setPreviewDirty('/a.ts', true)
+  it('opens more than one Browser on request, each holding its own page', () => {
+    openPreview(urlTarget('https://news.ycombinator.com'))
+    newBrowserTab()
+    openPreview(urlTarget('https://www.reddit.com'))
 
-    close()
-    // Dirty, so every one of these verbs ASKS first (MJXHRM-390) — the tab is
-    // still open until the answer lands, which is the whole point.
-    expect($previewTabs.get().some(tab => tab.path === '/a.ts')).toBe(true)
-    resolvePendingClose($pendingClose.get()!.token, true)
+    const urlTabs = $previewTabs.get().filter(tab => tab.target.kind === 'url')
 
-    expect($previewTabs.get().some(tab => tab.path === '/a.ts')).toBe(false)
-    expect($previewModes.get()['/a.ts']).toBeUndefined()
-    expect($previewCaps.get()['/a.ts']).toBeUndefined()
-    expect($dirtyPreviewPaths.get().has('/a.ts')).toBe(false)
+    expect(urlTabs.map(tab => tab.target.url)).toEqual(['https://news.ycombinator.com', 'https://www.reddit.com'])
+    expect(new Set(urlTabs.map(tab => tab.id)).size).toBe(2)
   })
 
-  // The hole MJXHRM-390 closed on the file side: the editor's buffer is
-  // component state, so an unmount takes the typing with it — and
-  // `closePreviewTab` cleared the dirty flag on the way out, leaving nothing to
-  // say work had been lost.
-  it('keeps a dirty tab open when the close is declined', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewDirty('/a.ts', true)
+  // Which Browser a link lands in: the one on screen. Selecting the older tab
+  // must send the next page there, not to whichever was opened most recently.
+  it('navigates the Browser you are looking at', () => {
+    openPreview(urlTarget('https://news.ycombinator.com'))
+    const first = $previewTabs.get()[0].id
 
-    requestClosePreviewTab('/a.ts')
-    expect($pendingClose.get()).toMatchObject({ id: '/a.ts', kind: 'file' })
+    newBrowserTab()
+    selectRightRailTab(first)
+    openPreview(urlTarget('https://www.reddit.com'))
 
-    resolvePendingClose($pendingClose.get()!.token, false)
-
-    expect($previewTabs.get().map(t => t.path)).toEqual(['/a.ts'])
-    expect($dirtyPreviewPaths.get().has('/a.ts')).toBe(true)
+    expect($previewTabs.get().find(tab => tab.id === first)?.target.url).toBe('https://www.reddit.com')
+    expect($previewTabs.get()).toHaveLength(2)
   })
 
-  it('closes a CLEAN tab with no prompt at all', () => {
-    setPreviewTarget('/a.ts')
+  // A Browser id is minted rather than derived, so it must never be handed out
+  // twice: per-tab state keyed by it would resurface under an unrelated tab.
+  it('never reuses a Browser id, even after one is closed', () => {
+    newBrowserTab()
+    const first = $previewTabs.get()[0].id
 
-    requestClosePreviewTab('/a.ts')
+    newBrowserTab()
+    closeRightRailTab(first)
+    newBrowserTab()
 
-    expect($pendingClose.get()).toBeNull()
-    expect($previewTabs.get()).toEqual([])
+    const ids = $previewTabs.get().map(tab => tab.id)
+
+    expect(ids).not.toContain(first)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
-  // The gateway-switch teardown is not a question: those tabs name files on a
-  // machine the app has stopped talking to.
-  it('closeAllPreviewTabs (the gateway teardown) never asks', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewDirty('/a.ts', true)
+  it('re-fronts an existing tab instead of duplicating it, refreshing its target', () => {
+    openPreview({ ...fileTarget('/work/demo.html'), label: 'old' })
+    openPreview({ ...fileTarget('/work/demo.html'), label: 'new' })
 
-    closeAllPreviewTabs()
-
-    expect($pendingClose.get()).toBeNull()
-    expect($previewTabs.get()).toEqual([])
+    expect($previewTabs.get()).toHaveLength(1)
+    expect($previewTarget.get()?.label).toBe('new')
   })
 
-  // "Close others" over three dirty tabs used to be one batch write; the shared
-  // gate parks one prompt PER target so none is swept away unasked.
-  it('a bulk close queues one prompt per dirty tab', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
-    setPreviewTarget('/c.ts')
-    setPreviewDirty('/a.ts', true)
-    setPreviewDirty('/c.ts', true)
+  // Local HTML files default to a live Render, whether opened from the file
+  // browser or handed over by a tool. Source is an explicit fallback only.
+  it('renders browsed html and handed-over html live', () => {
+    openPreview(fileTarget('/work/browsed.html'))
+    expect($previewTarget.get()?.renderMode).toBe('preview')
 
-    requestCloseOtherPreviewTabs('/b.ts')
+    openPreview(fileTarget('/work/handed.html'))
+    expect($previewTarget.get()?.renderMode).toBe('preview')
 
-    // The clean tab never existed as a question; the two dirty ones queued.
-    expect($pendingClose.get()?.id).toBe('/a.ts')
-    resolvePendingClose($pendingClose.get()!.token, true)
-    expect($pendingClose.get()?.id).toBe('/c.ts')
-    resolvePendingClose($pendingClose.get()!.token, false)
-
-    expect($previewTabs.get().map(t => t.path)).toEqual(['/b.ts', '/c.ts'])
+    openPreview(fileTarget('/work/manual.html'))
+    expect($previewTarget.get()?.renderMode).toBe('preview')
   })
 
-  it('counts what each verb would close, so the menu disables the dead ones', () => {
-    setPreviewTarget('/a.ts')
-    setPreviewTarget('/b.ts')
-    setPreviewTarget('/c.ts')
+  it('preserves an explicit HTML source fallback from the file browser', () => {
+    openPreview({ ...fileTarget('/work/fallback.html'), renderMode: 'source' })
 
-    expect(previewCloseTargets('/a.ts')).toEqual({ all: 3, others: 2, right: 2 })
-    expect(previewCloseTargets('/c.ts')).toEqual({ all: 3, others: 2, right: 0 })
-    expect(previewCloseTargets('/gone.ts')).toEqual({ all: 3, others: 0, right: 0 })
+    expect($previewTarget.get()?.renderMode).toBe('source')
+  })
+
+  it('switches render mode on the same tab without duplicating it', () => {
+    openPreview(fileTarget('/work/toggle.html'))
+
+    const tabId = previewTabId(fileTarget('/work/toggle.html'))
+
+    expect($previewTabs.get()).toHaveLength(1)
+    expect($previewTarget.get()?.renderMode).toBe('preview')
+
+    setPreviewRenderMode(tabId, 'source')
+
+    expect($previewTabs.get()).toHaveLength(1)
+    expect($previewTabs.get()[0]?.id).toBe(tabId)
+    expect($previewTarget.get()?.renderMode).toBe('source')
+
+    setPreviewRenderMode(tabId, 'preview')
+
+    expect($previewTabs.get()).toHaveLength(1)
+    expect($previewTabs.get()[0]?.id).toBe(tabId)
+    expect($previewTarget.get()?.renderMode).toBe('preview')
+  })
+
+  it('keeps a tab in Source when the same file is opened again', () => {
+    const target = fileTarget('/work/again.html')
+
+    openPreview(target)
+    setPreviewRenderMode(previewTabId(target), 'source')
+    openPreview({ ...target, label: 'again.html (renamed)' })
+
+    expect($previewTabs.get()).toHaveLength(1)
+    expect($previewTarget.get()?.label).toBe('again.html (renamed)')
+    expect($previewTarget.get()?.renderMode).toBe('source')
+
+    openPreview({ ...target, renderMode: 'preview' })
+
+    expect($previewTarget.get()?.renderMode).toBe('preview')
+  })
+
+  it('renders an agent hand-over of an HTML file even when its tab sits in Source', () => {
+    const target = fileTarget('/work/handed.html')
+
+    openPreview(target)
+    setPreviewRenderMode(previewTabId(target), 'source')
+    openPreview(renderedHtmlTarget(target))
+
+    expect($previewTabs.get()).toHaveLength(1)
+    expect($previewTarget.get()?.renderMode).toBe('preview')
+
+    // An explicit mode and non-HTML targets pass through untouched.
+    expect(renderedHtmlTarget({ ...target, renderMode: 'source' }).renderMode).toBe('source')
+    expect(renderedHtmlTarget({ ...fileTarget('/work/notes.md'), previewKind: 'text' }).renderMode).toBeUndefined()
+  })
+
+  it('falls back to a neighbouring tab when the active one closes, and clears the selection on the last', () => {
+    openPreview(fileTarget('/work/one.html'))
+    openPreview(fileTarget('/work/two.html'))
+
+    closeRightRailTab(previewTabId(fileTarget('/work/two.html')))
+
+    expect($previewTarget.get()?.path).toBe('/work/one.html')
+
+    closeRightRailTab(previewTabId(fileTarget('/work/one.html')))
+    expect($previewTarget.get()).toBeNull()
+    expect($rightRailActiveTabId.get()).toBeNull()
+  })
+
+  it('ignores a close for a tab that is not open, so the shortcut falls through', () => {
+    closeRightRailTab('file:file:///nowhere.html')
+
+    expect($previewTabs.get()).toHaveLength(0)
+  })
+
+  it('closes by the raw source the composer rows were handed', () => {
+    openPreview(urlTarget('http://localhost:5174'))
+
+    expect(closePreviewForSource('http://localhost:5174')).toBe(true)
+    expect($previewTabs.get()).toHaveLength(0)
+    expect(closePreviewForSource('http://localhost:5174')).toBe(false)
+  })
+
+  it('closes a tab whose url or label matches even when source differs', () => {
+    openPreview({
+      kind: 'url',
+      label: 'HN',
+      source: 'https://news.ycombinator.com',
+      url: 'https://news.ycombinator.com/'
+    })
+
+    expect(closePreviewMatching('https://news.ycombinator.com/')).toBe(true)
+    expect($previewTabs.get()).toHaveLength(0)
+
+    openPreview({ ...fileTarget('/work/demo.html'), label: 'Demo' })
+
+    expect(closePreviewMatching('Demo')).toBe(true)
+    expect($previewTabs.get()).toHaveLength(0)
+  })
+
+  it('does not wipe the rail on an empty or unknown close query', () => {
+    openPreview(fileTarget('/work/keep.html'))
+
+    expect(closePreviewMatching()).toBe(false)
+    expect(closePreviewMatching('   ')).toBe(false)
+    expect(closePreviewMatching('https://missing.example')).toBe(false)
+    expect($previewTabs.get()).toHaveLength(1)
+  })
+
+  it('persists file and url tabs but never artifacts, whose content is memory-only', () => {
+    openPreview(fileTarget('/work/demo.html'))
+    openPreview(urlTarget('http://localhost:5174'))
+    openPreview(artifactTarget('session-1:dashboard'))
+
+    const stored = window.localStorage.getItem('hermes.desktop.previewTabs.v2') ?? ''
+
+    expect(stored).toContain('/work/demo.html')
+    expect(stored).toContain('localhost:5174')
+    expect(stored).not.toContain('dashboard')
+  })
+
+  it('strips inline image bytes rather than pushing megabytes into storage', () => {
+    openPreview({ ...fileTarget('/work/shot.png'), dataUrl: 'data:image/png;base64,AAAA', previewKind: 'image' })
+
+    expect(window.localStorage.getItem('hermes.desktop.previewTabs.v2') ?? '').not.toContain('base64')
+  })
+
+  it('does not persist remote HTML without its in-memory document', () => {
+    openPreview({ ...fileTarget('/remote/report.html'), dataUrl: 'data:text/html;base64,PGgxPnJlbW90ZTwvaDE+' })
+
+    // Nothing persistable, so the profile's bucket is empty and the key is
+    // removed rather than stored as an empty list (matching the tiles store).
+    expect(window.localStorage.getItem('hermes.desktop.previewTabs.v2')).toBeNull()
+  })
+
+  it('preserves an explicit HTML source fallback', () => {
+    openPreview({ ...fileTarget('/remote/report.html'), renderMode: 'source' })
+
+    expect($previewTarget.get()?.renderMode).toBe('source')
+  })
+
+  it('does not persist transient remote HTML source fallbacks', () => {
+    const target = { ...fileTarget('/remote/report.html'), renderMode: 'source' as const, transient: true }
+
+    openPreview(target)
+
+    // Nothing persistable, so the profile's bucket is empty and the key is
+    // removed rather than stored as an empty list (matching the tiles store).
+    expect(window.localStorage.getItem('hermes.desktop.previewTabs.v2')).toBeNull()
   })
 })

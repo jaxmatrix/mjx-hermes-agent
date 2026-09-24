@@ -4,8 +4,8 @@
  * A "skin" is the CLI/TUI theme unit: a YAML file in `$HERMES_HOME/skins/` (or a
  * built-in) resolved by `hermes_cli/skin_engine.py` and pushed to every surface
  * over JSON-RPC (`gateway.ready`, `skin.changed`, `config.get skin`). This is the
- * one place the app turns that CLI-shaped palette into a `DesktopTheme`, so a
- * skin Hermes authors from a prompt lights up every surface from one file.
+ * one place the desktop turns that CLI-shaped palette into a `DesktopTheme`, so a
+ * skin Hermes authors from a prompt lights up all three surfaces from one file.
  *
  * Skins carry terminal-oriented keys (banner/status/completion). We seed the
  * desktop model from the load-bearing few (background, foreground, accent, error)
@@ -15,8 +15,10 @@
  * still picks `.dark` from the real background luminance.
  */
 
-import { ensureContrast, luminance, mix, normalizeHex, readableOn } from './color'
-import type { HermesSkin, SkinColors } from './skin-contract'
+import { ensureContrast, mix } from '@hermes/shared/color'
+import type { HermesSkin, SkinColors } from '@hermes/shared/skin'
+
+import { luminance, normalizeHex, readableInk } from './color'
 import type { DesktopTheme, DesktopThemeColors } from './types'
 
 // The accent labels the sidebar in small uppercase text, so it must clear WCAG AA
@@ -24,7 +26,7 @@ import type { DesktopTheme, DesktopThemeColors } from './types'
 const ACCENT_MIN_CONTRAST = 4.5
 
 /** First normalizable hex among `keys`, alpha flattened over `backdrop`. */
-const pick = (colors: SkinColors, keys: string[], backdrop: string): null | string => {
+const pick = (colors: SkinColors, keys: string[], backdrop: string): string | null => {
   for (const key of keys) {
     const value = normalizeHex(colors[key], backdrop)
 
@@ -85,7 +87,7 @@ export function skinToDesktopTheme(skin: HermesSkin): DesktopTheme | null {
     popover: mix(background, foreground, dark ? 0.08 : 0.05),
     popoverForeground: foreground,
     primary: accent,
-    primaryForeground: readableOn(accent),
+    primaryForeground: readableInk(accent),
     secondary: mix(accent, background, dark ? 0.72 : 0.86),
     secondaryForeground: foreground,
     accent: mix(accent, background, dark ? 0.82 : 0.88),
@@ -94,10 +96,10 @@ export function skinToDesktopTheme(skin: HermesSkin): DesktopTheme | null {
     input: pick(colors, ['completion_menu_bg'], background) ?? mix(background, foreground, dark ? 0.1 : 0.06),
     ring: accent,
     midground: accent,
-    midgroundForeground: readableOn(accent),
+    midgroundForeground: readableInk(accent),
     composerRing: accent,
     destructive,
-    destructiveForeground: readableOn(destructive),
+    destructiveForeground: readableInk(destructive),
     sidebarBackground: sidebar,
     sidebarBorder: border,
     userBubble: mix(background, accent, dark ? 0.18 : 0.12),

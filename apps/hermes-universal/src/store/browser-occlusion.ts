@@ -102,9 +102,77 @@ export function claimGuestOcclusion(reason: string): () => void {
   }
 }
 
-/** The hook every portalled primitive in `components/ui/` mounts. */
+/** A component that must appear over the pane claims the space while mounted. */
 export function useGuestOcclusion(reason: string): void {
   useEffect(() => claimGuestOcclusion(reason), [reason])
+}
+
+/**
+ * What floats over a pane, read off the DOM.
+ *
+ * Universal's own primitives used to claim the space one by one
+ * (`useGuestOcclusion` in dialog / popover / dropdown / select / context-menu /
+ * the route overlay). `components/ui/` and `app/overlays/` are desktop's files
+ * now, verbatim — desktop draws its page in a `<webview>`, which sits IN the
+ * DOM's z-order and needs none of this — so the claim cannot live in them. It is
+ * made for them instead, from what they render:
+ *
+ *   - a Radix dialog or alert (the command palette is one);
+ *   - a Radix popper (popover, dropdown, select, desktop's context menu) —
+ *     except a tooltip, which is small, transient and fires on every hover of
+ *     the pane's own bar: hiding the page for it would be a flicker per button.
+ *     The popper wrapper rather than `role="menu"` / `"listbox"`: the composer's
+ *     completion drawer wears those roles too, and sits beside the pane;
+ *   - a route overlay (`data-overlay-surface`: Settings and its siblings).
+ */
+const OCCLUDER_SELECTOR = '[role="dialog"], [role="alertdialog"], [data-overlay-surface]'
+
+const POPPER_SELECTOR = '[data-radix-popper-content-wrapper]'
+
+function occluderPresent(): boolean {
+  if (document.querySelector(OCCLUDER_SELECTOR)) {
+    return true
+  }
+
+  return [...document.querySelectorAll(POPPER_SELECTOR)].some(wrapper => !wrapper.querySelector('[role="tooltip"]'))
+}
+
+/**
+ * Hide the guest while any of those is on screen. Armed by
+ * the pane for as long as it is mounted; returns the disarm.
+ *
+ * A MutationObserver rather than a poll because its callback is a microtask: it
+ * runs after the commit that mounted the surface and BEFORE the frame that would
+ * paint it, which is the "not even for one frame" this module promises.
+ */
+export function watchGuestOccluders(): () => void {
+  if (typeof MutationObserver === 'undefined') {
+    return () => {}
+  }
+
+  let release: (() => void) | null = null
+
+  const sync = (): void => {
+    const present = occluderPresent()
+
+    if (present && !release) {
+      release = claimGuestOcclusion('dom-occluder')
+    } else if (!present && release) {
+      release()
+      release = null
+    }
+  }
+
+  const observer = new MutationObserver(sync)
+
+  observer.observe(document.body, { childList: true, subtree: true })
+  sync()
+
+  return () => {
+    observer.disconnect()
+    release?.()
+    release = null
+  }
 }
 
 /** Test seam. */

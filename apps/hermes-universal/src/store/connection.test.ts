@@ -11,7 +11,7 @@ vi.mock('@/lib/auth', () => ({
   portalLogout: vi.fn().mockResolvedValue(undefined),
   portalAgentSignIn: vi.fn().mockResolvedValue({ connected: true, baseUrl: 'https://a1' })
 }))
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -25,6 +25,7 @@ vi.mock('@/store/gateway', async () => {
 vi.mock('@/lib/secure-store', () => ({
   saveSecrets: vi.fn().mockResolvedValue(true),
   loadSecrets: vi.fn().mockResolvedValue({ token: 'T', password: 'P' }),
+  loadSshSecrets: vi.fn().mockResolvedValue({}),
   clearSecrets: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('@/lib/session-persist', () => ({
@@ -38,6 +39,28 @@ vi.mock('@/store/local-backend', () => ({
   spawnLocalBackend: vi.fn(),
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
+vi.mock('@/store/installation-id', () => ({ getInstallationId: vi.fn().mockResolvedValue('i'.repeat(32)) }))
+vi.mock('@/store/ssh-backend', async () => {
+  const { atom } = await import('@/store/atom')
+
+  return {
+    $sshPrompt: atom(null),
+    $sshStep: atom(null),
+    attachSshPrompts: vi.fn().mockResolvedValue(() => {}),
+    cancelSsh: vi.fn().mockResolvedValue(undefined),
+    connectSshBackend: vi.fn(),
+    disconnectSsh: vi.fn().mockResolvedValue(undefined),
+    isSshError: (value: unknown) =>
+      typeof value === 'object' && value !== null && typeof (value as { kind?: unknown }).kind === 'string',
+    // Mirrors the real predicate: the QUIET FLAG, never the kind (MJXHRM-592).
+    isQuietSshError: (value: unknown) =>
+      typeof value === 'object' && value !== null && (value as { quiet?: unknown }).quiet === true,
+    newAttemptId: () => 'attempt-1',
+    onSshDisconnected: vi.fn().mockResolvedValue(() => {}),
+    onSshProgress: vi.fn().mockResolvedValue(() => {}),
+    sshScopeOf: (id: null | string, profile: null | string) => `${id ?? ''}::${profile ?? ''}`
+  }
+})
 
 import {
   fetchAuthProviders,
@@ -50,17 +73,20 @@ import {
 } from '@/lib/auth'
 import { clearSecrets, saveSecrets } from '@/lib/secure-store'
 import { clearSessionJar, suspendSessionCookiePersistence } from '@/lib/session-persist'
-import { $gatewayState, connectGateway } from '@/store/gateway'
+import { $gatewayState, connectGateway } from '@/store/gateway-client'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
+import { connectSshBackend, disconnectSsh } from '@/store/ssh-backend'
 import { httpRequest } from '@/transport/http'
 
 import {
   $connection,
   $connectionError,
+  $connectionPhase,
   beginGatewaySwitch,
   connect,
   connectCloud,
   connectLocal,
+  connectSsh,
   disconnect,
   endGatewaySwitch,
   loadSavedLogin,
@@ -143,7 +169,9 @@ describe('connect — gated auth path selection', () => {
     const err = await connect({ url: 'gw.example.com' }).catch(e => e)
 
     expect(err.needsInteractiveSignIn).toBeUndefined()
-    expect(String(err)).toContain('host is down')
+    // As copy: Rust's reason can name the host, and this reaches a toast.
+    expect(String(err)).toContain('Could not reach this gateway.')
+    expect(String(err)).not.toContain('host is down')
     expect(mockOauthLogin).not.toHaveBeenCalled()
   })
 
@@ -172,6 +200,29 @@ describe('connectLocal — desktop local spawn', () => {
     expect($connection.get()).toMatchObject({ mode: 'local', authMode: 'token', token: 'LT' })
   })
 
+  // MJXHRM-592: a restart during the primary's cold start supersedes its dial.
+  // Rust answers the superseded spawn with the restarted backend; releasing the
+  // hold here would tear that backend down.
+  it('adopts the restarted backend when a restart supersedes its cold start', async () => {
+    let answer = (_backend: { baseUrl: string; token: string; wsUrl: string }) => {}
+
+    vi.mocked(stopLocalBackend).mockClear()
+    vi.mocked(spawnLocalBackend).mockReturnValue(new Promise(resolve => (answer = resolve)))
+
+    const connecting = connectLocal()
+
+    answer({
+      baseUrl: 'http://127.0.0.1:6062',
+      token: 'RESTARTED',
+      wsUrl: 'ws://127.0.0.1:6062/api/ws?token=RESTARTED'
+    })
+    await connecting
+
+    expect($connection.get()).toMatchObject({ baseUrl: 'http://127.0.0.1:6062', mode: 'local', token: 'RESTARTED' })
+    expect($connectionPhase.get()).toBe('ready')
+    expect(stopLocalBackend).not.toHaveBeenCalled()
+  })
+
   it('stops the child if the spawn/connect fails', async () => {
     vi.mocked(spawnLocalBackend).mockRejectedValue(new Error('hermes not found'))
     await expect(connectLocal()).rejects.toThrow('hermes not found')
@@ -184,6 +235,56 @@ describe('connectLocal — desktop local spawn', () => {
     vi.mocked(stopLocalBackend).mockClear()
     disconnect()
     expect(stopLocalBackend).toHaveBeenCalled()
+  })
+})
+
+// MJXHRM-592: the row was retargeted mid-dial, so a NEWER PRIMARY attempt owns
+// this connection. Tearing down here would release the hold under it. Rust says
+// so with the `quiet` flag, which only its tunnel book can set.
+describe('connectSsh — a quiet dial', () => {
+  const target = { host: 'box', port: 22, user: 'deploy', profile: null }
+
+  it('leaves the connection alone and never disconnects', async () => {
+    $connection.set({ baseUrl: 'http://127.0.0.1:7001', mode: 'ssh', authMode: 'token', token: 'NEWER' })
+    vi.mocked(connectSshBackend).mockRejectedValue({
+      kind: 'superseded',
+      message: 'A newer connection attempt replaced this one.',
+      quiet: true
+    })
+
+    await expect(connectSsh(target)).rejects.toMatchObject({ kind: 'superseded' })
+
+    expect(disconnectSsh).not.toHaveBeenCalled()
+    expect($connection.get()).toMatchObject({ baseUrl: 'http://127.0.0.1:7001', token: 'NEWER' })
+    expect($connectionError.get()).toBeNull()
+  })
+
+  // Rust mints this kind for a failure that IS this caller's own: a newer dial
+  // won the install race, or a lease owns the key now. Keying on the kind
+  // skipped the teardown, so the primary hold stayed latched with no owner here
+  // and the session, forward and remote backend lived until quit.
+  it('tears down on a superseded kind carrying no quiet flag', async () => {
+    $connection.set({ baseUrl: 'http://127.0.0.1:7001', mode: 'ssh', authMode: 'token', token: 'OLD' })
+    vi.mocked(connectSshBackend).mockRejectedValue({
+      kind: 'superseded',
+      message: 'A newer connection attempt replaced this one.'
+    })
+
+    await expect(connectSsh(target)).rejects.toMatchObject({ kind: 'superseded' })
+
+    expect(disconnectSsh).toHaveBeenCalled()
+    expect($connectionPhase.get()).toBe('error')
+    expect($connection.get()).toBeNull()
+  })
+
+  it('still tears down for any other failure', async () => {
+    vi.mocked(connectSshBackend).mockRejectedValue({ kind: 'auth-failed', message: 'wrong passphrase' })
+
+    await expect(connectSsh(target)).rejects.toMatchObject({ kind: 'auth-failed' })
+
+    expect(disconnectSsh).toHaveBeenCalled()
+    expect($connection.get()).toBeNull()
+    expect($connectionError.get()).toBe('wrong passphrase')
   })
 })
 

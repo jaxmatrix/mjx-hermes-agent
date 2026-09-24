@@ -1,133 +1,358 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  desktopSlashCommandTakesArgs,
-  desktopSlashDescription,
+  type CommandCatalogMeta,
+  type CommandsCatalogLike,
+  desktopSkinSlashCompletions,
+  type DesktopSlashArgumentMode,
+  desktopSlashCommandArgumentMode,
   desktopSlashUnavailableMessage,
+  filterDesktopCommandsCatalog,
   isDesktopSlashCommand,
+  isDesktopSlashExtensionCommand,
   isDesktopSlashSuggestion,
+  isModelPickerCommand,
+  isPickerCommand,
   rankSkillCommands,
+  rememberDesktopCommandsCatalog,
   resolveDesktopCommand,
-  type SkillCatalogMap
+  slashCompletionGroup,
+  TS_ONLY_NO_DESKTOP_SURFACE
 } from './desktop-slash-commands'
+import desktopSlashRegistry from './desktop-slash-registry.json'
 
-const rows = [{ text: '/alpha' }, { text: '/beta' }, { text: '/gamma' }]
+function registryCatalog(
+  modes: Record<string, DesktopSlashArgumentMode | null>,
+  aliases: Record<string, string> = {}
+): CommandsCatalogLike {
+  const commands: Record<string, CommandCatalogMeta> = {}
+  const canon: Record<string, string> = {}
 
-const skills: SkillCatalogMap = {
-  '/alpha': { origin: 'bundled', usage: 0 },
-  '/beta': { origin: 'hub', usage: 5 },
-  '/gamma': { origin: 'bundled', usage: 2 }
+  for (const [name, argument_mode] of Object.entries(modes)) {
+    commands[name] = { argument_mode, desktop: null }
+    canon[name] = name
+  }
+
+  for (const [alias, target] of Object.entries(aliases)) {
+    commands[alias] = commands[target]
+    canon[alias] = target
+  }
+
+  return { commands, canon }
 }
 
-describe('rankSkillCommands', () => {
-  it('orders by usage, A–Z within a tie', () => {
-    const ranked = rankSkillCommands([{ text: '/b' }, { text: '/a' }, { text: '/hot' }], {
-      '/a': { usage: 1 },
-      '/b': { usage: 1 },
-      '/hot': { usage: 9 }
+const REGISTRY_CATALOG = registryCatalog(
+  {
+    '/approvals': 'options',
+    '/review': 'text',
+    '/refine': 'text',
+    '/usage': null,
+    '/version': null,
+    '/agents': null,
+    '/steer': 'text',
+    '/stop': null,
+    '/bg': 'text',
+    '/btw': 'text',
+    '/debug': null,
+    '/goal': 'mixed',
+    '/personality': 'options',
+    '/queue': 'text',
+    '/retry': null,
+    '/rollback': null,
+    '/tools': 'options',
+    '/undo': null,
+    '/loop': 'mixed',
+    '/lcm': 'text'
+  },
+  { '/tasks': '/agents', '/background': '/bg', '/q': '/queue', '/proactive': '/loop' }
+)
+
+describe('desktop slash command curation', () => {
+  beforeEach(() => {
+    rememberDesktopCommandsCatalog(REGISTRY_CATALOG)
+  })
+
+  afterEach(() => {
+    rememberDesktopCommandsCatalog(undefined)
+  })
+
+  it('treats registry and plugin commands as exec when the catalog says so', () => {
+    expect(resolveDesktopCommand('/refine')?.argumentMode).toBe('text')
+    expect(isDesktopSlashSuggestion('/refine')).toBe(true)
+    expect(isDesktopSlashSuggestion('/background')).toBe(false)
+    expect(isDesktopSlashCommand('/bg')).toBe(true)
+    expect(desktopSlashCommandArgumentMode('/bg')).toBe('text')
+    expect(isDesktopSlashCommand('/btw')).toBe(true)
+    expect(desktopSlashCommandArgumentMode('/btw')).toBe('text')
+    expect(resolveDesktopCommand('/lcm')?.surface).toEqual({ kind: 'exec' })
+    expect(desktopSlashCommandArgumentMode('/lcm')).toBe('text')
+  })
+
+  it('groups complete.slash rows by backend kind, not the desktop table', () => {
+    // A registry command the table has never heard of is still a command.
+    expect(slashCompletionGroup('/refine', 'command')).toBe('Commands')
+    expect(slashCompletionGroup('/docx', 'skill')).toBe('Skills')
+    // Older backends omit kind — fall back to the table.
+    expect(slashCompletionGroup('/new')).toBe('Commands')
+    expect(slashCompletionGroup('/docx')).toBe('Skills')
+  })
+
+  it('surfaces skill and quick commands (extensions) in suggestions and lets them run', () => {
+    expect(isDesktopSlashSuggestion('/my-skill')).toBe(true)
+    expect(isDesktopSlashSuggestion('/gif-search')).toBe(true)
+    expect(isDesktopSlashCommand('/my-skill')).toBe(true)
+  })
+
+  it('does not run /login on desktop before the catalog is loaded', () => {
+    rememberDesktopCommandsCatalog(undefined)
+    expect(isDesktopSlashCommand('/login')).toBe(false)
+    expect(desktopSlashUnavailableMessage('/login')).not.toBeNull()
+  })
+
+  it('routes /compress through the session-compression action', () => {
+    // /compress must be an action (session.compress RPC), not exec: the slash
+    // worker route times out on large sessions (#44456).
+    expect(resolveDesktopCommand('/compress')?.surface).toEqual({ kind: 'action', action: 'compress' })
+    expect(desktopSlashCommandArgumentMode('/compress')).toBe('text')
+    expect(isDesktopSlashCommand('/compress')).toBe(true)
+    expect(isDesktopSlashSuggestion('/compress')).toBe(true)
+    expect(desktopSlashUnavailableMessage('/compress')).toBeNull()
+    // /compact is an alias — executes but stays out of the popover.
+    expect(resolveDesktopCommand('/compact')?.surface).toEqual({ kind: 'action', action: 'compress' })
+    expect(isDesktopSlashCommand('/compact')).toBe(true)
+    expect(isDesktopSlashSuggestion('/compact')).toBe(false)
+  })
+
+  it('routes only stateless session commands through dedicated gateway RPCs', () => {
+    const expected = {
+      '/save': 'session.save',
+      '/status': 'session.status'
+    } as const
+
+    for (const [name, rpcName] of Object.entries(expected)) {
+      const surface = resolveDesktopCommand(name)?.surface
+      expect(surface?.kind).toBe('rpc')
+
+      if (surface?.kind !== 'rpc') {
+        continue
+      }
+
+      expect(surface.rpc).toBe(rpcName)
+      expect(surface.buildParams({ arg: 'topic A', command: name, name: name.slice(1), sessionId: 's-1' })).toEqual({
+        session_id: 's-1'
+      })
+    }
+  })
+
+  it('allows aliases to execute without cluttering the popover', () => {
+    expect(isDesktopSlashSuggestion('/reset')).toBe(false)
+    expect(isDesktopSlashCommand('/reset')).toBe(true)
+  })
+
+  it('filters built-in catalog noise but keeps skill / quick-command extensions', () => {
+    const filtered = filterDesktopCommandsCatalog({
+      categories: [
+        {
+          name: 'Session',
+          pairs: [
+            ['/new', 'Start a new session'],
+            ['/clear', 'Clear terminal screen']
+          ]
+        },
+        {
+          name: 'User commands',
+          pairs: [['/ship-it', 'Run release checklist']]
+        }
+      ],
+      pairs: [
+        ['/new', 'Start a new session'],
+        ['/model', 'Switch model'],
+        ['/ship-it', 'Run release checklist']
+      ],
+      skill_count: 2
     })
 
-    expect(ranked.map(row => row.text)).toEqual(['/hot', '/a', '/b'])
+    expect(filtered.categories).toEqual([
+      { name: 'Session', pairs: [['/new', 'Start a new desktop chat']] },
+      { name: 'User commands', pairs: [['/ship-it', 'Run release checklist']] }
+    ])
+    expect(filtered.pairs).toEqual([
+      ['/new', 'Start a new desktop chat'],
+      ['/ship-it', 'Run release checklist']
+    ])
+    // skill_count is recomputed from the filtered output (only /ship-it is an
+    // extension command — /new is a built-in) so the /help footer matches what
+    // the user actually sees rather than echoing the unfiltered backend total.
+    expect(filtered.skill_count).toBe(1)
   })
 
-  it('keeps never-used built-ins while browsing is off', () => {
-    expect(rankSkillCommands(rows, skills).map(row => row.text)).toEqual(['/beta', '/gamma', '/alpha'])
+  it('recomputes skill_count to reflect only extensions surfaced on desktop', () => {
+    const filtered = filterDesktopCommandsCatalog({
+      pairs: [
+        ['/new', 'Start a new session'],
+        ['/clear', 'Clear terminal screen'],
+        ['/gif-search', 'Search for a gif'],
+        ['/ship-it', 'Run release checklist']
+      ],
+      skill_count: 12
+    })
+
+    expect(filtered.pairs?.map(([cmd]) => cmd)).toEqual(['/new', '/gif-search', '/ship-it'])
+    expect(filtered.skill_count).toBe(2)
   })
 
-  it('drops never-used bundled skills when browsing a bare slash', () => {
-    const ranked = rankSkillCommands(rows, skills, { pruneUnusedBuiltins: true })
+  it('builds /skin completions from desktop themes', () => {
+    const completions = desktopSkinSlashCompletions(
+      [
+        { name: 'mono', label: 'Mono', description: 'Clean grayscale' },
+        { name: 'midnight', label: 'Midnight', description: 'Deep blue' },
+        { name: 'slate', label: 'Slate', description: 'Cool slate blue' }
+      ],
+      'mono',
+      'm'
+    )
 
-    expect(ranked.map(row => row.text)).toEqual(['/beta', '/gamma'])
+    expect(completions).toEqual([
+      {
+        text: '/skin mono',
+        display: '/skin mono',
+        meta: 'Mono (current) - Clean grayscale'
+      },
+      {
+        text: '/skin midnight',
+        display: '/skin midnight',
+        meta: 'Midnight - Deep blue'
+      }
+    ])
   })
 
-  it('keeps rows the catalog has no entry for, even while pruning', () => {
-    const ranked = rankSkillCommands([...rows, { text: '/unknown' }], skills, { pruneUnusedBuiltins: true })
-
-    expect(ranked.map(row => row.text)).toContain('/unknown')
+  it('flags /model as a picker-owned command so the desktop opens the overlay', () => {
+    expect(isModelPickerCommand('/model')).toBe(true)
+    expect(isModelPickerCommand('/model sonnet')).toBe(true)
+    expect(isModelPickerCommand('/new')).toBe(false)
+    expect(isModelPickerCommand('/skills')).toBe(false)
   })
 
-  it('reorders and hides nothing on an older backend with no skills map', () => {
-    expect(rankSkillCommands(rows, undefined).map(row => row.text)).toEqual(['/alpha', '/beta', '/gamma'])
+  it('gives /resume (and its aliases) a first-class session picker surface', () => {
+    expect(isPickerCommand('/resume', 'session')).toBe(true)
+    expect(isPickerCommand('/sessions', 'session')).toBe(true)
+    expect(isPickerCommand('/switch', 'session')).toBe(true)
+    // Unlike /model, /resume shows in the popover; its aliases stay hidden.
+    expect(isDesktopSlashSuggestion('/resume')).toBe(true)
+    expect(isDesktopSlashSuggestion('/sessions')).toBe(false)
+    expect(isDesktopSlashCommand('/switch')).toBe(true)
+    // The session picker is distinct from the model picker.
+    expect(isModelPickerCommand('/resume')).toBe(false)
+  })
+
+  it('resolves commands and aliases to their declared surface', () => {
+    expect(resolveDesktopCommand('/new')?.surface).toEqual({ kind: 'action', action: 'new' })
+    expect(resolveDesktopCommand('/reset')?.surface).toEqual({ kind: 'action', action: 'new' })
+    expect(resolveDesktopCommand('/resume')?.surface).toEqual({ kind: 'picker', picker: 'session' })
+    expect(resolveDesktopCommand('/usage')?.surface).toEqual({ kind: 'exec' })
+    expect(resolveDesktopCommand('/clear')?.surface).toEqual({ kind: 'unavailable', reason: 'terminal' })
+    // Skill / quick commands aren't in the registry.
+    expect(resolveDesktopCommand('/gif-search')).toBeNull()
   })
 })
 
-// `/diff` and `/focus` shipped in the backend registry with no client row, so
-// both fell through as unknown commands. They resolve to deliberately DIFFERENT
-// surfaces, and that difference is the point of these tests.
-describe('/diff', () => {
-  it('executes on the backend — it needs a repo this client does not have', () => {
-    expect(resolveDesktopCommand('/diff')?.surface).toEqual({ kind: 'exec' })
-    expect(isDesktopSlashCommand('/diff')).toBe(true)
-    expect(desktopSlashUnavailableMessage('/diff')).toBeNull()
+describe('rankSkillCommands', () => {
+  const rows = [
+    { text: '/research' },
+    { text: '/research-paper-writing' },
+    { text: '/work' },
+    { text: '/ship-it' },
+    { text: '/manim-video' },
+    { text: '/docx' }
+  ]
+
+  const skills = {
+    '/research': { usage: 60, origin: 'local' as const },
+    '/research-paper-writing': { usage: 0, origin: 'bundled' as const },
+    '/work': { usage: 172, origin: 'local' as const },
+    '/manim-video': { usage: 0, origin: 'bundled' as const },
+    '/docx': { usage: 0, origin: 'local' as const }
+  }
+
+  it('puts the most-used skill first and breaks ties alphabetically', () => {
+    expect(rankSkillCommands(rows, skills).map(row => row.text)).toEqual([
+      '/work',
+      '/research',
+      '/docx',
+      '/manim-video',
+      '/research-paper-writing',
+      '/ship-it'
+    ])
   })
 
-  it('offers its modes as an argument step rather than committing on the bare command', () => {
-    expect(desktopSlashCommandTakesArgs('/diff')).toBe(true)
-    expect(desktopSlashDescription('/diff')).toContain('staged|all|session')
-  })
-})
+  it('drops never-used built-ins when browsing, keeping everything else', () => {
+    const browsing = rankSkillCommands(rows, skills, { pruneUnusedBuiltins: true }).map(row => row.text)
 
-describe('/approvals', () => {
-  // A plain `exec` row would run the command on the backend and stop there —
-  // and this mode is ALSO shown and set by the statusbar's Zap menu, off a cache
-  // that only syncs when it mounts. The action handler is the half that re-reads
-  // it, so the two surfaces cannot end up reporting different modes.
-  it('is a local action so the client reconciles the mode the backend just wrote', () => {
-    expect(resolveDesktopCommand('/approvals')?.surface).toEqual({ kind: 'action', action: 'approvals' })
-    expect(isDesktopSlashCommand('/approvals')).toBe(true)
-    expect(desktopSlashUnavailableMessage('/approvals')).toBeNull()
+    expect(browsing).toEqual(['/work', '/research', '/docx', '/ship-it'])
+    // A user's own unused skill survives — only shipped-and-ignored goes.
+    expect(browsing).toContain('/docx')
+    // Unclassified rows (quick commands, skills newer than the map) survive too.
+    expect(browsing).toContain('/ship-it')
   })
 
-  it('offers its modes as an argument step rather than committing on the bare command', () => {
-    expect(desktopSlashCommandTakesArgs('/approvals')).toBe(true)
-    expect(desktopSlashDescription('/approvals')).toContain('manual|smart|off')
-  })
-})
-
-describe('/focus', () => {
-  // Registering it as `exec` would have "worked" — the gateway answers /focus —
-  // and would have been wrong: its answer is to pin tool progress off, which
-  // stops the tool events this client renders from arriving at all. It is a
-  // local action instead, and the transcript does the hiding.
-  it('is a local action, not a backend exec and not an unavailable command', () => {
-    expect(resolveDesktopCommand('/focus')?.surface).toEqual({ kind: 'action', action: 'focus' })
-    expect(isDesktopSlashCommand('/focus')).toBe(true)
-    expect(desktopSlashUnavailableMessage('/focus')).toBeNull()
+  it('leaves the backend order untouched when the catalog carries no usage', () => {
+    expect(rankSkillCommands(rows, undefined, { pruneUnusedBuiltins: true })).toEqual(rows)
   })
 
-  it('offers on|off|status as an argument step', () => {
-    expect(desktopSlashCommandTakesArgs('/focus')).toBe(true)
-    expect(desktopSlashDescription('/focus')).toContain('on|off|status')
-  })
+  it('ranks an alias by the canonical command it resolves to', () => {
+    const ranked = rankSkillCommands([{ text: '/sessions' }, { text: '/research' }], {
+      '/research': { usage: 5, origin: 'local' },
+      '/resume': { usage: 900, origin: 'local' }
+    })
 
-  // /verbose stays terminal-only: it is the tool-progress CYCLE, and running it
-  // from here would write the gateway-wide display.tool_progress and take this
-  // client's tool events with it. Focus view no longer shares its surface.
-  it('no longer shares a surface with /verbose', () => {
-    expect(resolveDesktopCommand('/verbose')?.surface).toEqual({ kind: 'unavailable', reason: 'terminal' })
-    expect(resolveDesktopCommand('/focus')?.surface).not.toEqual(resolveDesktopCommand('/verbose')?.surface)
+    expect(ranked.map(row => row.text)).toEqual(['/sessions', '/research'])
   })
 })
 
-// MJXHRM-457. `/loop` (hermes_cli/loops.py) already EXECUTED without a row here
-// — the table treats anything it does not name as a backend skill command — so
-// the gap was DISCOVERABILITY: the popover offers only what this table or the
-// gateway's commands.catalog lists, and /loop is in neither.
-describe('/loop', () => {
-  it('is offered by the popover, not just silently accepted when typed', () => {
-    expect(isDesktopSlashSuggestion('/loop')).toBe(true)
-    expect(resolveDesktopCommand('/loop')?.surface).toEqual({ kind: 'exec' })
-    expect(desktopSlashUnavailableMessage('/loop')).toBeNull()
+describe('registry-derived block-list (contract with hermes_cli/commands.py)', () => {
+  beforeEach(() => rememberDesktopCommandsCatalog(undefined))
+
+  it('marks every registry row with a reason unavailable offline, without a hand-typed copy', () => {
+    for (const [name, reason] of Object.entries(desktopSlashRegistry)) {
+      if (reason === null || reason === 'hidden') {
+        continue
+      }
+
+      const spec = resolveDesktopCommand(name)
+
+      // A desktop-owned action (e.g. /model picker) may override the registry.
+      if (spec?.surface.kind === 'unavailable') {
+        expect(spec.surface.reason).toBe(reason)
+      }
+
+      expect(isDesktopSlashSuggestion(name)).toBe(false)
+    }
   })
 
-  it('names its controls, so the argument step is not a blank prompt', () => {
-    expect(desktopSlashCommandTakesArgs('/loop')).toBe(true)
-    expect(desktopSlashDescription('/loop')).toContain('/loop stop')
+  it('recognizes offered built-ins and their aliases offline as Commands, never as skills (#116159)', () => {
+    // Cold catalog: nothing remembered, nothing cached. /context has no
+    // desktop disposition and no hand-typed TS row, so only the dump can
+    // vouch for it — and it must, or the popover files it under Skills and
+    // Enter takes the extension path.
+    for (const name of ['/context', '/ctx', '/usage']) {
+      expect(desktopSlashRegistry[name as keyof typeof desktopSlashRegistry]).toBeNull()
+      expect(isDesktopSlashExtensionCommand(name)).toBe(false)
+      expect(slashCompletionGroup(name)).toBe('Commands')
+      expect(isDesktopSlashCommand(name)).toBe(true)
+      expect(resolveDesktopCommand(name)?.surface.kind).toBe('exec')
+    }
+
+    // Control: an unknown skill command still groups as a skill offline.
+    expect(slashCompletionGroup('/gif-search')).toBe('Skills')
   })
 
-  // It takes an interval AND free prose ("/loop 5m check the deploy"), so the
-  // composer must not commit it as a pill with the prompt stranded beside it.
-  it('is marked as taking free text', () => {
-    expect(resolveDesktopCommand('/loop')?.takesFreeText).toBe(true)
+  it('keeps the TS-only list disjoint from the registry dump', () => {
+    for (const names of Object.values(TS_ONLY_NO_DESKTOP_SURFACE)) {
+      for (const name of names) {
+        expect(name in desktopSlashRegistry, `${name} is in the Python registry — drop the TS row`).toBe(false)
+        expect(isDesktopSlashSuggestion(name)).toBe(false)
+        expect(isDesktopSlashCommand(name)).toBe(false)
+      }
+    }
   })
 })

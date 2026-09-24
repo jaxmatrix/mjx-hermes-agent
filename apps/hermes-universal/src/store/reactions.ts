@@ -1,173 +1,104 @@
-/**
- * Tapbacks — the half that talks to the gateway and writes the transcript.
- *
- * The wire call lives in `lib/gateway-rpc.ts` (`reactToMessage`); the pure
- * tapback rules and the two overlays live in `store/reactions-local.ts`. What
- * is here is the part that needs both: an optimistic user toggle, and the
- * inbound `message.reaction` event that paints the agent's own reaction.
- *
- * Both write the durable list onto the transcript row rather than only into an
- * overlay, because the transcript is what survives — an overlay is a patch over
- * the gap between an event landing and history catching up with it.
- */
-
-import { reactToMessage } from '@/lib/gateway-rpc'
+import type { ChatMessage } from '@/lib/chat-messages'
+import { $gateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
-import {
-  $reactionRowIds,
-  recordAgentReaction,
-  rememberReactionRowId,
-  setLocalReaction,
-  writeLocalReactions
-} from '@/store/reactions-local'
-import { $sessionStates, updateSession } from '@/store/session-state-types'
+import { $activeSessionId, $messages, setMessages } from '@/store/session'
+import { requestForOwnedSession } from '@/store/session-states'
 import type { MessageReaction } from '@/types/hermes'
 
-export { applyReaction, QUICK_REACTIONS } from '@/store/reactions-local'
+/** The six iOS Tapback defaults, in Apple's order. */
+export const QUICK_REACTIONS = ['❤️', '👍', '👎', '😂', '‼️', '❓'] as const
 
-/** The message a reaction targets, as the caller knows it at click time. */
-export interface ReactionTarget {
-  id: string
-  role: 'assistant' | 'user'
-  /** Absent until the row has round-tripped — see `ChatMessage.rowId`. */
-  rowId?: number
-}
-
-/**
- * Stamp a durable row id and its reactions onto one row of a session's
- * transcript.
- *
- * Matching is by ROW ID where the row knows one, and otherwise by "the newest
- * row of this role that has not yet round-tripped". That second leg is not a
- * convenience — it is the only way a live message can be matched at all. The
- * agent's default target is the newest message of a role, and a live row has no
- * durable id until a resume gives it one, so an id-only match would silently
- * find nothing on exactly the messages a user is most likely to be looking at.
- *
- * Matching the newest UNSTAMPED row rather than simply the newest is what keeps
- * it honest: a row that already carries a different `rowId` is a different
- * persisted message, and stamping this reaction onto it would paint a reaction
- * on the wrong bubble — worse than not painting at all.
- */
-function stampRowReactions(
-  sessionKey: string,
-  rowId: number,
-  role: 'assistant' | 'user',
+interface MessageReactResponse {
+  row_id: number
   reactions: MessageReaction[]
-): boolean {
-  let matched = false
-
-  updateSession(sessionKey, state => {
-    const byRowId = state.messages.findIndex(message => message.rowId === rowId)
-    let index = byRowId
-
-    // `findLastIndex` is ES2023; the tsconfig lib predates it, and a manual
-    // reverse scan reads no worse than the polyfill would.
-    for (let i = state.messages.length - 1; index < 0 && i >= 0; i -= 1) {
-      if (state.messages[i].role === role && state.messages[i].rowId === undefined) {
-        index = i
-      }
-    }
-
-    if (index < 0) {
-      return state
-    }
-
-    matched = true
-
-    return {
-      ...state,
-      // A NEW ChatMessage object per change is load-bearing: assistant-ui caches
-      // normalized messages by object identity, so a mutation in place renders
-      // stale.
-      messages: state.messages.map((message, at) => (at === index ? { ...message, reactions, rowId } : message))
-    }
-  })
-
-  return matched
 }
 
-/** The session slice a renderer message id currently lives in. */
-function sessionKeyForMessage(messageId: string): null | string {
-  for (const [key, state] of Object.entries($sessionStates.get())) {
-    if (state.messages.some(message => message.id === messageId)) {
-      return key
-    }
+/** Apply the local half of a tapback: one reaction per author, re-tap retracts. */
+export function applyReaction(
+  reactions: MessageReaction[] | undefined,
+  emoji: null | string,
+  author: MessageReaction['author']
+): MessageReaction[] {
+  const current = reactions ?? []
+  const previous = current.find(reaction => reaction.author === author)
+  const without = current.filter(reaction => reaction.author !== author)
+
+  if (!emoji || previous?.emoji === emoji) {
+    return without
   }
 
-  return null
+  return [...without, { emoji, author, at: Date.now() / 1000 }]
+}
+
+function writeReactions(messageId: string, reactions: MessageReaction[], rowId?: number) {
+  // A NEW ChatMessage object per change is load-bearing: the runtime
+  // repository caches normalized ThreadMessages in a WeakMap keyed by
+  // ChatMessage identity, so a mutation in place renders stale.
+  // Keyed by the renderer id, not rowId: a live message has no rowId yet.
+  setMessages(messages =>
+    messages.map(message =>
+      message.id === messageId ? { ...message, reactions, ...(rowId === undefined ? {} : { rowId }) } : message
+    )
+  )
 }
 
 /**
- * Paint a `message.reaction` event — the agent reacting through its own tool.
+ * Toggle *author*'s reaction on a persisted message.
  *
- * Already persisted by the time this arrives; this only shows it now instead of
- * at the next resume. The overlay is recorded alongside the transcript write
- * because the end-of-turn resume rebuilds from the gateway's in-memory history,
- * which does not carry a reaction written to the DB mid-turn.
- */
-export function applyReactionEvent(
-  sessionKey: string,
-  rowId: number,
-  role: 'assistant' | 'user',
-  reactions: MessageReaction[]
-): void {
-  recordAgentReaction(rowId, reactions)
-  stampRowReactions(sessionKey, rowId, role, reactions)
-}
-
-/**
- * Toggle *author*'s reaction on a message.
- *
- * Optimistic: the overlay paints immediately, then the backend's returned list
- * wins. A failed write rolls back visibly and says why, rather than the
- * reaction quietly disagreeing with the server.
+ * Optimistic: paints immediately, then lets the backend's returned list win.
+ * A failed write rolls back to the snapshot (desktop AGENTS.md — "be optimistic,
+ * then honest").
  */
 export async function toggleMessageReaction(
-  message: ReactionTarget,
-  sessionId: string,
+  message: ChatMessage,
   emoji: null | string,
   author: MessageReaction['author'] = 'user'
 ): Promise<void> {
-  if (!sessionId) {
-    notifyError(new Error('No active session'), 'Could not react')
+  // A live message hasn't round-tripped through a resume yet, so it carries no
+  // rowId. Rather than disable the affordance (which made reactions invisible
+  // in any active conversation), let the backend resolve the newest row of
+  // this role — which is exactly the message being reacted to.
+  const rowId = message.rowId
+  const sessionId = $activeSessionId.get()
+  const gateway = $gateway.get()
+
+  if (!sessionId || !gateway) {
+    notifyError(new Error(!sessionId ? 'No active session' : 'Gateway not connected'), 'Could not react')
 
     return
   }
 
-  const snapshot = setLocalReaction(message.id, emoji)
+  // Bound (not wrapped) so the ambient fallback keeps the exact call shape
+  // gateway.request callers assert on — mirrors approval.respond routing.
+  const ambientRequest = gateway.request.bind(gateway)
+
+  const snapshot = $messages.get().find(m => m.id === message.id)?.reactions
+
+  writeReactions(message.id, applyReaction(snapshot, emoji, author))
 
   try {
-    // A LIVE message has not round-tripped through a resume, so it carries no
-    // row id. Rather than disable the affordance — which would make reactions
-    // invisible in any active conversation — let the backend resolve the newest
-    // row of this role, which is exactly the message being reacted to.
-    const target =
-      message.rowId === undefined ? ({ newest_role: message.role } as const) : ({ row_id: message.rowId } as const)
+    // Route through the session's OWNER, not the ambient active gateway: the
+    // window may be foregrounding a different profile/connection than the one
+    // that owns this session (secondary-profile chats, Bot-Mode tiles,
+    // post-reconnect rehydration). Dispatching on the ambient socket made the
+    // backend that never held the runtime answer 4040 "message not found"
+    // even though the row exists in the owning profile's state DB (#80670).
+    // requestForOwnedSession resolves the exact owner route and fails closed;
+    // the ambient request stays the fallback for legacy single-profile
+    // setups where the owner cannot be named.
+    const result = await requestForOwnedSession<MessageReactResponse>(sessionId, ambientRequest, 'message.react', {
+      session_id: sessionId,
+      ...(rowId === undefined ? { newest_role: message.role } : { row_id: rowId }),
+      emoji,
+      author
+    })
 
-    const result = await reactToMessage({ author, emoji, sessionId, target })
-    const reactions = result?.reactions ?? []
-
-    writeLocalReactions(message.id, reactions)
-
-    // Learn the row this turned out to be, so a second toggle addresses it
-    // directly instead of asking the backend to re-resolve "newest of this
-    // role" — which by then may be a different message.
-    if (typeof result?.row_id === 'number') {
-      rememberReactionRowId(message.id, result.row_id)
-
-      const key = sessionKeyForMessage(message.id)
-
-      if (key) {
-        stampRowReactions(key, result.row_id, message.role, reactions)
-      }
-    }
-  } catch (error) {
-    // Be optimistic, THEN honest.
-    writeLocalReactions(message.id, snapshot)
-    notifyError(error, 'Could not react')
+    // Learn the row id from the response so later toggles address it directly.
+    writeReactions(message.id, result?.reactions ?? [], result?.row_id)
+  } catch (err) {
+    // Be optimistic, THEN honest: a rejected write rolls back visibly and says
+    // why, instead of the reaction quietly vanishing (desktop AGENTS.md).
+    writeReactions(message.id, snapshot ?? [])
+    notifyError(err, 'Could not react')
   }
 }
-
-/** Whether a renderer message has learned its durable row id. */
-export const knownReactionRowId = (messageId: string): number | undefined => $reactionRowIds.get()[messageId]

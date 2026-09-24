@@ -1,10 +1,15 @@
+import type * as Nanostores from 'nanostores'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Isolate the bubble list logic from the runtime: a controllable active-id atom
 // stands in for the real session store, and the tile delegate / slice eviction
 // are inert spies. This keeps the store platform-agnostic and directly testable.
-vi.mock('@/store/session', async () => {
-  const { atom } = await import('nanostores')
+//
+// Hoisted so tests can seed `$sessions` without importing a non-exported symbol
+// from `@/store/session-lifecycle` (TS2459). `require` keeps nanostores usable
+// inside `vi.hoisted` (ESM imports are not initialized yet when hoisted runs).
+const lifecycle = vi.hoisted(() => {
+  const { atom } = require('nanostores') as typeof Nanostores
   const $activeStoredSessionId = atom<null | string>(null)
   // The loaded recents page. `sameStoredSession` is the only thing that reads it
   // here, and the rule is reproduced rather than stubbed to `a === b`, so a test
@@ -42,6 +47,8 @@ vi.mock('@/store/session', async () => {
   }
 })
 
+vi.mock('@/store/session-lifecycle', () => lifecycle)
+
 // The reverse index stands in for the real session map: `live` holds the stored
 // ids that currently have a slice, so the store's "is this session already
 // live?" questions are answerable without booting the whole session graph.
@@ -50,7 +57,7 @@ const live = new Map<string, string>()
 // Which slices are "still working" — the predicate the close gate consults.
 const busyKeys = new Set<string>()
 
-vi.mock('@/store/session-states', () => ({
+vi.mock('@/store/session-key-states', () => ({
   dropSessionState: vi.fn(),
   runtimeKeyForStoredSession: (id: null | string) => (id ? (live.get(id) ?? null) : null),
   sessionKeyNeedsCloseConfirm: (key: null | string) => Boolean(key && busyKeys.has(key)),
@@ -63,9 +70,8 @@ vi.mock('@/store/session-states', () => ({
   })
 }))
 
-import { $activeStoredSessionId, $sessions } from '@/store/session'
+import { dropSessionState, sessionTileDelegate } from '@/store/session-key-states'
 import { $activeSessionKey } from '@/store/session-state-types'
-import { dropSessionState, sessionTileDelegate } from '@/store/session-states'
 
 import {
   $chatBubbles,
@@ -77,6 +83,8 @@ import {
 } from './chat-bubbles'
 import { $pendingClose, resolvePendingClose } from './close-confirm'
 
+const { $activeStoredSessionId, $sessions } = lifecycle
+
 const ids = () => $chatBubbles.get().map(b => b.storedSessionId)
 
 afterEach(() => {
@@ -86,7 +94,7 @@ afterEach(() => {
 
   $chatBubbles.set([])
   $activeStoredSessionId.set(null)
-  ;($sessions as unknown as { set: (v: unknown[]) => void }).set([])
+  $sessions.set([])
   $activeSessionKey.set('')
   busyKeys.clear()
   live.clear()
@@ -337,7 +345,7 @@ describe('chat-bubbles store', () => {
    * in bubble" from that row added a SECOND bubble onto one live slice.
    */
   it('does not add a second bubble for a session already in the row under another id', () => {
-    ;($sessions as unknown as { set: (v: unknown[]) => void }).set([{ _lineage_root_id: 'root', id: 'tip' }])
+    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' }])
     $activeStoredSessionId.set('a')
     addBubble('root')
     expect(ids()).toEqual(['a', 'root'])
@@ -348,7 +356,7 @@ describe('chat-bubbles store', () => {
   })
 
   it('does not bubble the conversation already in the active chat under another id', () => {
-    ;($sessions as unknown as { set: (v: unknown[]) => void }).set([{ _lineage_root_id: 'root', id: 'tip' }])
+    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' }])
     $activeStoredSessionId.set('tip')
 
     addBubble('root')
@@ -357,7 +365,7 @@ describe('chat-bubbles store', () => {
   })
 
   it('still bubbles a genuinely different session', () => {
-    ;($sessions as unknown as { set: (v: unknown[]) => void }).set([{ _lineage_root_id: 'root', id: 'tip' }])
+    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' }])
     $activeStoredSessionId.set('a')
     addBubble('root')
 
@@ -387,7 +395,10 @@ describe('chat-bubbles store', () => {
   // itself as "New session". The draft needs a bubble of its own to stop it
   // borrowing a neighbour's.
   it('gives an active draft its own bubble when the row already has some', () => {
-    $chatBubbles.set([{ storedSessionId: 'a' }, { storedSessionId: 'b' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'a', tabKey: 'a' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'b', tabKey: 'b' }
+    ])
 
     $activeStoredSessionId.set('a')
     $activeStoredSessionId.set(null)
@@ -396,7 +407,7 @@ describe('chat-bubbles store', () => {
   })
 
   it('does not stack up draft bubbles', () => {
-    $chatBubbles.set([{ storedSessionId: 'a' }])
+    $chatBubbles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'a', tabKey: 'a' }])
 
     $activeStoredSessionId.set('a')
     $activeStoredSessionId.set(null)

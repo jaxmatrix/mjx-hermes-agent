@@ -1,19 +1,20 @@
 /**
  * I1-I5: a painted row is pixels, never knowledge. The guard is structural — the
- * rows are not in `$sessionStates` — so these tests assert the STRUCTURE, not a
+ * rows are not in `$sessionKeyStates` — so these tests assert the STRUCTURE, not a
  * flag someone has to remember to check.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { __resetTranscriptTailCache, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $messages, $paintedMessages, $paintedMessagesEmpty } from '@/store/chat'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   hydratingKey,
+  hydratingKeyFor,
   updateSession
 } from '@/store/session-state-types'
 import {
@@ -21,8 +22,15 @@ import {
   __resetTranscriptPaint,
   BOOT_PAINT_KEY,
   clearTranscriptPaint,
-  paintCachedTail
+  paintCachedTail,
+  transcriptTailKey
 } from '@/store/transcript-paint'
+
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
 
 const row = (id: string, body: string): ChatMessage => ({ id, parts: [{ text: body, type: 'text' }], role: 'user' })
 
@@ -30,14 +38,14 @@ beforeEach(() => {
   localStorage.clear()
   __resetTranscriptTailCache()
   __resetTranscriptPaint()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $activeSessionKey.set('draft:test')
 })
 
 describe('paintCachedTail', () => {
   it('paints a cached tail under the slice key', () => {
     saveTranscriptTail('stored-1', [row('m1', 'hello')])
-    ensureSessionSlice(hydratingKey('stored-1'), { busy: true, storedSessionId: 'stored-1' })
+    ensureSessionSlice({ draftKey: hydratingKey('stored-1') }, { busy: true, storedSessionId: 'stored-1' })
 
     expect(paintCachedTail(hydratingKey('stored-1'), 'stored-1')).toBe(true)
     expect($transcriptPaint.get()[hydratingKey('stored-1')].messages.map(m => m.id)).toEqual(['m1'])
@@ -47,16 +55,16 @@ describe('paintCachedTail', () => {
   // crash journal writes `state.messages` for every busy slice, and the voice
   // cursor narrates them. A painted row must be unreachable from all three, and
   // it is because it is not in the map they read.
-  it('never writes a row into $sessionStates', () => {
+  it('never writes a row into $sessionKeyStates', () => {
     saveTranscriptTail('stored-1', [row('m1', 'hello')])
 
     const key = hydratingKey('stored-1')
 
-    ensureSessionSlice(key, { busy: true, storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'stored-1' })
     paintCachedTail(key, 'stored-1')
 
-    expect($sessionStates.get()[key].messages).toEqual([])
-    expect(Object.values($sessionStates.get()).flatMap(state => state.messages)).toEqual([])
+    expect($sessionKeyStates.get()[key].messages).toEqual([])
+    expect(Object.values($sessionKeyStates.get()).flatMap(state => state.messages)).toEqual([])
   })
 
   // T15
@@ -75,7 +83,7 @@ describe('paintCachedTail', () => {
   // paint there is a flicker on top of the right answer.
   it('refuses to paint over a slice that already has messages', () => {
     saveTranscriptTail('stored-1', [row('cached', 'stale')])
-    ensureSessionSlice('runtime-1', { storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { storedSessionId: 'stored-1' })
     updateSession('runtime-1', state => ({ ...state, messages: [row('live', 'fresh')] }))
 
     expect(paintCachedTail('runtime-1', 'stored-1')).toBe(false)
@@ -120,7 +128,7 @@ describe('$paintedMessages', () => {
   // would break nanostores' dedupe and re-render every transcript in the app on
   // every streamed token.
   it('returns the IDENTICAL array reference as $messages when the lane is empty', () => {
-    ensureSessionSlice('runtime-1', { storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { storedSessionId: 'stored-1' })
     updateSession('runtime-1', state => ({ ...state, messages: [row('live', 'fresh')] }))
     $activeSessionKey.set('runtime-1')
 
@@ -135,7 +143,7 @@ describe('$paintedMessages', () => {
 
     const key = hydratingKey('stored-1')
 
-    ensureSessionSlice(key, { busy: true, storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'stored-1' })
     $activeSessionKey.set(key)
     paintCachedTail(key, 'stored-1')
 
@@ -159,5 +167,55 @@ describe('$paintedMessages', () => {
 
     expect($paintedMessages.get()).toEqual([])
     expect($paintedMessagesEmpty.get()).toBe(true)
+  })
+})
+
+/**
+ * MJXHRM-591 — the cache key carries the connection.
+ *
+ * Two backends mint the same `uuid4().hex[:8]`. A cache keyed by the bare id
+ * would paint another machine's conversation under a same-named session, which
+ * is why the switch used to wipe every tail — at the cost of every bound tab's.
+ * Scoping the key closes both halves: no bleed, and nothing to lose.
+ */
+describe('the tail cache key', () => {
+  const refA = { connectionId: 'conn-a', profile: 'default', storedSessionId: 'abc12345' }
+  const refB = { connectionId: 'conn-b', profile: 'default', storedSessionId: 'abc12345' }
+
+  it('keeps two connections\u2019 same-named sessions apart', () => {
+    const keyA = hydratingKeyFor(refA)
+    const keyB = hydratingKeyFor(refB)
+
+    ensureSessionSlice(localSite(keyA), {
+      busy: true,
+      connectionId: 'conn-a',
+      profile: 'default',
+      storedSessionId: 'abc12345'
+    })
+    ensureSessionSlice(localSite(keyB), {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      storedSessionId: 'abc12345'
+    })
+
+    saveTranscriptTail(transcriptTailKey(keyA, 'abc12345'), [row('m1', 'from A')])
+
+    expect(paintCachedTail(keyA, 'abc12345')).toBe(true)
+    expect($transcriptPaint.get()[keyA].messages.map(m => m.id)).toEqual(['m1'])
+    // B has no tail of its own, and must not be handed A's.
+    expect(paintCachedTail(keyB, 'abc12345')).toBe(false)
+    expect($transcriptPaint.get()[keyB]).toBeUndefined()
+  })
+
+  it('leaves the local connection\u2019s entries byte-identical to the legacy ones', () => {
+    const key = hydratingKey('abc12345')
+
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'abc12345' })
+    // Written under the BARE id, as every entry already on disk is.
+    saveTranscriptTail('abc12345', [row('m1', 'legacy')])
+
+    expect(transcriptTailKey(key, 'abc12345')).toBe('abc12345')
+    expect(paintCachedTail(key, 'abc12345')).toBe(true)
   })
 })

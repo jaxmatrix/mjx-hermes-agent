@@ -16,6 +16,11 @@ const session = (over: Partial<SessionInfo>): SessionInfo =>
   }) as SessionInfo
 
 vi.mock('@/hermes', () => ({
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   listSessions: vi.fn(async () => ({
     sessions: [
       session({ id: 's1', title: 'Old chat', message_count: 3 }),
@@ -25,26 +30,30 @@ vi.mock('@/hermes', () => ({
     offset: 0
   })),
   setSessionArchived: vi.fn(async () => ({ ok: true })),
-  deleteSession: vi.fn(async () => ({ ok: true })),
-  getDefaultCwd: vi.fn(async () => ({ cwd: '/home/u', branch: null }))
+  deleteSession: vi.fn(async () => ({ ok: true }))
+}))
+// The backend-cwd hint moved off the @/hermes monolith onto desktop-fs when
+// desktop's barrel took over @/hermes.
+vi.mock('@/lib/desktop-fs', () => ({
+  desktopDefaultCwd: vi.fn(async () => ({ cwd: '/home/u', branch: null }))
 }))
 // `isSessionPinned` is exercised for real in store/session.test.ts (it reads
 // the backend flag AND the lineage-root-keyed local pin set). Here it is a
 // controllable stub: what this file has to prove is that the dialog renders the
 // keep-flag warning exactly when the predicate says the row is pinned.
-vi.mock('@/store/session', () => ({
+vi.mock('@/store/session-lifecycle', () => ({
   refreshSessions: vi.fn(async () => undefined),
   isSessionPinned: vi.fn(() => false)
 }))
 vi.mock('@/store/projects', () => ({ pickProjectFolder: vi.fn(async () => null) }))
 
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 
 import { ConfirmHost } from '@/components/confirm-host'
 import { deleteSession, setSessionArchived } from '@/hermes'
 import { I18nProvider } from '@/i18n'
 import { $confirmRequest } from '@/store/confirm'
-import { isSessionPinned } from '@/store/session'
+import { isSessionPinned } from '@/store/session-lifecycle'
 
 import { ArchivedSection } from './archived-section'
 
@@ -52,7 +61,7 @@ const unarchive = vi.mocked(setSessionArchived)
 const pinned = vi.mocked(isSessionPinned)
 
 const PINNED_WARNING =
-  'This chat is pinned. Pinning marks it as kept — bulk cleanups skip it, but deleting it here is permanent.'
+  'This chat is pinned — unpin it first if you did not mean to delete it.'
 
 /** Open the permanent-delete confirm on the first archived row. */
 const openDeleteConfirm = async () => {

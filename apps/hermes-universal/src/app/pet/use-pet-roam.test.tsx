@@ -1,145 +1,123 @@
-import { render } from '@testing-library/react'
-import { act, createRef, type RefObject } from 'react'
+import { act, type RefObject, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { $petMotion, $petRoamDir } from '@/store/pet'
+vi.mock('@/store/pet', () => ({
+  $petMotion: { set: () => undefined },
+  $petRoamDir: { set: () => undefined }
+}))
+
+import { reactRoot } from '@/test/react-root'
+
+import { installWindowStateBridge, setDocumentHidden, type WindowStateBridge } from '../../test/window-state'
 
 import { usePetRoam } from './use-pet-roam'
 
-const PET_W = 63
-const PET_H = 69
+const mount = reactRoot()
+let windowState: WindowStateBridge
 
-let frames: FrameRequestCallback[] = []
-let nextFrame = 1
+function installRaf() {
+  const request = vi.fn((_callback: FrameRequestCallback) => 1)
+  const cancel = vi.fn()
 
-function flushFrame(now: number): void {
-  const due = frames
-  frames = []
-  act(() => {
-    for (const cb of due) {
-      cb(now)
-    }
-  })
+  Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: request })
+  Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, value: cancel })
+
+  return { cancel, request }
 }
 
-function setHidden(hidden: boolean): void {
-  Object.defineProperty(document, 'hidden', { configurable: true, value: hidden, writable: true })
-  act(() => {
-    document.dispatchEvent(new Event('visibilitychange'))
-  })
-}
+function RoamHarness({ isInteracting = () => false }: { isInteracting?: () => boolean }) {
+  const ref = useRef<HTMLDivElement | null>(null)
 
-interface HarnessProps {
-  containerRef: RefObject<HTMLDivElement | null>
-  enabled?: boolean
-  commit?: (p: { x: number; y: number }) => void
-}
-
-function Harness({ commit = () => {}, containerRef, enabled = true }: HarnessProps) {
   usePetRoam({
-    commit,
-    containerRef,
-    enabled,
-    isInteracting: () => false,
-    loopMs: 1100,
-    mobile: true,
+    commit: () => undefined,
+    containerRef: ref as RefObject<HTMLDivElement | null>,
+    enabled: true,
+    isInteracting,
+    loopMs: 1200,
     overlayOpen: false,
-    petH: PET_H,
-    petW: PET_W
+    petH: 64,
+    petW: 64
   })
 
-  return <div ref={containerRef} />
+  return <div ref={ref} />
 }
 
-function mount(props: Omit<HarnessProps, 'containerRef'> = {}) {
-  const containerRef = createRef<HTMLDivElement>()
-
-  return render(<Harness containerRef={containerRef} {...props} />)
-}
-
-beforeEach(() => {
-  frames = []
-  nextFrame = 1
-  setHidden(false)
-
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400, writable: true })
-  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800, writable: true })
-
-  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-    frames.push(cb)
-
-    return nextFrame++
-  })
-  vi.stubGlobal('cancelAnimationFrame', () => {})
-})
-
-afterEach(() => {
-  vi.unstubAllGlobals()
-  $petMotion.set(null)
-  $petRoamDir.set(0)
-})
-
-describe('usePetRoam', () => {
-  it('does not run while disabled, and clears the wander signals', () => {
-    $petMotion.set('run')
-    $petRoamDir.set(1)
-
-    mount({ enabled: false })
-
-    expect(frames).toHaveLength(0)
-    expect($petMotion.get()).toBeNull()
-    expect($petRoamDir.get()).toBe(0)
+describe('usePetRoam RAF scheduling', () => {
+  beforeEach(() => {
+    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    vi.useFakeTimers()
+    setDocumentHidden(false)
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    windowState = installWindowStateBridge()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 164,
+      height: 64,
+      left: 100,
+      right: 164,
+      top: 100,
+      width: 64,
+      x: 100,
+      y: 100,
+      toJSON: () => ({})
+    } as DOMRect)
   })
 
-  it('drives a frame loop while enabled', () => {
-    mount()
-
-    expect(frames.length).toBeGreaterThan(0)
-
-    flushFrame(16)
-    expect(frames.length).toBeGreaterThan(0)
+  afterEach(() => {
+    mount.unmount()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    setDocumentHidden(false)
+    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
   })
 
-  it('stops the loop when the document is hidden', () => {
-    mount()
-    flushFrame(16)
+  it('uses a pause timer, not RAF, while dwelling at idle', () => {
+    const raf = installRaf()
 
-    setHidden(true)
-    frames = []
-    // Nothing re-arms the loop: a mascot pacing a screen nobody is looking at
-    // is pure battery, and webviews differ on whether they throttle rAF at all.
-    expect(frames).toHaveLength(0)
-    expect($petMotion.get()).toBeNull()
+    mount.render(<RoamHarness />)
+
+    expect(raf.request).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(1)
   })
 
-  it('resumes when the document comes back', () => {
-    mount()
-    flushFrame(16)
-    setHidden(true)
-    frames = []
+  it('clears the pause wakeup while the Electron window is paused and restarts it when visible', () => {
+    const raf = installRaf()
 
-    setHidden(false)
-    expect(frames.length).toBeGreaterThan(0)
+    mount.render(<RoamHarness />)
+    expect(vi.getTimerCount()).toBe(1)
+
+    windowState.emit({ isMinimized: true, isVisible: false })
+
+    expect(raf.cancel).not.toHaveBeenCalled()
+    expect(raf.request).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+
+    windowState.emit({ isMinimized: false, isVisible: true })
+
+    expect(raf.request).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(1)
   })
 
-  it('does not start at all if mounted while hidden', () => {
-    setHidden(true)
-    mount()
+  it('keeps idle movement scheduled while unfocused and cleans up on unmount', () => {
+    const raf = installRaf()
 
-    expect(frames).toHaveLength(0)
-  })
+    mount.render(<RoamHarness />)
+    expect(vi.getTimerCount()).toBe(1)
 
-  it('commits the final position and clears the signals on unmount', () => {
-    const commit = vi.fn()
-    const view = mount({ commit })
+    act(() => window.dispatchEvent(new Event('blur')))
+    expect(vi.getTimerCount()).toBe(1)
 
-    flushFrame(16)
-    $petMotion.set('run')
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(vi.getTimerCount()).toBe(1)
 
-    act(() => view.unmount())
+    mount.unmount()
+    expect(vi.getTimerCount()).toBe(0)
 
-    expect(commit).toHaveBeenCalled()
-    expect($petMotion.get()).toBeNull()
-    expect($petRoamDir.get()).toBe(0)
+    act(() => {
+      vi.advanceTimersByTime(2000)
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(raf.request).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

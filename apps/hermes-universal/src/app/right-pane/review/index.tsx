@@ -9,6 +9,7 @@ import { DiffCount } from '@/components/ui/diff-count'
 import { Tip } from '@/components/ui/tooltip'
 import { useDelayedTrue } from '@/hooks/use-delayed-true'
 import { useI18n } from '@/i18n'
+import { displayPath } from '@/lib/display-path'
 import { cn } from '@/lib/utils'
 import { $panesFlipped } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
@@ -68,14 +69,10 @@ export function ReviewPane() {
     <aside
       aria-label={c.review}
       className={cn(
-        'before:pointer-events-none relative flex h-full w-full min-w-0 flex-col overflow-hidden border-(--ui-stroke-secondary) bg-(--ui-sidebar-surface-background) text-(--ui-text-tertiary)',
-        // The rails are grid columns, so they already mirror under `dir=rtl` and
-        // the seam follows with a logical border. The inner highlight is a
-        // box-shadow OFFSET — geometry, not layout — so it carries the direction
-        // sign instead, or it would light the opposite edge from its own border.
+        'before:pointer-events-none relative flex h-full w-full min-w-0 flex-col overflow-hidden border-(--ui-stroke-secondary) bg-(--ui-sidebar-surface-background) pt-(--titlebar-height) text-(--ui-text-tertiary)',
         panesFlipped
-          ? 'border-e shadow-[inset_calc(-0.0625rem*var(--dir-flip-x))_0_0_color-mix(in_srgb,white_18%,transparent)]'
-          : 'border-s shadow-[inset_calc(0.0625rem*var(--dir-flip-x))_0_0_color-mix(in_srgb,white_18%,transparent)]'
+          ? 'border-e shadow-[inset_-0.0625rem_0_0_color-mix(in_srgb,white_18%,transparent)]'
+          : 'border-s shadow-[inset_0.0625rem_0_0_color-mix(in_srgb,white_18%,transparent)]'
       )}
     >
       {(loading || isRepo) && (
@@ -132,11 +129,9 @@ export function ReviewPane() {
               <Codicon name="refresh" size="0.8125rem" spinning={loading} />
             </Button>
           </Tip>
-          <Tip label={c.close}>
-            <Button aria-label={c.close} className={ACTION_BTN} onClick={closeReview} size="icon-xs" variant="ghost">
-              <Codicon name="close" size="0.8125rem" />
-            </Button>
-          </Tip>
+          <Button aria-label={c.close} className={ACTION_BTN} onClick={closeReview} size="icon-xs" variant="ghost">
+            <Codicon name="close" size="0.8125rem" />
+          </Button>
         </RightSidebarSectionHeader>
       )}
 
@@ -161,9 +156,9 @@ export function ReviewPane() {
           <div className="flex items-center gap-1 px-2.5 py-1.5" data-suppress-pane-reveal-side="">
             <span
               className="min-w-0 flex-1 truncate font-mono text-[0.66rem] text-(--ui-text-secondary)"
-              title={selectedFile.path}
+              title={displayPath(selectedFile.path)}
             >
-              {selectedFile.path}
+              {displayPath(selectedFile.path)}
             </span>
             <DiffCount added={selectedFile.added} className="text-[0.64rem] leading-4" removed={selectedFile.removed} />
             <Tip label={selectedFile.staged ? c.unstage : c.stage}>
@@ -181,17 +176,15 @@ export function ReviewPane() {
                 <Codicon name={selectedFile.staged ? 'remove' : 'add'} size="0.8rem" />
               </Button>
             </Tip>
-            <Tip label={c.close}>
-              <Button
-                aria-label={c.close}
-                className={ACTION_BTN}
-                onClick={clearReviewSelection}
-                size="icon-xs"
-                variant="ghost"
-              >
-                <Codicon name="close" size="0.8rem" />
-              </Button>
-            </Tip>
+            <Button
+              aria-label={c.close}
+              className={ACTION_BTN}
+              onClick={clearReviewSelection}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <Codicon name="close" size="0.8rem" />
+            </Button>
           </div>
           <div className="min-h-0 flex-1 overflow-auto px-1 pb-1">
             {diffLoading ? (
@@ -217,15 +210,15 @@ export function ReviewPane() {
             {!revertingAll && revertTarget?.path && (
               <span
                 className="mt-2 block truncate font-mono text-[0.7rem] text-(--ui-text-secondary)"
-                title={revertTarget.path}
+                title={displayPath(revertTarget.path)}
               >
-                {revertTarget.path}
+                {displayPath(revertTarget.path)}
               </span>
             )}
           </>
         }
         destructive
-        // confirmRevert clears the target itself, then reverts in the
+        // confirmRevert closes the dialog itself, then reverts in the
         // background — so the failure lands in a toast, not inline.
         dismissOnConfirm
         onClose={cancelRevert}

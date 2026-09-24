@@ -1,114 +1,166 @@
-/**
- * MJXHRM-304 item 4 — the pill's LABEL and the surface's ACTIONS have to mean
- * the same session.
- *
- * This pill read `$currentModel` / `$currentProvider` directly. Those are the
- * PRIMARY chat's composer selection (see `selectModel`, which refuses to write
- * them for a named target for exactly that reason), so every tile and every
- * detached chat window labelled itself with the main pane's model while
- * everything else on that surface — submit, steer, the model pick — targeted its
- * own session. Desktop's pill has always followed the SessionView.
- */
-
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
+import { useContext } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { ChatBarState } from '@/app/chat/composer/types'
 import { type SessionView, SessionViewProvider } from '@/app/chat/session-view'
-import { $currentFastMode, $currentModel, $currentProvider, $currentReasoningEffort } from '@/store/model'
-import { resetSessionStates, seedActiveSession } from '@/test-sessions'
+import { ModelMenuCloseContext } from '@/app/shell/model-menu-panel'
+import { $activeSessionId, $currentModel, setCurrentModel, setCurrentModelSource } from '@/store/session'
 
+import { requestModelMenuToggle } from './focus'
 import { ModelPill } from './model-pill'
-import type { ChatBarState } from './types'
+import { RICH_INPUT_SLOT } from './rich-editor'
 
 const modelState = (over: Partial<ChatBarState['model']> = {}): ChatBarState['model'] => ({
   canSwitch: true,
-  model: '',
-  provider: '',
+  model: 'gpt-6',
+  provider: 'openai',
   ...over
 })
 
-/** A tile's view: every field off its own slice, exactly like `buildTileView`. */
-const tileView = (model: string, provider: string): SessionView =>
-  ({
-    kind: 'tile',
-    $model: atom(model),
-    $provider: atom(provider),
-    $fast: atom(false),
-    $reasoningEffort: atom('')
-  }) as unknown as SessionView
-
 afterEach(() => {
   cleanup()
-  resetSessionStates()
-  $currentModel.set('')
-  $currentProvider.set('')
-  $currentFastMode.set(false)
-  $currentReasoningEffort.set('')
+  $activeSessionId.set(null)
+  setCurrentModel('')
+  setCurrentModelSource('')
 })
 
-describe('ModelPill labelling', () => {
-  it("labels a tile with its OWN session model, not the primary chat's globals", () => {
-    $currentModel.set('primary-model')
-    $currentProvider.set('primary-provider')
+// #62055: a manual composer pick is sticky and silently overrides the
+// Settings → Model default for every NEW chat. The pill must say so.
+describe('ModelPill pinned-override badge', () => {
+  it('shows the pin dot on a draft running a manual pick', () => {
+    setCurrentModel('deepseek/deepseek-v4-flash')
+    setCurrentModelSource('manual')
+    $activeSessionId.set(null)
 
-    render(
-      <SessionViewProvider value={tileView('glm-5', 'zai')}>
-        <ModelPill disabled={false} model={modelState({ model: 'glm-5', provider: 'zai' })} />
-      </SessionViewProvider>
-    )
+    render(<ModelPill disabled={false} model={modelState({ model: 'deepseek/deepseek-v4-flash' })} />)
 
-    expect(screen.getByText(/Glm 5/)).toBeTruthy()
-    expect(screen.queryByText(/Primary Model/)).toBeNull()
+    expect(screen.getByTestId('model-pinned-dot')).toBeTruthy()
   })
 
-  // Ordering, not just presence: the host's snapshot is what this surface was
-  // RENDERED with, so it wins; the atoms are the fallback. Reversing the two
-  // lets a slice that has not caught up yet override a fresh render.
-  it('prefers the chat-bar snapshot over the view atoms when the two disagree', () => {
-    render(
-      <SessionViewProvider value={tileView('stale-model', 'zai')}>
-        <ModelPill disabled={false} model={modelState({ model: 'glm-5', provider: 'zai' })} />
-      </SessionViewProvider>
-    )
-
-    expect(screen.getByText(/Glm 5/)).toBeTruthy()
-    expect(screen.queryByText(/Stale Model/)).toBeNull()
-  })
-
-  // The snapshot is view-scoped by ChatComposer, but it lags a beat behind a
-  // `session.info` that lands mid-render — the atoms are the live answer.
-  it('falls back to the live view atoms when the chat-bar snapshot is empty', () => {
-    render(
-      <SessionViewProvider value={tileView('glm-5', 'zai')}>
-        <ModelPill disabled={false} model={modelState()} />
-      </SessionViewProvider>
-    )
-
-    expect(screen.getByText(/Glm 5/)).toBeTruthy()
-  })
-
-  // Default context = PRIMARY_SESSION_VIEW. While the chat is a DRAFT there is
-  // no session model, so the main composer paints the sticky pick.
-  it('keeps painting the primary composer pick with no provider around it', () => {
-    $currentModel.set('primary-model')
+  it('stays quiet when the composer reflects the profile default', () => {
+    setCurrentModel('google/gemma-4-26b-a4b-it:free')
+    setCurrentModelSource('default')
+    $activeSessionId.set(null)
 
     render(<ModelPill disabled={false} model={modelState()} />)
 
-    expect(screen.getByText(/Primary Model/)).toBeTruthy()
+    expect(screen.queryByTestId('model-pinned-dot')).toBeNull()
   })
 
-  // Once the primary chat is LIVE its own slice is authoritative — that is
-  // where `session.info` lands. The pill used to read the persisted globals
-  // here too, naming the last pick (or a localStorage leftover) instead of the
-  // model the session was running, and disagreeing with the menu's checkmark.
-  it("labels a live primary chat with its session's model, not the sticky globals", () => {
-    $currentModel.set('primary-model')
-    seedActiveSession('runtime-1', { runtimeSessionId: 'runtime-1', model: 'glm-5', provider: 'zai' })
+  it('stays quiet on a live session (footer shows that session, not the pin)', () => {
+    setCurrentModel('deepseek/deepseek-v4-flash')
+    setCurrentModelSource('manual')
+    $activeSessionId.set('live-1')
 
     render(<ModelPill disabled={false} model={modelState()} />)
 
-    expect(screen.getByText(/Glm 5/)).toBeTruthy()
-    expect(screen.queryByText(/Primary Model/)).toBeNull()
+    expect(screen.queryByTestId('model-pinned-dot')).toBeNull()
+  })
+
+  it('is exercised in both render paths', () => {
+    setCurrentModel('deepseek/deepseek-v4-flash')
+    setCurrentModelSource('manual')
+    $activeSessionId.set(null)
+
+    // Fallback (no live menu) path.
+    const { unmount } = render(
+      <ModelPill disabled={false} model={modelState({ model: 'deepseek/deepseek-v4-flash' })} />
+    )
+
+    expect(screen.getByTestId('model-pinned-dot')).toBeTruthy()
+    unmount()
+
+    // Live-menu (dropdown) path.
+    render(
+      <ModelPill
+        disabled={false}
+        model={modelState({ model: 'deepseek/deepseek-v4-flash', modelMenuContent: <div /> })}
+      />
+    )
+    expect(screen.getByTestId('model-pinned-dot')).toBeTruthy()
+    expect($currentModel.get()).toBe('deepseek/deepseek-v4-flash')
+  })
+})
+
+function MenuChoice() {
+  const close = useContext(ModelMenuCloseContext)
+
+  return <button onClick={() => close?.()}>Choose model</button>
+}
+
+it('returns to the exact caret or backward selection after the model menu closes', async () => {
+  const surface = document.createElement('div')
+  surface.dataset.composerTarget = 'main'
+  const editor = document.createElement('div')
+  editor.dataset.slot = RICH_INPUT_SLOT
+  editor.contentEditable = 'true'
+  editor.tabIndex = 0
+  editor.textContent = 'before and after'
+  surface.append(editor)
+  document.body.append(surface)
+
+  try {
+    render(<ModelPill disabled={false} model={modelState({ modelMenuContent: <MenuChoice /> })} />)
+
+    for (const [anchor, focus] of [
+      [3, 3],
+      [10, 4]
+    ]) {
+      editor.focus()
+      window.getSelection()!.setBaseAndExtent(editor.firstChild!, anchor, editor.firstChild!, focus)
+      await act(async () => {
+        requestModelMenuToggle()
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      const choice = await screen.findByText('Choose model')
+      choice.focus()
+      window.getSelection()!.removeAllRanges()
+      fireEvent.click(choice)
+      await waitFor(() => expect(document.activeElement).toBe(editor))
+      expect(window.getSelection()!.anchorOffset).toBe(anchor)
+      expect(window.getSelection()!.focusOffset).toBe(focus)
+    }
+  } finally {
+    surface.remove()
+  }
+})
+
+describe('ModelPill per-surface model label', () => {
+  it('shows the chat-bar model even when the primary global differs', () => {
+    setCurrentModel('primary/model')
+    $activeSessionId.set('primary-runtime')
+
+    const tileView: SessionView = {
+      kind: 'tile',
+      $awaitingResponse: atom(false),
+      $busy: atom(false),
+      $cwd: atom(''),
+      $fast: atom(false),
+      $lastVisibleIsUser: atom(false),
+      $messages: atom([]),
+      $paintedMessages: atom([]),
+      $messagesEmpty: atom(true),
+      $model: atom('tile/claude-sonnet'),
+      $provider: atom('anthropic'),
+      $reasoningEffort: atom('high'),
+      $reasoningEffortWire: atom(''),
+      $runtimeId: atom('tile-runtime'),
+      $storedId: atom('stored-tile'),
+      $turnStartedAt: atom<number | null>(null)
+    }
+
+    render(
+      <SessionViewProvider value={tileView}>
+        <ModelPill
+          disabled={false}
+          model={modelState({ model: 'tile/claude-sonnet', provider: 'anthropic', modelMenuContent: <div /> })}
+        />
+      </SessionViewProvider>
+    )
+
+    expect(screen.getByText('Sonnet')).toBeTruthy()
+    expect(screen.queryByText(/primary/i)).toBeNull()
   })
 })

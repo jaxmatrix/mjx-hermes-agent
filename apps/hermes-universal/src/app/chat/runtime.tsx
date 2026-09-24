@@ -5,8 +5,9 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useSessionView } from '@/app/chat/session-view'
 import { TranscriptWindowProvider } from '@/components/assistant-ui/thread/transcript-window'
 import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
+import { type ChatMessage } from '@/lib/chat-messages'
 import { useStore } from '@/store/atom'
-import { type ChatMessage, submitEditedPrompt } from '@/store/chat'
+import { submitEditedPrompt } from '@/store/chat'
 
 import { advanceTranscriptWindow, type TranscriptWindowState } from './transcript-window'
 
@@ -35,7 +36,7 @@ function convertMessage(message: ChatMessage): ThreadMessageLike {
     // the turn being edited and Enter silently does nothing; "branch in new
     // chat" likewise fell back to the last turn instead of the clicked one.
     id: message.id,
-    role: message.role,
+    role: message.role === 'tool' ? 'assistant' : message.role,
     content: message.parts as ThreadMessageLike['content'],
     // Everything the renderer needs that isn't content: the interim seal (the
     // footer gate) and the reaction state (durable list + the row id it was
@@ -109,7 +110,7 @@ export function ChatRuntimeProvider({ children }: { children: ReactNode }) {
   }
 
   const { messages: windowedMessages, windowed } = useMemo(() => {
-    const next = advanceTranscriptWindow(windowStateRef.current, messages, windowPages)
+    const next = advanceTranscriptWindow(windowStateRef.current, messages as readonly ChatMessage[], windowPages)
 
     windowStateRef.current = next
 
@@ -120,7 +121,7 @@ export function ChatRuntimeProvider({ children }: { children: ReactNode }) {
   const transcriptWindow = useMemo(() => ({ expandWindow, olderAvailable: windowed }), [expandWindow, windowed])
 
   const runtime = useExternalStoreRuntime<ChatMessage>({
-    messages: windowedMessages,
+    messages: windowedMessages as readonly ChatMessage[],
     isRunning,
     convertMessage,
     // Our own Composer submits via sendPrompt; assistant-ui's composer is unused,

@@ -22,12 +22,11 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef,
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { registry } from '@/contrib/registry'
 import { useI18n } from '@/i18n'
 import { ESCAPE_PRIORITY, isTopEscapeLayer, pushEscapeLayer } from '@/lib/escape-layers'
+import { startPointerDrag } from '@/lib/pointer-drag'
 import { cn } from '@/lib/utils'
-
-import { tileMap } from '../tile/registry'
-import { gridPlacement } from '../tile/types'
 
 import {
   canSplit,
@@ -46,7 +45,7 @@ import {
   MULTIPLIER,
   splitZone
 } from './grid-model'
-import { gridIsTreeExpressible, gridToTree } from './grid-to-tree'
+import { gridIsTreeExpressible, gridToTree, type PanePlacementHint } from './grid-to-tree'
 import { allPaneIds } from './model'
 import { applyLayoutPreset, saveLayoutPresetTree } from './presets'
 import { $layoutTree } from './store'
@@ -216,9 +215,7 @@ export function ZoneEditor() {
       setSelection(mergeClosureIndices(model, picked))
     }
 
-    const onUp = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', onMove, true)
-      window.removeEventListener('pointerup', onUp, true)
+    startPointerDrag(onMove, ev => {
       setSelectBox(null)
 
       if (!dragged) {
@@ -235,10 +232,7 @@ export function ZoneEditor() {
 
       const rect = canvasRef.current!.getBoundingClientRect()
       setMergeAt({ x: ev.clientX - rect.x, y: ev.clientY - rect.y })
-    }
-
-    window.addEventListener('pointermove', onMove, true)
-    window.addEventListener('pointerup', onUp, true)
+    })
   }
 
   const startResizerDrag = (index: number, e: ReactPointerEvent<HTMLDivElement>) => {
@@ -269,13 +263,7 @@ export function ZoneEditor() {
       }
     }
 
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove, true)
-      window.removeEventListener('pointerup', onUp, true)
-    }
-
-    window.addEventListener('pointermove', onMove, true)
-    window.addEventListener('pointerup', onUp, true)
+    startPointerDrag(onMove)
   }
 
   const merge = () => {
@@ -288,11 +276,12 @@ export function ZoneEditor() {
     const paneIds = allPaneIds($layoutTree.get() ?? { type: 'group', id: 'tmp', panes: [], active: '' })
     // Placement hints ride on the pane contributions (`data.placement`), so
     // zones are assigned by ROLE (main/left/right/bottom), not index order.
-    const byId = tileMap()
+    const contributions = registry.getArea('panes')
 
     const placed = paneIds.map(id => ({
       id,
-      placement: gridPlacement(byId.get(id)?.placement)
+      placement: (contributions.find(c => c.id === id)?.data as { placement?: PanePlacementHint } | undefined)
+        ?.placement
     }))
 
     const tree = gridToTree(model, placed)

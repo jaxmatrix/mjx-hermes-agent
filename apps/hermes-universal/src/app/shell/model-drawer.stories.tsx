@@ -1,9 +1,9 @@
+import type { ModelOptionsResult } from '@hermes/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 
 import { modelOptionsQueryKey } from '@/lib/model-options'
 import { queryClient } from '@/lib/query-client'
-import type { ModelOptionsResponse } from '@/types/hermes'
 
 import { withMobile } from '../../../.storybook/decorators'
 
@@ -19,7 +19,7 @@ import { ModelDrawer } from './model-drawer'
  * code the app runs. What the story stands in for is the gateway, not the logic.
  */
 
-const CATALOG: ModelOptionsResponse = {
+const CATALOG: ModelOptionsResult = {
   providers: [
     {
       name: 'Anthropic',
@@ -42,7 +42,7 @@ const CATALOG: ModelOptionsResponse = {
       }
     }
   ]
-} as ModelOptionsResponse
+} as ModelOptionsResult
 
 /** Holds the picked model in local state so the tick actually moves when you
  *  tap — a controller that only logged would look broken for the one thing

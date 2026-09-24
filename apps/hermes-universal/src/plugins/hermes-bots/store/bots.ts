@@ -3,7 +3,7 @@
  * EFFECTS half. Every decision they execute is a pure function in `model/`.
  */
 
-import { host, livePollIntervalMs } from '@hermes/plugin-sdk'
+import { universalHost as host, livePollIntervalMs, type PluginAgentRoster, type PluginOpenSessionResult } from '@hermes/plugin-sdk'
 
 import { BOT_CHAT_TITLE, BOT_KICKOFF_TEXT, botHandle, groupSessionTitle, isOwnedSessionTitle } from '../ids'
 import { maySweep, type RegistryAnswer, resolveCanonicalChat, sweepHidesSession } from '../model/canonical'
@@ -127,7 +127,11 @@ async function remoteRosters(): Promise<
   { connectionId: string; label: string; metaKnown: false; rows: RosterRowInput[] }[]
 > {
   try {
-    const [roster, connections] = await Promise.all([host.agents(), host.connections()])
+    const [roster, connections] = await Promise.all([
+      host.agents() as unknown as Promise<PluginAgentRoster>,
+      host.connections()
+    ])
+
     const labelOf = new Map(connections.map(connection => [connection.id, connection.label]))
     const failed = new Set(roster.sources.filter(source => !source.ok).map(source => source.connectionId))
 
@@ -445,7 +449,11 @@ async function openCanonical(
   expectHistory: boolean,
   action: OpenChatResult['action'] = 'open'
 ): Promise<OpenChatResult> {
-  const opened = await host.openSession(storedId, { expectHistory, profile: row.profile, target: 'tab' })
+  const opened = (await host.openSession(storedId, {
+    expectHistory,
+    profile: row.profile,
+    target: 'tab'
+  })) as PluginOpenSessionResult
 
   if (opened.ok) {
     openedCanonical.add(storedId)

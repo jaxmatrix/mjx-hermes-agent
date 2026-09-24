@@ -1,4 +1,4 @@
-import type { CronDeliveryTarget, CronJob, CronJobUpdates } from '@/types/hermes'
+import type { CronJob, CronJobUpdates } from '@/types/hermes'
 
 const asText = (value: unknown): string => (typeof value === 'string' ? value : '')
 
@@ -35,7 +35,6 @@ export function validateCronEditor(input: CronEditorValidationInput): CronEditor
 }
 
 export interface CronEditorSaveValues {
-  /** Feed the job its own previous output into the next run. */
   continuity: boolean
   deliver: string
   /** Per-job model override ('' = follow the global default at fire time). */
@@ -47,32 +46,70 @@ export interface CronEditorSaveValues {
   schedule: string
 }
 
-/**
- * `deliver` is ONE string on the wire, not a list: the scheduler splits it on
- * commas (`cron/scheduler.py` `_normalize_deliver_value`), so "local,telegram"
- * fans a run out to both.
- *
- * A STORED value can still be a list, though — the scheduler's own normalizer
- * documents MCP clients, hand-edited `jobs.json` and older code paths writing
- * `["telegram"]`, and it flattens them rather than failing. Reading such a job
- * as "not a string" showed it as local-only in the editor AND wrote that back
- * on the next save, silently deleting a route the user never touched. Flatten
- * the same way the backend does so a read is lossless.
- */
-export function normalizeCronDeliverValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value
-      .map(part => asText(part).trim())
-      .filter(Boolean)
-      .join(',')
-  }
+/** Split a comma/newline list (or array) into trimmed, non-empty items. */
+export function splitCronList(value: unknown): string[] {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[\n,]/)
+      : []
 
-  return asText(value)
+  return items.map(item => String(item).trim()).filter(Boolean)
 }
 
-/** Split a stored `deliver` value into its targets; '' (or nothing) = local. */
-export function parseCronDeliveryTargets(value: unknown): string[] {
-  const targets = normalizeCronDeliverValue(value)
+/** Whether continuity (feed on this job's previous output) is enabled. */
+export function cronJobContinuityEnabled(job: Pick<CronJob, 'context_from' | 'continuity'>): boolean {
+  return (
+    Boolean(job.continuity) || splitCronList(job.context_from).some(item => item.toLowerCase() === 'self')
+  )
+}
+
+/** External refs only — never includes the reserved `self` entry. */
+export function cronJobExternalContextRefs(job: Pick<CronJob, 'context_from'>): string[] {
+  return splitCronList(job.context_from).filter(item => item.toLowerCase() !== 'self')
+}
+
+export function cronEditorContextFrom(continuity: boolean, storedContextFrom: unknown): null | string[] {
+  const refs = splitCronList(storedContextFrom).filter(item => item.toLowerCase() !== 'self')
+
+  if (continuity) {
+    refs.push('self')
+  }
+
+  return refs.length > 0 ? refs : null
+}
+
+export interface CronModelChoice {
+  model: string
+  provider: string
+}
+
+/** Encode the provider/model pair as an opaque Select value without delimiter ambiguity. */
+export function cronModelChoiceValue(provider: string, model: string): string {
+  return JSON.stringify([provider, model])
+}
+
+export function parseCronModelChoiceValue(value: string): CronModelChoice | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 2 ||
+      typeof parsed[0] !== 'string' ||
+      typeof parsed[1] !== 'string'
+    ) {
+      return null
+    }
+
+    return { provider: parsed[0], model: parsed[1] }
+  } catch {
+    return null
+  }
+}
+
+export function parseCronDeliveryTargets(value: string): string[] {
+  const targets = value
     .split(',')
     .map(target => target.trim())
     .filter(Boolean)
@@ -80,8 +117,6 @@ export function parseCronDeliveryTargets(value: unknown): string[] {
   return targets.length > 0 ? [...new Set(targets)] : ['local']
 }
 
-/** Toggle one target on/off. Unchecking the last one is a no-op — a job with
- *  nowhere to deliver is not a state the editor should be able to reach. */
 export function toggleCronDeliveryTarget(value: string, target: string, checked: boolean): string {
   const targets = parseCronDeliveryTargets(value)
 
@@ -96,159 +131,37 @@ export function toggleCronDeliveryTarget(value: string, target: string, checked:
   return targets.filter(candidate => candidate !== target).join(',')
 }
 
-/**
- * The rows the delivery checkbox group renders: everything discovery reports,
- * plus any target the job already stores that discovery does NOT report — a
- * platform disconnected since the job was written, or a routing form this app
- * never offers (`origin`, `all`, `telegram:-100:17`). Dropping those would let
- * a plain "open and save" delete a route the user never touched, so they are
- * carried through as their own row instead.
- */
-export function cronDeliveryOptions(targets: CronDeliveryTarget[], value: unknown): CronDeliveryTarget[] {
-  const known = new Set(targets.map(target => target.id))
+// The scheduler stores `last_error` as the raw exception text, e.g.
+// "RuntimeError: Cron job 'x' has no model configured (job.model=None, …). Set a
+// per-job model via `hermes cron edit …`". Users need the first plain sentence,
+// not the Python wrapper; the full text stays reachable via a hover title.
+const ERROR_PREFIX_RE = /^(?:[A-Za-z_][\w.]*(?:Error|Exception)|Exception):\s*/
+const ERROR_MARKER_RE = /^\[[a-z_]+(?::[a-z_]+)?\]\s*/
+const ERROR_EMOJI_RE = /^(?:\u26A0\uFE0F?|\uD83D\uDED1|\u274C|\u{1F6AB})\s*/u
+const ERROR_SUMMARY_MAX = 200
 
-  return [
-    ...targets,
-    ...parseCronDeliveryTargets(value)
-      .filter(id => !known.has(id))
-      .map(id => ({ home_env_var: null, home_target_set: true, id, name: id }))
-  ]
-}
+export function lastErrorSummary(lastError: string | null | undefined): string {
+  let text = (lastError ?? '').trim()
 
-/**
- * One row's label. A configured platform with no cron home channel is told so
- * inline rather than hidden: the backend still offers it, and ticking it there
- * delivers nowhere. `local` is exempt — it needs no channel.
- */
-export function cronDeliveryTargetLabel(
-  target: CronDeliveryTarget,
-  labels: Record<string, string>,
-  needsHomeChannel: string
-): string {
-  const base = labels[target.id] ?? target.name
-
-  return target.id !== 'local' && !target.home_target_set ? `${base} — ${needsHomeChannel}` : base
-}
-
-/** The stored `deliver` value rendered for reading: EVERY target, labelled. */
-export function cronDeliverSummary(value: unknown, labels: Record<string, string>): string {
-  return parseCronDeliveryTargets(value)
-    .map(target => labels[target] ?? target)
-    .join(', ')
-}
-
-/** The reserved `context_from` entry meaning "this job's own previous output". */
-const CONTINUITY_REF = 'self'
-
-const isContinuityRef = (ref: unknown): boolean => asText(ref).trim().toLowerCase() === CONTINUITY_REF
-
-/** Split a stored `context_from` (list, or a comma/newline string) into refs. */
-export function parseCronContextFrom(value: unknown): string[] {
-  const items = Array.isArray(value) ? value : asText(value).split(/[\n,]/)
-
-  return items.map(item => asText(item).trim()).filter(Boolean)
-}
-
-/**
- * Is continuity on for this job?
- *
- * The two backend serializers disagree and BOTH reach this app: REST returns
- * the raw record with `self` still inside `context_from`, while the RPC's
- * `_format_job` strips it and sets an explicit `continuity: true`. A reader
- * that only knew one shape reported the toggle off on the other — and the
- * editor would then have written that "off" back on the next save, silently
- * unlinking a job from its own history.
- *
- * A job that names its OWN id instead of the reserved word counts too; that is
- * what the backend's own check does (tools/cronjob_tools.py `_format_job`).
- */
-export function cronJobContinuity(job: Pick<CronJob, 'context_from' | 'continuity' | 'id'>): boolean {
-  return (
-    Boolean(job.continuity) ||
-    parseCronContextFrom(job.context_from).some(ref => isContinuityRef(ref) || ref === job.id)
-  )
-}
-
-/** External `context_from` refs — everything the continuity toggle does not own. */
-export function cronExternalContextFrom(job: Pick<CronJob, 'context_from' | 'id'>): string[] {
-  return parseCronContextFrom(job.context_from).filter(ref => !isContinuityRef(ref) && ref !== job.id)
-}
-
-/**
- * The `context_from` list to WRITE for a given continuity choice.
- *
- * The editor shows one checkbox but the field is a list, so the external refs a
- * job already carries (another job's output feeding this one — set from the CLI
- * or the dashboard, which universal has no control for) have to be carried
- * through untouched. Writing a bare `['self']` would delete them.
- *
- * Returns `null`, not `[]`, when nothing is left: the backend treats an omitted
- * key as "leave it alone", so clearing needs an explicit null.
- */
-export function cronContextFromPayload(continuity: boolean, external: string[]): null | string[] {
-  const refs = external.filter(ref => !isContinuityRef(ref))
-
-  if (continuity) {
-    refs.push(CONTINUITY_REF)
+  // Wrappers can nest (marker, then emoji, then exception class); peel until stable.
+  for (let previous = ''; previous !== text;) {
+    previous = text
+    text = text.replace(ERROR_MARKER_RE, '').replace(ERROR_EMOJI_RE, '').replace(ERROR_PREFIX_RE, '').trimStart()
   }
 
-  return refs.length > 0 ? refs : null
-}
+  const sentenceEnd = text.search(/\. |\n/)
+  const sentence = (sentenceEnd === -1 ? text : text.slice(0, sentenceEnd + 1)).trim()
 
-/** The scheduler's "this fire never started" stamp, or null. Unlike last_error
- *  this is a dict on the wire, and a stamp with no detail is not worth showing. */
-export function cronJobFireError(job: Pick<CronJob, 'last_fire_error'>): { at: string; detail: string } | null {
-  const stamp = job.last_fire_error
-
-  if (!stamp || typeof stamp !== 'object') {
-    return null
-  }
-
-  const detail = asText(stamp.detail).trim()
-
-  return detail ? { at: asText(stamp.at).trim(), detail } : null
-}
-
-/**
- * The run-count cap, read for display: "3 of 5" or "runs forever".
- *
- * `repeat` is a PAIR on the stored record ({times, completed}) — not the digit
- * string `cron.manage` accepts — and `times: null` means forever. Read-only
- * here: the REST create route this app uses has no `repeat` field at all (only
- * cron.manage and a raw update dict carry one), so offering an editor for it
- * would be offering a control that silently does nothing on create.
- */
-export function cronRepeatSummary(
-  job: Pick<CronJob, 'repeat'>,
-  forever: string,
-  of: (completed: number, times: number) => string
-): string {
-  const repeat = job.repeat
-
-  if (!repeat || typeof repeat !== 'object') {
-    return ''
-  }
-
-  const times = typeof repeat.times === 'number' ? repeat.times : null
-  const completed = typeof repeat.completed === 'number' ? repeat.completed : 0
-
-  // Nothing to say about a job with no cap that has never run — that is simply
-  // every ordinary recurring job, and a "runs forever" row on all of them is
-  // noise. A cap, or progress against one, is what is worth reading.
-  if (times === null) {
-    return completed > 0 ? forever : ''
-  }
-
-  return of(completed, times)
+  return sentence.length > ERROR_SUMMARY_MAX ? `${sentence.slice(0, ERROR_SUMMARY_MAX - 1).trimEnd()}…` : sentence
 }
 
 /** Build the API update payload, preserving an empty prompt on script-only jobs. */
 export function cronEditorUpdates(
   values: CronEditorSaveValues,
-  options: { externalContextFrom?: string[]; scriptOnlyJob: boolean }
+  options: { scriptOnlyJob: boolean; storedContextFrom?: unknown }
 ): CronJobUpdates {
   const updates: CronJobUpdates = {
-    context_from: cronContextFromPayload(values.continuity, options.externalContextFrom ?? []),
+    context_from: cronEditorContextFrom(values.continuity, options.storedContextFrom),
     deliver: values.deliver,
     name: values.name,
     schedule: values.schedule.trim()

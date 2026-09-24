@@ -1,90 +1,127 @@
 import { useStore } from '@nanostores/react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useSessionView } from '@/app/chat/session-view'
 import { useI18n } from '@/i18n'
-import { openExternalLink } from '@/lib/external-link'
-import { MonitorPlay } from '@/lib/icons'
+import { Download, MonitorPlay } from '@/lib/icons'
+import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
+import { downloadGatewayMediaFile } from '@/lib/media'
 import { previewName } from '@/lib/preview-targets'
-import { useStoreSelector } from '@/lib/use-session-slice'
 import { notifyError } from '@/store/notifications'
-import { $activePreviewPath, requestClosePreviewTab, setPreviewTarget } from '@/store/preview'
+import { $previewTabSources, closePreviewForSource, openPreview } from '@/store/preview'
 
-const URL_TARGET = /^https?:\/\//i
-
-/**
- * Resolve a previewable target from a transcript into the path the right pane
- * opens. Relative targets resolve against the session's own cwd — this link
- * lives in ONE session's transcript, so it must not resolve against whichever
- * chat happens to be primary.
- */
-function filePathFor(target: string, cwd: string): string {
-  const cleaned = target.trim().replace(/^file:\/\//, '')
-
-  if (cleaned.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(cleaned)) {
-    return cleaned
-  }
-
-  const base = cwd.trim().replace(/[\\/]+$/, '')
-
-  return base ? `${base}/${cleaned.replace(/^\.\//, '')}` : cleaned
-}
-
-/**
- * A previewable link found in a completed assistant reply, rendered as a toggle
- * under the message.
- *
- * Ported from desktop `components/chat/preview-attachment.tsx`, with the
- * activation reshaped exactly as the composer's `PreviewStatusRow` already
- * reshaped it: desktop toggles an in-app WEBVIEW preview and tracks which
- * source opened each rail tab (`$previewTabSources` / `openPreview`). Universal's
- * preview pane is a file viewer with no URL surface, so there is nothing to
- * toggle for a URL and no source-attribution layer to keep. The target type
- * decides instead:
- * - `http(s)://…` → the system browser via the `openExternalLink` seam.
- * - anything else → a right-pane file tab; clicking an open one closes it,
- *   preserving desktop's toggle feel.
- */
 export function PreviewAttachment({ target }: { target: string }) {
   const { t } = useI18n()
+  // This link lives in one session's transcript; resolve it against THAT
+  // session's cwd, not the primary chat's.
   const cwd = useStore(useSessionView().$cwd)
+  const openSources = useStore($previewTabSources)
   const [opening, setOpening] = useState(false)
-
-  const isUrl = URL_TARGET.test(target.trim())
-  const path = isUrl ? '' : filePathFor(target, cwd)
-  // A preview is a TILE now — "showing" is the tab list's business, not a
-  // singleton pane's open flag (see preview-row.tsx).
-  //
-  // NARROWED to the boolean (MJXHRM-381): one of these renders per previewable
-  // link in a transcript, across every mounted transcript, and nothing else
-  // re-renders them when a preview tab changes — so the whole-atom read was the
-  // sole reason every one of them repainted on every tab open/switch/close.
-  const isActive = useStoreSelector($activePreviewPath, active => !isUrl && active === path)
+  const [downloading, setDownloading] = useState(false)
+  const [downloaded, setDownloaded] = useState(false)
+  const cwdRef = useRef(cwd)
+  const mountedRef = useRef(false)
+  const requestTokenRef = useRef(0)
+  const targetRef = useRef(target)
   const name = previewName(target)
+  const isActive = openSources.includes(target)
 
-  const togglePreview = async () => {
+  cwdRef.current = cwd
+  targetRef.current = target
+
+   
+  useEffect(() => {
+    mountedRef.current = true
+
+    return () => {
+      mountedRef.current = false
+      requestTokenRef.current += 1
+    }
+  }, [])
+
+   
+  useEffect(() => {
+    requestTokenRef.current += 1
+    setOpening(false)
+  }, [cwd, target])
+
+  async function togglePreview() {
     if (opening) {
       return
     }
 
     if (isActive) {
-      requestClosePreviewTab(path)
+      closePreviewForSource(target)
 
       return
     }
 
+    const requestToken = ++requestTokenRef.current
+    const requestTarget = target
+    const requestCwd = cwd
+
     setOpening(true)
 
     try {
-      if (isUrl) {
-        await openExternalLink(target.trim())
-      } else {
-        setPreviewTarget(path)
+      const preview = await normalizeOrLocalPreviewTarget(requestTarget, requestCwd || undefined)
+
+      if (
+        !mountedRef.current ||
+        requestTokenRef.current !== requestToken ||
+        targetRef.current !== requestTarget ||
+        cwdRef.current !== requestCwd
+      ) {
+        return
       }
+
+      if (!preview) {
+        throw new Error(`Could not open preview target: ${requestTarget}`)
+      }
+
+      openPreview(preview)
     } catch (error) {
+      if (
+        !mountedRef.current ||
+        requestTokenRef.current !== requestToken ||
+        targetRef.current !== requestTarget ||
+        cwdRef.current !== requestCwd
+      ) {
+        return
+      }
+
       notifyError(error, t.preview.unavailable)
     } finally {
-      setOpening(false)
+      if (mountedRef.current && requestTokenRef.current === requestToken) {
+        setOpening(false)
+      }
+    }
+  }
+
+  async function downloadFile() {
+    if (downloading) {
+      return
+    }
+
+    setDownloading(true)
+
+    try {
+      // Works in both modes: the Electron main process fetches the bytes
+      // through the session's backend connection (local gateway or remote)
+      // and prompts for a save location.
+      const result = await downloadGatewayMediaFile(target)
+
+      if (mountedRef.current && result.saved) {
+        setDownloaded(true)
+        setTimeout(() => mountedRef.current && setDownloaded(false), 2000)
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        notifyError(error, t.fileMenu.downloadFailed)
+      }
+    } finally {
+      if (mountedRef.current) {
+        setDownloading(false)
+      }
     }
   }
 
@@ -97,18 +134,22 @@ export function PreviewAttachment({ target }: { target: string }) {
         {name}
       </span>
       <button
+        aria-label={t.fileMenu.download}
+        className="flex shrink-0 items-center gap-1 rounded-md border border-(--ui-stroke-tertiary) bg-background/40 px-2 py-1 text-[0.7rem] font-medium text-muted-foreground transition-colors hover:bg-accent/55 hover:text-foreground disabled:opacity-50"
+        disabled={downloading}
+        onClick={() => void downloadFile()}
+        type="button"
+      >
+        <Download className="size-3" />
+        {downloaded ? t.fileMenu.downloadSaved : t.fileMenu.download}
+      </button>
+      <button
         className="shrink-0 rounded-md border border-(--ui-stroke-tertiary) bg-background/40 px-2 py-1 text-[0.7rem] font-medium text-muted-foreground transition-colors hover:bg-accent/55 hover:text-foreground disabled:opacity-50"
         disabled={opening}
         onClick={() => void togglePreview()}
         type="button"
       >
-        {opening
-          ? t.preview.opening
-          : isActive
-            ? t.preview.hide
-            : isUrl
-              ? t.preview.openInBrowser
-              : t.preview.openPreview}
+        {opening ? t.preview.opening : isActive ? t.preview.hide : t.preview.openPreview}
       </button>
     </div>
   )

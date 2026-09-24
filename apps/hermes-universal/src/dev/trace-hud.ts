@@ -17,7 +17,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 
-import { writeClipboardText } from '@/lib/clipboard'
+import { writeClipboardText } from '@/components/ui/copy-button'
 import { JAEGER_UI, tracer } from '@/observability/exporter'
 
 import { BUTTON, createHudShell, DIM, el, FIELD, ROW } from './hud-shell'

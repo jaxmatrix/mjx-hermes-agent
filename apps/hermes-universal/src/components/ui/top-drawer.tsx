@@ -107,8 +107,6 @@ export function TopDrawer({
         /* The scrim starts where the panel does. Covering the bar dimmed AND
            blurred the very chrome the menu belongs to, which is what made this
            read as a modal sheet instead of a menu. */
-        overlayClassName="backdrop-blur-none bg-black/22"
-        overlayStyle={{ top: offsetTop ?? 0 }}
         showCloseButton={false}
         side="top"
         style={{

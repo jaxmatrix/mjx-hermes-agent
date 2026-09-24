@@ -5,6 +5,9 @@ export interface CompletionEntry {
   text: string
   display?: unknown
   meta?: unknown
+  /** From `complete.slash`: registry command vs skill. The popover groups on
+   *  this instead of re-deriving kind from the desktop command table. */
+  kind?: string
   /** Optional section label (e.g. "Commands", "Skills"). The popover renders a
    *  header whenever this changes between consecutive items, so the fetcher must
    *  emit entries already grouped contiguously. */
@@ -30,16 +33,10 @@ export function useLiveCompletionAdapter(options: {
    *  request per keystroke, and a spinner over an answer we already hold reads
    *  as latency the user isn't actually paying. */
   isCached?: (query: string) => boolean
-  /** Change to declare the held answer stale. Without it the adapter keeps
-   *  serving what it fetched before the source changed, because it de-dupes on
-   *  the query alone — `search()` returns the held items outright when the
-   *  query matches, so no fetcher-side cache key is ever consulted.
-   *
-   *  A string works as well as a counter (this is only ever an effect
-   *  dependency), which lets a caller whose staleness is a SCOPE rather than an
-   *  event — the `@` source, whose answers are relative to a cwd — hand over
-   *  the scope itself instead of maintaining a counter beside it. */
-  epoch?: number | string
+  /** Bump to declare the held answer stale. Without it a popover left open on
+   *  an unchanged query would keep serving what it fetched before the source
+   *  changed, because the adapter de-dupes on the query alone. */
+  epoch?: number
   toItem: (entry: CompletionEntry, index: number) => Unstable_TriggerItem
 }): { adapter: Unstable_TriggerAdapter; loading: boolean } {
   const { enabled, debounceMs = 60, epoch = 0, fetcher, isCached, toItem } = options
@@ -64,6 +61,7 @@ export function useLiveCompletionAdapter(options: {
 
   useEffect(() => () => cancelTimer(), [cancelTimer])
 
+   
   useEffect(() => {
     if (enabled) {
       return
@@ -76,6 +74,7 @@ export function useLiveCompletionAdapter(options: {
     setState({ query: EMPTY_QUERY, items: [] })
   }, [cancelTimer, enabled])
 
+   
   useEffect(() => {
     // Invalidate by forgetting which query the held items answer, so the next
     // search() re-fetches. The items themselves stay until the new answer

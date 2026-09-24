@@ -1,252 +1,502 @@
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
-import type { ClarifyQuestion } from '@/store/clarify'
-import { $activeSessionKey, addSessionKeyHooks } from '@/store/session-state-types'
+import { $clarifyRequest, $clarifyRequests } from './clarify'
+import { isSessionGone, isSessionGoneForBackgroundPolling, markSessionGone } from './runtime-gone'
+import { respondToServerRequest } from './server-requests'
+import { $activeSessionId } from './session'
+import { ambientRequestFor } from './session-gone-latch'
+import { requestForOwnedSession } from './session-states'
 
-// The blocking-prompt request shapes. They live HERE, not in store/chat.ts,
-// because this module is the single owner of prompt state for every session and
-// must not depend on the chat store at runtime (store/chat.ts re-exports these
-// types for the existing import sites).
+// Blocking interactive prompts the gateway raises mid-turn. Each is a
+// server→client JSON-RPC request (`tui_gateway/server_requests.py`) the Python
+// side blocks on; `requestId` is that request's id and the card answers through
+// `store/server-requests.ts::respondToServerRequest`. Without a renderer for
+// these the channel answers -32601 and the tool fails fast.
+//
+// Like clarify, every prompt is parked under the runtime session id that raised
+// it (not one shared slot), so a *background* session running concurrently can
+// raise an approval/sudo/secret prompt and have it wait — surfaced via the
+// sidebar "needs input" badge — until the user switches to that chat. The
+// exported $*Request view is scoped to the active session, so a background
+// prompt never hijacks the foreground.
 
-export interface ApprovalRequest {
-  command: string
-  description: string
-  allowPermanent: boolean
-  // Which queued approval this is. `approval.respond` without it resolves the
-  // OLDEST entry (`resolve_gateway_approval`), so a session holding two
-  // different commands answered the wrong one. Optional: a legacy gateway
-  // omits it, and FIFO is still the right fallback there.
-  requestId?: string
-  // Gateway-restricted choice set (e.g. a tirith warning drops `always`), and the
-  // smart-deny flag that implies `['once', 'deny']`. Both optional — the backend
-  // omits them on a plain approval. Mirrors desktop's ApprovalRequest.
-  choices?: string[]
-  smartDenied?: boolean
-}
-export interface ClarifyRequest {
-  requestId: string
-  question: string
-  // Up to 4 predefined answers (tools/clarify_tool.py); null for an open-ended
-  // question. The inline ClarifyTool reads BOTH fields from here — `tool.start`
-  // ships no args, so the event payload is the only source for the panel.
-  choices: string[] | null
-  // `multi_select` on the wire: the tool parses a JSON array back, so the card
-  // may offer more than one pick. Optional because the gateway emits the key
-  // only when it is true (`_clarify_block`) — absent IS single-select.
-  multiSelect?: boolean
-  // Batch clarify (2–5 independent questions, `tools/clarify_tool.py`): the
-  // payload carries `questions[]` and NO top-level `question`, so these are
-  // present INSTEAD of `question`/`choices` rather than alongside them.
-  questions?: ClarifyQuestion[]
-  // Answers the gateway has already locked, qid → answer. Only a reconnect
-  // replay sets this (`_pending_clarify_request_payload`); a live batch starts
-  // with nothing locked.
-  lockedAnswers?: Record<string, string>
-}
-// Sudo is a password-entry flow (not an allow/deny choice).
-export interface SudoRequest {
-  requestId: string
-  prompt: string
-}
-export interface SecretRequest {
-  requestId: string
-  envVar: string
-  prompt: string
-}
-/**
- * The agent's `setup_mcp` tool asking to add / enable / authorize an MCP
- * server (`mcp.setup.request`, `tools/setup_mcp_tool.py`).
- *
- * A blocking prompt like the four above — `_block(..., timeout=600)` parks the
- * whole run loop for TEN MINUTES, the longest budget of any bridge, because the
- * flow can include typing an API key or a browser OAuth round-trip. Unanswered
- * is not declined: the tool returns `{"status": "unanswered"}` and tells the
- * model not to retry, so every teardown path has to answer.
- *
- * No `sessionId` field (desktop's `store/mcp-setup.ts` carries one): the map is
- * already keyed by session key, and that key is what survives a cold resume's
- * runtime-id rotation via the rekey hook below.
- */
-export interface McpSetupRequest {
-  requestId: string
-  /** Catalog name (install) or the `mcp_servers` config name (enable/authorize). */
-  server: string
-  action: McpSetupAction
-  /** The agent's one-line "why this helps right now"; '' when it gave none. */
-  reason: string
+const keyFor = (sessionId: string | null | undefined): string => sessionId ?? ''
+
+interface KeyedPrompt {
+  sessionId: string | null
 }
 
-/** `_ACTIONS` in `tools/setup_mcp_tool.py` — the closed set the card renders. */
-export type McpSetupAction = 'authorize' | 'enable' | 'install'
-
-// ---------------------------------------------------------------------------
-// Per-session blocking prompts, keyed by SESSION KEY (see
-// store/session-state-types.ts). Every session — the one on screen, a tile, a
-// background bubble — stores its prompt here; the chat store's `$approval` /
-// `$clarify` / `$sudo` / `$secret` are computed views of the ACTIVE session's
-// entry. There is no primary/tile duality: `setSessionApproval(key, …)` is the
-// only writer. Mirrors desktop's `keyedPromptStore`.
-// ---------------------------------------------------------------------------
-
-interface KeyedPromptStore<T> {
-  /** The whole map (used to compute cross-session aggregates). */
+interface PromptStore<T extends KeyedPrompt> {
+  $active: ReadableAtom<null | T>
   $all: ReadableAtom<Record<string, T>>
-  /** Drop every session's request. */
-  clearAll: () => void
-  /** A per-id readable atom (memoized) — the request for that session, or null. */
-  forId: (id: string) => ReadableAtom<T | null>
-  /** Move a request onto a new session key (a resume rotated the runtime id). */
-  rekey: (fromId: string, toId: string) => void
-  /** Set (or clear, when null) the request for a session. */
-  set: (id: string, value: T | null) => void
+  clear: (sessionId?: string | null, requestId?: string) => void
+  reset: () => void
+  set: (request: T) => void
 }
 
-function keyedPromptStore<T>(): KeyedPromptStore<T> {
+// One per-session prompt kind: a map keyed by session, plus an active-session
+// view for the overlays. `clear` drops one session's entry (a request-id
+// mismatch is a no-op so a stale resolve can't wipe a newer prompt); with no
+// session hint it drops every entry, optionally filtered by request id.
+function keyedPromptStore<T extends KeyedPrompt>(): PromptStore<T> {
   const $all = atom<Record<string, T>>({})
-  const perId = new Map<string, ReadableAtom<T | null>>()
+  const idOf = (value: T): string | undefined => (value as { requestId?: string }).requestId
 
   return {
+    // An app-level prompt (sessionId null: the Bot Screen install card) is not about any chat, so it is
+    // shown in whichever chat is active rather than only while the chat that happened to be open at
+    // request time stays open.
+    $active: computed([$all, $activeSessionId], (all, activeId) => all[keyFor(activeId)] ?? all[keyFor(null)] ?? null),
     $all,
-    clearAll() {
-      if (Object.keys($all.get()).length > 0) {
-        $all.set({})
-      }
-    },
-    rekey(fromId, toId) {
-      const current = $all.get()
+    reset: () => $all.set({}),
+    set: request => $all.set({ ...$all.get(), [keyFor(request.sessionId)]: request }),
+    clear(sessionId, requestId) {
+      const all = $all.get()
 
-      if (fromId === toId || !(fromId in current)) {
-        return
-      }
+      if (sessionId !== undefined) {
+        const key = keyFor(sessionId)
+        const current = all[key]
 
-      const { [fromId]: moving, ...rest } = current
-      $all.set({ ...rest, [toId]: moving })
-      perId.delete(fromId)
-    },
-    forId(id) {
-      const existing = perId.get(id)
-
-      if (existing) {
-        return existing
-      }
-
-      const derived = computed($all, all => all[id] ?? null)
-      perId.set(id, derived)
-
-      return derived
-    },
-    set(id, value) {
-      const current = $all.get()
-
-      if (value === null) {
-        if (id in current) {
-          const { [id]: _dropped, ...rest } = current
-          $all.set(rest)
+        if (current && !(requestId && idOf(current) !== requestId)) {
+          const next = { ...all }
+          delete next[key]
+          $all.set(next)
         }
 
         return
       }
 
-      $all.set({ ...current, [id]: value })
+      const next = Object.fromEntries(Object.entries(all).filter(([, v]) => requestId && idOf(v) !== requestId))
+
+      if (Object.keys(next).length !== Object.keys(all).length) {
+        $all.set(next as Record<string, T>)
+      }
     }
   }
 }
 
-const approvalStore = keyedPromptStore<ApprovalRequest>()
-const clarifyStore = keyedPromptStore<ClarifyRequest>()
-const sudoStore = keyedPromptStore<SudoRequest>()
-const secretStore = keyedPromptStore<SecretRequest>()
-const mcpSetupStore = keyedPromptStore<McpSetupRequest>()
+// Approval is queue-backed on the backend (`tools/approval.py`): `requestId` is
+// the QUEUE entry's id (what `approval.pending` / `approval.received` /
+// `approval.respond` key on), stable across delivery paths. The live prompt
+// arrives as an `approval` server request whose id is `serverRequestId`; the
+// card answers that request when it is still open and falls back to the
+// `approval.respond` RPC when the prompt was restored from `approval.pending`.
+export interface ApprovalRequest extends KeyedPrompt {
+  // false when the backend won't honor a permanent allow (tirith warning) → hide "Always allow".
+  allowPermanent?: boolean
+  choices?: string[]
+  command: string
+  description: string
+  requestId?: string
+  serverRequestId?: string
+  smartDenied?: boolean
+}
 
-// --- The ACTIVE session's prompts (what store/chat.ts re-exports) -----------
+interface ApprovalGateway {
+  request: (method: string, params: Record<string, unknown>) => Promise<unknown>
+}
 
-const activePrompt = <T>(store: KeyedPromptStore<T>): ReadableAtom<T | null> =>
-  computed([$activeSessionKey, store.$all], (key, all) => all[key] ?? null)
+interface PendingApprovalPayload {
+  allow_permanent?: boolean
+  choices?: unknown
+  command?: unknown
+  description?: unknown
+  request_id?: unknown
+  smart_denied?: boolean
+}
 
-export const $approval = activePrompt(approvalStore)
-export const $clarify = activePrompt(clarifyStore)
-export const $sudo = activePrompt(sudoStore)
-export const $secret = activePrompt(secretStore)
-export const $mcpSetup = activePrompt(mcpSetupStore)
+export interface SudoRequest extends KeyedPrompt {
+  command?: string
+  requestId: string
+  /** Description override so the card can say WHAT the password is for (the Bot Screen install).
+   *  The reply travels as a JSON-RPC response on the socket the request arrived on, so a password
+   *  typed for host A can never reach host B without any origin bookkeeping here. */
+  description?: string
+}
 
-// The active turn is parked waiting on the user (a clarify / approval / sudo /
-// secret / MCP-setup prompt is open). The main composer's Esc handling reads
-// this to avoid interrupting a turn that's actually waiting for input.
+export interface SecretRequest extends KeyedPrompt {
+  envVar: string
+  prompt: string
+  requestId: string
+}
+
+// External password-manager unlock (agent/vault_backends): `vault.unlock_prompt`
+// server request, answered `{value: password}`; "" keeps the manager locked.
+export interface VaultUnlockRequest extends KeyedPrompt {
+  backend: string
+  displayName: string
+  requestId: string
+}
+
+const EMPTY_APPROVALS: ApprovalRequest[] = []
+const $approvalQueues = atom<Record<string, ApprovalRequest[]>>({})
+const $approvalStackSizes = atom<Record<string, number>>({})
+// A replay started before a response/reset cannot resurrect the answered card.
+let approvalRevision = 0
+const sessionApprovalRevisions = new Map<string, number>()
+
+const approval = {
+  $all: computed($approvalQueues, queues =>
+    Object.fromEntries(Object.entries(queues).map(([key, queue]) => [key, queue[0]]))
+  ),
+  reset() {
+    approvalRevision += 1
+    sessionApprovalRevisions.clear()
+    $approvalStackSizes.set({})
+    $approvalQueues.set({})
+  },
+  set(request: ApprovalRequest) {
+    const key = keyFor(request.sessionId)
+    const queues = $approvalQueues.get()
+    const queue = queues[key] ?? EMPTY_APPROVALS
+    const index = queue.findIndex(item => item.requestId === request.requestId)
+    const next = [...queue]
+
+    if (index < 0) {
+      const sizes = $approvalStackSizes.get()
+      $approvalStackSizes.set({ ...sizes, [key]: (sizes[key] ?? 0) + 1 })
+      next.push(request)
+    } else {
+      next[index] = request
+    }
+
+    $approvalQueues.set({ ...queues, [key]: next })
+  },
+  clear(sessionId?: string | null, requestId?: string) {
+    if (sessionId === undefined) {
+      approvalRevision += 1
+    } else {
+      const key = keyFor(sessionId)
+      sessionApprovalRevisions.set(key, (sessionApprovalRevisions.get(key) ?? 0) + 1)
+    }
+
+    const queues = $approvalQueues.get()
+    const next = { ...queues }
+    let changed = false
+
+    for (const [key, queue] of Object.entries(queues)) {
+      if (sessionId !== undefined && key !== keyFor(sessionId)) {
+        continue
+      }
+
+      const remaining = requestId ? queue.filter(item => item.requestId !== requestId) : EMPTY_APPROVALS
+
+      if (remaining.length === queue.length) {
+        continue
+      }
+
+      changed = true
+
+      if (remaining.length) {
+        next[key] = remaining
+      } else {
+        delete next[key]
+        const sizes = { ...$approvalStackSizes.get() }
+        delete sizes[key]
+        $approvalStackSizes.set(sizes)
+      }
+    }
+
+    if (changed) {
+      $approvalQueues.set(next)
+    }
+  }
+}
+
+const sudo = keyedPromptStore<SudoRequest>()
+const secret = keyedPromptStore<SecretRequest>()
+const vaultUnlock = keyedPromptStore<VaultUnlockRequest>()
+
+// "Save this login" for the page the agent is on (tools/browser_vault_tool): `vault.save_login`
+// server request, answered `{value: JSON {identifier, password}}`; "" declines.
+export interface VaultSaveLoginRequest extends KeyedPrompt {
+  origin: string
+  site: string
+  requestId: string
+}
+
+const vaultSave = keyedPromptStore<VaultSaveLoginRequest>()
+
+// Second-factor code for the page the agent is on: `vault.code` server request,
+// answered `{value: code}`; "" skips.
+export interface VaultCodeRequest extends KeyedPrompt {
+  site: string
+  hint: string
+  requestId: string
+}
+
+const vaultCode = keyedPromptStore<VaultCodeRequest>()
+
+export const $approvalRequests = approval.$all
+export const $approvalRequest = computed(
+  [approval.$all, $activeSessionId],
+  (all, activeId) => all[keyFor(activeId)] ?? null
+)
+export const setApprovalRequest = approval.set
+export const clearApprovalRequest = approval.clear
+
+export async function receiveApprovalRequest(gateway: ApprovalGateway | null, request: ApprovalRequest): Promise<void> {
+  // A prompt restored from `approval.pending` must not clobber the live server
+  // request that already carries the same queue entry (it knows how to answer).
+  const current = $approvalQueues.get()[keyFor(request.sessionId)]?.find(item => item.requestId === request.requestId)
+
+  if (
+    current?.requestId &&
+    current.requestId === request.requestId &&
+    current.serverRequestId &&
+    !request.serverRequestId
+  ) {
+    return
+  }
+
+  setApprovalRequest(request)
+
+  if (gateway && request.requestId && request.sessionId) {
+    try {
+      await requestForOwnedSession(request.sessionId, ambientRequestFor(gateway), 'approval.received', {
+        request_id: request.requestId,
+        session_id: request.sessionId
+      })
+    } catch (error) {
+      if (isSessionGoneForBackgroundPolling(error)) {
+        markSessionGone(request.sessionId)
+
+        return
+      }
+
+      throw error
+    }
+  }
+}
+
+export async function replayPendingApproval(gateway: ApprovalGateway | null, sessionId: string | null): Promise<void> {
+  if (!gateway || !sessionId || isSessionGone(sessionId)) {
+    return
+  }
+
+  const revision = approvalRevision
+  const sessionRevision = sessionApprovalRevisions.get(keyFor(sessionId))
+  const previous = $approvalQueues.get()[keyFor(sessionId)]
+  let rawResult: unknown
+
+  try {
+    rawResult = await requestForOwnedSession(sessionId, ambientRequestFor(gateway), 'approval.pending', {
+      session_id: sessionId
+    })
+  } catch (error) {
+    if (isSessionGoneForBackgroundPolling(error)) {
+      markSessionGone(sessionId)
+
+      return
+    }
+
+    throw error
+  }
+
+  const result =
+    rawResult && typeof rawResult === 'object' ? (rawResult as { approvals?: PendingApprovalPayload[] }) : {}
+
+  if (
+    revision !== approvalRevision ||
+    sessionRevision !== sessionApprovalRevisions.get(keyFor(sessionId)) ||
+    previous !== $approvalQueues.get()[keyFor(sessionId)]
+  ) {
+    return
+  }
+
+  if (!Array.isArray(result.approvals)) {
+    return
+  }
+
+  const ids = new Set(result.approvals.map(pending => pending.request_id))
+
+  for (const request of previous ?? EMPTY_APPROVALS) {
+    if (request.requestId && !ids.has(request.requestId)) {
+      clearApprovalRequest(sessionId, request.requestId)
+    }
+  }
+
+  await Promise.all(
+    result.approvals.map(pending => {
+      if (typeof pending.request_id !== 'string') {
+        return
+      }
+
+      return receiveApprovalRequest(gateway, {
+        allowPermanent: pending.allow_permanent !== false,
+        choices: Array.isArray(pending.choices)
+          ? pending.choices.filter(choice => typeof choice === 'string')
+          : undefined,
+        command: typeof pending.command === 'string' ? pending.command : '',
+        description: typeof pending.description === 'string' ? pending.description : 'dangerous command',
+        requestId: pending.request_id,
+        sessionId,
+        smartDenied: pending.smart_denied === true
+      })
+    })
+  )
+}
+
+/**
+ * Resolve an approval: answer the live server request when it is still open
+ * (the response frame goes back over the socket it arrived on — the owner by
+ * construction), else the queue-level `approval.respond` RPC for a prompt that
+ * was restored from `approval.pending` or is being answered from another
+ * surface. Returns after the backend has the decision.
+ */
+export async function answerApproval(
+  gateway: ApprovalGateway | null,
+  request: Pick<ApprovalRequest, 'requestId' | 'serverRequestId' | 'sessionId'>,
+  choice: string,
+  all = false
+): Promise<void> {
+  if (respondToServerRequest(request.serverRequestId, { choice, ...(all ? { all: true } : {}) })) {
+    return
+  }
+
+  if (!gateway) {
+    throw new Error('Hermes gateway is not connected')
+  }
+
+  await requestForOwnedSession(request.sessionId, ambientRequestFor(gateway), 'approval.respond', {
+    all,
+    choice,
+    ...(request.requestId ? { request_id: request.requestId } : {}),
+    session_id: request.sessionId ?? undefined
+  })
+}
+
+/** The prompt request for one specific session — the tile counterpart of the
+ *  active-session `$*Request` views (same map, fixed key). */
+export const sessionApprovalStackSize = (sessionId: string | null) =>
+  computed($approvalStackSizes, sizes => sizes[keyFor(sessionId)] ?? 0)
+export const sessionApprovalRequests = (sessionId: string | null) =>
+  computed($approvalQueues, all => all[keyFor(sessionId)] ?? EMPTY_APPROVALS)
+export const sessionApprovalRequest = (sessionId: string | null) =>
+  computed(approval.$all, all => all[keyFor(sessionId)] ?? null)
+/** A session's sudo card, else the app-level one (a Bot Screen package install is raised with no
+ *  session: it belongs to the connection, not to a turn, so whichever chat is focused shows it). */
+export const sessionSudoRequest = (sessionId: string | null) =>
+  computed(sudo.$all, all => all[keyFor(sessionId)] ?? (sessionId ? all[keyFor(null)] ?? null : null))
+export const sessionSecretRequest = (sessionId: string | null) =>
+  computed(secret.$all, all => all[keyFor(sessionId)] ?? null)
+
+export const $sudoRequest = sudo.$active
+export const $sudoRequests = sudo.$all
+export const setSudoRequest = sudo.set
+export const clearSudoRequest = sudo.clear
+
+export const $secretRequest = secret.$active
+export const $secretRequests = secret.$all
+export const setSecretRequest = secret.set
+export const clearSecretRequest = secret.clear
+
+export const $vaultUnlockRequest = vaultUnlock.$active
+export const setVaultUnlockRequest = vaultUnlock.set
+export const clearVaultUnlockRequest = vaultUnlock.clear
+export const $vaultUnlockRequests = vaultUnlock.$all
+export const sessionVaultUnlockRequest = (sessionId: string | null) =>
+  computed(vaultUnlock.$all, all => all[keyFor(sessionId)] ?? null)
+
+export const $vaultSaveLoginRequest = vaultSave.$active
+export const setVaultSaveLoginRequest = vaultSave.set
+export const clearVaultSaveLoginRequest = vaultSave.clear
+export const $vaultSaveLoginRequests = vaultSave.$all
+export const sessionVaultSaveLoginRequest = (sessionId: string | null) =>
+  computed(vaultSave.$all, all => all[keyFor(sessionId)] ?? null)
+
+export const $vaultCodeRequest = vaultCode.$active
+export const setVaultCodeRequest = vaultCode.set
+export const clearVaultCodeRequest = vaultCode.clear
+export const $vaultCodeRequests = vaultCode.$all
+export const sessionVaultCodeRequest = (sessionId: string | null) =>
+  computed(vaultCode.$all, all => all[keyFor(sessionId)] ?? null)
+
+// True when the active session is blocked on the user (clarify question or an
+// approval / sudo / secret prompt). Mirrors the pet's `awaitingInput` concept
+// (agent/pet/state.py): the turn is paused on you, not working — so callers can
+// suppress "thinking" indicators and the Esc-to-interrupt shortcut while you
+// decide, instead of treating the wait as an in-flight turn.
 export const $activeSessionAwaitingInput = computed(
-  [$clarify, $approval, $sudo, $secret, $mcpSetup],
-  (clarify, approval, sudo, secret, mcpSetup) => Boolean(clarify || approval || sudo || secret || mcpSetup)
+  [
+    $clarifyRequest,
+    $approvalRequest,
+    $sudoRequest,
+    $secretRequest,
+    $vaultUnlockRequest,
+    $vaultSaveLoginRequest,
+    $vaultCodeRequest
+  ],
+  (clarify, approval, sudo, secret, vault, save, code) =>
+    Boolean(clarify || approval || sudo || secret || vault || save || code)
 )
 
-export const sessionApprovalRequest = (id: string) => approvalStore.forId(id)
-export const sessionClarifyRequest = (id: string) => clarifyStore.forId(id)
-export const sessionSudoRequest = (id: string) => sudoStore.forId(id)
-export const sessionSecretRequest = (id: string) => secretStore.forId(id)
-export const sessionMcpSetupRequest = (id: string) => mcpSetupStore.forId(id)
+/** True when `sessionId` is parked on a blocking prompt that typing cannot
+ *  answer (approval / sudo / secret). Clarify is deliberately excluded: typing
+ *  a real message IS an answer to a clarify ("none of these" — the composer
+ *  skips it and routes the words), but no message text can approve a command
+ *  or supply a password. Imperative read — the composer checks this on Enter,
+ *  not on every render. */
+export const hasBlockingPromptRequest = (sessionId: string | null | undefined): boolean => {
+  const key = keyFor(sessionId)
 
-export const setSessionApproval = (id: string, req: ApprovalRequest | null) => approvalStore.set(id, req)
-export const setSessionClarify = (id: string, req: ClarifyRequest | null) => clarifyStore.set(id, req)
-export const setSessionSudo = (id: string, req: SudoRequest | null) => sudoStore.set(id, req)
-export const setSessionSecret = (id: string, req: SecretRequest | null) => secretStore.set(id, req)
-export const setSessionMcpSetup = (id: string, req: McpSetupRequest | null) => mcpSetupStore.set(id, req)
+  return Boolean(
+    approval.$all.get()[key] ||
+    sudo.$all.get()[key] ||
+    secret.$all.get()[key] ||
+    vaultUnlock.$all.get()[key] ||
+    vaultSave.$all.get()[key] ||
+    vaultCode.$all.get()[key]
+  )
+}
 
-export const clearSessionApproval = (id: string) => approvalStore.set(id, null)
-export const clearSessionClarify = (id: string) => clarifyStore.set(id, null)
-export const clearSessionSudo = (id: string) => sudoStore.set(id, null)
-export const clearSessionSecret = (id: string) => secretStore.set(id, null)
-export const clearSessionMcpSetup = (id: string) => mcpSetupStore.set(id, null)
+/** Reactive twin of `hasBlockingPromptRequest`, for the composer's busy-action
+ *  affordance (the primary button must advertise queue, not steer, while the
+ *  turn is parked on a prompt Enter can't answer). */
+export const sessionBlockingPrompt = (sessionId: string | null) =>
+  computed(
+    [approval.$all, sudo.$all, secret.$all, vaultUnlock.$all, vaultSave.$all, vaultCode.$all],
+    (approvals, sudos, secrets, vaults, saves, codes) => {
+      const key = keyFor(sessionId)
 
-/** All per-session blocking prompts cleared — for one session (id) or all. */
-export function clearAllPrompts(id?: string): void {
-  if (id) {
-    clearSessionApproval(id)
-    clearSessionClarify(id)
-    clearSessionSudo(id)
-    clearSessionSecret(id)
-    clearSessionMcpSetup(id)
+      return Boolean(approvals[key] || sudos[key] || secrets[key] || vaults[key] || saves[key] || codes[key])
+    }
+  )
+
+/** Per-session `awaitingInput` — the tile composer's counterpart of
+ *  `$activeSessionAwaitingInput` (same sources, fixed session instead of the
+ *  active one). */
+export function sessionAwaitingInput(sessionId: string | null) {
+  return computed(
+    [$clarifyRequests, approval.$all, sudo.$all, secret.$all, vaultUnlock.$all, vaultSave.$all, vaultCode.$all],
+    (clarify, approvals, sudos, secrets, vaults, saves, codes) => {
+      const key = keyFor(sessionId)
+
+      return Boolean(
+        clarify[key] || approvals[key] || sudos[key] || secrets[key] || vaults[key] || saves[key] || codes[key]
+      )
+    }
+  )
+}
+
+// Drop in-flight prompts for `sessionId` (a turn ended) across all three kinds —
+// or every parked prompt when no session is given (global reset / tests).
+export function clearAllPrompts(sessionId?: string | null): void {
+  if (sessionId === undefined) {
+    approval.reset()
+    sudo.reset()
+    secret.reset()
+    vaultUnlock.reset()
+    vaultSave.reset()
+    vaultCode.reset()
 
     return
   }
 
-  approvalStore.clearAll()
-  clarifyStore.clearAll()
-  sudoStore.clearAll()
-  secretStore.clearAll()
-  mcpSetupStore.clearAll()
-}
-
-const promptStores = [approvalStore, clarifyStore, sudoStore, secretStore, mcpSetupStore]
-
-/**
- * Carry every blocking prompt across a session key move, and drop them when the
- * slice is evicted.
- *
- * HYDRATION SAFETY (MJXHRM-207): a cold resume mints a NEW runtime session id
- * for the same conversation, and the slice is rekeyed onto it. A clarify request
- * left behind under the hydrating/draft key is unanswerable — the panel reads
- * the active key and finds nothing, while the agent stays parked in `_block`
- * until its 5-minute timeout. Moving with the slice is what keeps it answerable.
- */
-addSessionKeyHooks({
-  drop(key) {
-    clearAllPrompts(key)
-  },
-  rekey(fromKey, toKey) {
-    for (const store of promptStores) {
-      store.rekey(fromKey, toKey)
-    }
-  }
-})
-
-/** Whether a specific (tiled) session's turn is parked on a blocking prompt. */
-export function sessionAwaitingInput(id: string): ReadableAtom<boolean> {
-  return computed(
-    [
-      approvalStore.forId(id),
-      clarifyStore.forId(id),
-      sudoStore.forId(id),
-      secretStore.forId(id),
-      mcpSetupStore.forId(id)
-    ],
-    (approval, clarify, sudo, secret, mcpSetup) => Boolean(approval || clarify || sudo || secret || mcpSetup)
-  )
+  approval.clear(sessionId)
+  sudo.clear(sessionId)
+  secret.clear(sessionId)
+  vaultUnlock.clear(sessionId)
+  vaultSave.clear(sessionId)
+  vaultCode.clear(sessionId)
 }

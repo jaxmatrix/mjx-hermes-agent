@@ -1,113 +1,294 @@
+import { useStore } from '@nanostores/react'
 import type * as React from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
+import { type NewSessionSplitHandler, startNewSessionDrag } from '@/app/chat/new-session-drag'
 import { Codicon } from '@/components/ui/codicon'
-import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import { Tip } from '@/components/ui/tooltip'
+import type { SessionInfo } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/store/atom'
-import { $removedSessionIds, withoutTombstoned } from '@/store/session'
-import type { SessionInfo } from '@/types/hermes'
+import { $sidebarShowAllSessions } from '@/store/layout'
+import { fetchProjectSessions, projectProfile } from '@/store/projects'
 
 import {
-  SidebarCount,
-  SidebarRowCluster,
+  SIDEBAR_LEAD_ICON_SIZE,
+  SidebarGroupRow,
+  SidebarRowBody,
+  SidebarRowGrab,
+  SidebarRowLabel,
   SidebarRowLead,
+  SidebarRowLeadGlyph,
   SidebarRowLink,
   SidebarRowNest,
   SidebarRowShell
 } from '../chrome'
+import { shellOwnsPress } from '../reorderable-list'
 
-import { latestProjectSessions, PROJECT_PREVIEW_COUNT, type SidebarProjectTree } from './model'
-import { ProjectIcon } from './project-icon'
+import { expandedProjectSessions, latestProjectSessions, PROJECT_PREVIEW_COUNT, useWorkspaceNodeOpen } from './model'
 import { ProjectContextMenu, ProjectMenu } from './project-menu'
+import { excludeProjectSessions, type SidebarProjectTree } from './workspace-groups'
+import { WorkspaceAddButton } from './workspace-header'
 
-interface ProjectOverviewRowProps extends React.ComponentProps<'div'> {
-  project: SidebarProjectTree
-  activeProjectId?: null | string
-  onEnter?: (id: string) => void
-  renderRows: (sessions: SessionInfo[]) => React.ReactNode
-  dragging?: boolean
-  dragHandleProps?: React.HTMLAttributes<HTMLElement>
-}
-
-// A project row in the overview: icon/color dot + name + session count, a
-// hover-revealed caret that expands its recent-session previews, and the project
-// overflow menu. Clicking the label enters the project.
-export function ProjectOverviewRow({
-  project,
-  activeProjectId,
-  onEnter,
-  renderRows,
-  className,
-  ref,
-  ...rest
-}: ProjectOverviewRowProps) {
-  const [expanded, setExpanded] = useState(false)
-  // Tombstoned rows are dropped here the way `entered-content` and
-  // `workspace-group` already drop them (MJXHRM-414). The project tree is a
-  // backend snapshot, so a session deleted a moment ago is still in it until the
-  // next fetch — and this preview list was the one surface that never applied
-  // the filter, so a deleted chat kept appearing under its project.
-  //
-  // The `useStore` is the subscription that makes the filter LIVE: without it
-  // the row would keep its stale previews until something else re-rendered it.
-  useStore($removedSessionIds)
-  const previews = withoutTombstoned(latestProjectSessions(project, PROJECT_PREVIEW_COUNT))
-  const isActive = Boolean(activeProjectId && project.id === activeProjectId && !project.isAuto)
+// A bare color dot (no icon) or an icon glyph — tinted by `color` when set, else
+// the lead's default tertiary. The glyph wrapper centers + caps size either way.
+// Auto-discovered repos (git lanes Desktop found by scanning disk, not rows in
+// projects.db) get the `repo` glyph so a glance tells explicit projects
+// (`folder-library`) apart from incidental disk/session findings.
+export function projectIcon({ color, icon, isAuto, isNoProject }: SidebarProjectTree) {
+  if (color && !icon) {
+    return (
+      <SidebarRowLeadGlyph>
+        <span aria-hidden="true" className="size-1 rounded-full" style={{ backgroundColor: color }} />
+      </SidebarRowLeadGlyph>
+    )
+  }
 
   return (
-    <div className={className} ref={ref} {...rest}>
-      {/* Right-click the row for the same actions as its kebab. The wrapper sits
-          inside this div (not around it) so the drag handle props above keep
-          their own element. */}
-      <ProjectContextMenu project={project}>
-        <SidebarRowShell actions={<ProjectMenu project={project} />} className="group row-hover">
-          <SidebarRowCluster>
-            <SidebarRowLead>
-              <ProjectIcon project={project} />
-            </SidebarRowLead>
-            <SidebarRowLink
-              labelClassName={cn('group-hover:text-foreground', isActive && 'text-foreground')}
-              onClick={() => onEnter?.(project.id)}
-            >
-              {project.label}
-            </SidebarRowLink>
-            {project.sessionCount > 0 && <SidebarCount>{project.sessionCount}</SidebarCount>}
-            {previews.length > 0 && (
-              <button
-                // Not a decorative caret: the row's label navigates into the
-                // project, so this button is the only way to peek at its
-                // sessions in place.
-                className="ms-auto grid size-4 shrink-0 place-items-center rounded-sm text-(--ui-text-tertiary) opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 coarse:opacity-100"
-                onClick={() => setExpanded(v => !v)}
-                type="button"
-              >
-                <DisclosureCaret open={expanded} />
-              </button>
-            )}
-          </SidebarRowCluster>
-        </SidebarRowShell>
-      </ProjectContextMenu>
-      {expanded && previews.length > 0 && <SidebarRowNest>{renderRows(previews)}</SidebarRowNest>}
-    </div>
+    <SidebarRowLeadGlyph style={color ? { color } : undefined}>
+      <Codicon
+        name={icon || (isNoProject ? 'home' : isAuto ? 'repo' : 'folder-library')}
+        size={SIDEBAR_LEAD_ICON_SIZE}
+      />
+    </SidebarRowLeadGlyph>
   )
 }
 
-export function ProjectBackRow({ label, onExit }: { label: string; onExit: () => void }) {
+export function ProjectBackRow({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <SidebarRowShell>
+      <SidebarRowBody
+        className="group/back w-full text-(--ui-text-tertiary) opacity-40 hover:text-foreground"
+        onClick={onClick}
+      >
+        <SidebarRowLead>
+          <SidebarRowLeadGlyph>
+            <Codicon name="arrow-left" size={SIDEBAR_LEAD_ICON_SIZE} />
+          </SidebarRowLeadGlyph>
+        </SidebarRowLead>
+        <SidebarRowLabel className="text-xs underline-offset-4 group-hover/back:underline">{label}</SidebarRowLabel>
+      </SidebarRowBody>
+    </SidebarRowShell>
+  )
+}
+
+interface ProjectOverviewRowProps {
+  project: SidebarProjectTree
+  onEnter?: (id: string) => void
+  onNewSession?: (path: null | string) => void
+  /** Drag the project's "+" onto a chat zone: create a new session pinned to
+   *  this project's cwd, placed exactly where it's dropped. */
+  onNewSessionSplit?: NewSessionSplitHandler
+  renderRows?: (sessions: SessionInfo[]) => React.ReactNode
+  activeProjectId?: null | string
+  previewSessions?: SessionInfo[]
+  /** What the project tree drops (pins, filter misses, just-deleted rows) —
+   *  the same predicate `previewSessions` was built with, so a "Show all"
+   *  hydration can't resurrect them. */
+  isSessionHidden?: (session: SessionInfo) => boolean
+  /** How many of the backend's `sessionCount` that predicate hides, so
+   *  "Show all N" promises only rows the view will actually render. */
+  hiddenSessionCount?: number
+  reorderable?: boolean
+  dragging?: boolean
+  dragHandleProps?: React.HTMLAttributes<HTMLElement>
+  ref?: React.Ref<HTMLDivElement>
+  style?: React.CSSProperties
+}
+
+export function ProjectOverviewRow({
+  project,
+  onEnter,
+  onNewSession,
+  onNewSessionSplit,
+  renderRows,
+  activeProjectId,
+  previewSessions,
+  isSessionHidden,
+  hiddenSessionCount = 0,
+  reorderable = false,
+  dragging = false,
+  dragHandleProps,
+  ref,
+  style
+}: ProjectOverviewRowProps) {
   const { t } = useI18n()
+  const s = t.sidebar
+  const isActive = project.id === activeProjectId
+  const [open, toggleOpen] = useWorkspaceNodeOpen(project.id)
+  // The appearance popover anchors here (the full row) so it opens flush with
+  // the sidebar's content edge regardless of which side the sidebar is on.
+  const rowRef = useRef<HTMLDivElement>(null)
+  const showAllSessions = useStore($sidebarShowAllSessions)
+  // The tree payload previews only the most-recent few sessions per project
+  // (kept light on purpose); "Show all" hydrates THIS project's lanes on demand
+  // rather than widening every project's preview window.
+  const [expanded, setExpanded] = useState<SidebarProjectTree | null>(null)
+  const [expanding, setExpanding] = useState(false)
+  const limit = showAllSessions || expanded ? Infinity : PROJECT_PREVIEW_COUNT
+  const fetched = (previewSessions ?? []).slice(0, limit)
+  const recent = fetched.length ? fetched : latestProjectSessions(project, limit)
+  // The hydrated lanes come straight from the backend, so — like the drill-in
+  // (index.tsx) — they haven't been through the tree's exclusion filter yet.
+  const visible = expanded && isSessionHidden ? excludeProjectSessions(expanded, isSessionHidden) : expanded
+  const preview = renderRows ? (visible ? expandedProjectSessions(recent, visible) : recent) : []
+  const total = project.sessionCount - hiddenSessionCount
+  const hiddenCount = total - preview.length
+  const offerShowAll = !showAllSessions && !expanded && preview.length > 0 && hiddenCount > 0
+
+  const showAll = () => {
+    // All-profiles view has no single backend to ask for one project's lanes;
+    // drilling in is the reach there.
+    if (!projectProfile()) {
+      onEnter?.(project.id)
+
+      return
+    }
+
+    setExpanding(true)
+    fetchProjectSessions(project.id, { supersedable: false })
+      .then(tree => void (tree && setExpanded(tree)))
+      .catch(() => onEnter?.(project.id))
+      .finally(() => setExpanding(false))
+  }
+
+  const lead = reorderable ? (
+    <SidebarRowGrab
+      ariaLabel={s.projects.reorder(project.label)}
+      dragging={dragging}
+      dragHandleProps={dragHandleProps}
+      leadClassName="overflow-visible"
+    >
+      {projectIcon(project)}
+    </SidebarRowGrab>
+  ) : (
+    <SidebarRowLead>{projectIcon(project)}</SidebarRowLead>
+  )
+
+  const labelLink = (
+    <SidebarRowLink
+      // The glyph is aria-hidden and the tooltip only speaks on hover, so the
+      // link's own name carries the auto cue — screen readers get it too.
+      aria-label={
+        project.isAuto
+          ? `${s.projects.enter(project.label)} (${s.projects.autoDiscovered})`
+          : s.projects.enter(project.label)
+      }
+      labelClassName={cn('hover:text-foreground hover:underline', isActive && 'text-foreground')}
+      onClick={() => onEnter?.(project.id)}
+    >
+      {project.label}
+    </SidebarRowLink>
+  )
+
+  const shell = (
+    <SidebarGroupRow
+      actions={
+        <>
+          {/* Home is a bucket, not a record, so there's nothing to rename or
+              delete — but it still starts sessions: a null path is the "no
+              folder" chat. New session sits outermost: it's the one you reach
+              for. */}
+          {!project.isNoProject && <ProjectMenu anchorRef={rowRef} isActive={isActive} project={project} />}
+          {onNewSession && (
+            <WorkspaceAddButton
+              label={s.newSessionIn(project.label)}
+              onClick={() => onNewSession(project.path)}
+              onPointerDown={
+                onNewSessionSplit
+                  ? event => {
+                      // Drag the "+" onto a chat zone: create the session
+                      // pinned to this project's cwd, exactly where it's
+                      // dropped. A sub-threshold release falls through to the
+                      // onClick above (ordinary new session in main).
+                      startNewSessionDrag(
+                        placement => {
+                          onNewSessionSplit(placement.dir, {
+                            anchor: placement.anchor,
+                            before: placement.before,
+                            cwd: project.path
+                          })
+                        },
+                        event,
+                        { cwd: project.path, label: s.newSessionIn(project.label) }
+                      )
+                    }
+                  : undefined
+              }
+            />
+          )}
+        </>
+      }
+      className={cn(dragging && 'cursor-grabbing bg-(--ui-sidebar-surface-background)')}
+      data-glass-opaque={dragging ? '' : undefined}
+      label={project.isAuto ? <Tip label={s.projects.autoDiscovered}>{labelLink}</Tip> : labelLink}
+      lead={lead}
+      // The label is grab surface too, not just the lead's grabber — the
+      // pointer activator only (the full handle stays on the grabber, see
+      // useSortableBindings), minus the controls that keep their own gestures.
+      // A project row has no rival drag (its title navigates on CLICK), so the
+      // sortable owns the press outright.
+      onPointerDown={event => {
+        // The project row's ⋯ menu and its confirm dialog portal out of this
+        // row's React subtree — a press on either arrives with a target outside
+        // the row, so gate the shell on presses that started inside it.
+        if (!shellOwnsPress(event)) {
+          return
+        }
+
+        if ((event.target as HTMLElement).closest('[data-reorder-handle], [data-row-actions]')) {
+          return
+        }
+
+        dragHandleProps?.onPointerDown?.(event)
+      }}
+      ref={rowRef}
+      toggle={
+        preview.length > 0
+          ? { ariaLabel: s.projects.toggle(project.label, !open), onToggle: toggleOpen, open }
+          : undefined
+      }
+      totals={{ costUsd: project.totalCostUsd ?? 0, tokens: project.totalTokens ?? 0 }}
+    />
+  )
 
   return (
-    <Tip label={t.sidebar.projects.back}>
-      <button
-        className="flex min-h-[1.625rem] w-full items-center gap-1.5 rounded-md ps-2 text-start text-[0.8125rem] text-(--ui-text-tertiary) opacity-70 transition hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100"
-        onClick={onExit}
-        type="button"
-      >
-        <Codicon name="arrow-left" size="0.875rem" />
-        <span className="min-w-0 truncate">{label}</span>
-      </button>
-    </Tip>
+    // Tag each project sibling with its id so a custom skin can target one
+    // project in the overview — the parallel to the entered-project wrapper's
+    // `data-sessions-project` (index.tsx), which only fires once you've drilled
+    // in. Here it's present on every row of the list.
+    <div className={cn(dragging && 'relative z-10')} data-sessions-project={project.id} ref={ref} style={style}>
+      {/* Home has no per-project actions, so it gets no right-click menu. */}
+      {project.isNoProject ? (
+        shell
+      ) : (
+        <ProjectContextMenu isActive={isActive} project={project}>
+          {shell}
+        </ProjectContextMenu>
+      )}
+      {open && preview.length > 0 && (
+        <SidebarRowNest>
+          {renderRows?.(preview)}
+          {offerShowAll && (
+            <SidebarRowShell>
+              <SidebarRowBody
+                className="group/more w-full text-(--ui-text-tertiary) hover:text-foreground"
+                disabled={expanding}
+                onClick={showAll}
+              >
+                <SidebarRowLead>
+                  <SidebarRowLeadGlyph>
+                    <Codicon name="ellipsis" size={SIDEBAR_LEAD_ICON_SIZE} />
+                  </SidebarRowLeadGlyph>
+                </SidebarRowLead>
+                <SidebarRowLabel className="text-xs underline-offset-4 group-hover/more:underline">
+                  {s.projects.showAllCount(total)}
+                </SidebarRowLabel>
+              </SidebarRowBody>
+            </SidebarRowShell>
+          )}
+        </SidebarRowNest>
+      )}
+    </div>
   )
 }

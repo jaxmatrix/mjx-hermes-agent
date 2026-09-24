@@ -12,6 +12,15 @@
 import type { PluginLocaleBundles } from '@hermes/plugin-sdk'
 
 const en = {
+  avatar: {
+    imageTooLarge: 'Image too large (max 15MB).'
+  },
+  bot: {
+    createFirstHint: 'Open the Bots pane and hit “New Bot”.',
+    kickoff: 'Hey, tell me about yourself!',
+    openAnotherChatUnsupported: 'Update Hermes Desktop to open another Bot chat.',
+    remoteConnectionsUnsupported: 'Update Hermes Desktop to chat with bots on other connections.'
+  },
   chat: {
     neverResetsBody:
       'Bot chats are one continuous conversation — compacting instead. For a throwaway session with this agent, use Sessions mode.',

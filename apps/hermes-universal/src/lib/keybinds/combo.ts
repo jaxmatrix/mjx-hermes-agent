@@ -2,8 +2,10 @@
 //
 // A combo is a canonical lowercase string like "mod+k", "mod+shift+]", "shift+x",
 // or "r". `mod` is Cmd on macOS / Ctrl elsewhere, so a single binding works on
-// both. We derive the base key from `event.code` (not `event.key`) so Shift never
-// mutates it ("shift+/" stays "shift+/" instead of becoming "shift+?").
+// both. We derive the base key from `event.key` where the layout matters
+// (letters, unshifted punctuation) and from `event.code` otherwise, so a
+// binding follows the character the user's layout actually types while Shift
+// never mutates it ("shift+/" stays "shift+/" instead of becoming "shift+?").
 //
 // `ctrl` is physical Control, distinct from `mod`. It only matters on macOS,
 // where `mod` is Cmd and Cmd+Tab is OS-reserved — so `ctrl+tab` is literally
@@ -31,6 +33,8 @@ const CODE_TO_KEY: Record<string, string> = {
   Escape: 'escape',
   Backspace: 'backspace',
   Tab: 'tab',
+  PageUp: 'pageup',
+  PageDown: 'pagedown',
   ArrowUp: 'up',
   ArrowDown: 'down',
   ArrowLeft: 'left',
@@ -47,6 +51,9 @@ const MODIFIER_CODES = new Set([
   'ShiftLeft',
   'ShiftRight'
 ])
+
+// Modifier names as reported by `event.key` on a bare modifier keydown.
+const MODIFIER_KEYS = new Set(['Alt', 'Control', 'Meta', 'Shift'])
 
 function baseKeyFromCode(code: string): string | null {
   if (code.startsWith('Key')) {
@@ -70,14 +77,58 @@ function baseKeyFromCode(code: string): string | null {
   return CODE_TO_KEY[code] ?? null
 }
 
+// Punctuation we ship as combo tokens, derived from CODE_TO_KEY so the two
+// can't drift. Named tokens (space, tab, …) are excluded by the length check.
+const PUNCTUATION_KEYS = new Set(Object.values(CODE_TO_KEY).filter(token => token.length === 1))
+
+// The layout-aware half of the base key. `event.key` carries the character the
+// user's layout actually produces, which is what a binding should match:
+//
+//   - Letters always win, shifted or not — `toLowerCase` normalizes the case.
+//   - Punctuation only when Shift is UP, because a shifted `event.key` is the
+//     shifted glyph ("?" for "/"), and combos stay anchored to the unshifted
+//     token. Shifted punctuation falls through to `event.code` below.
+//
+// Digits deliberately stay physical: on AZERTY the number row is shifted, so
+// `event.key` for the "1" key is "&" and only yields "1" with Shift held —
+// `event.code` is what keeps `mod+1` reachable there.
+//
+// Anything else (Option glyphs like "˚", dead keys, non-Latin scripts) isn't a
+// token we ship, so it fails both checks and falls back to the physical code.
+function baseKeyFromEventKey(key: string, shiftKey: boolean): string | null {
+  if (/^[a-z]$/i.test(key)) {
+    return key.toLowerCase()
+  }
+
+  return !shiftKey && PUNCTUATION_KEYS.has(key) ? key : null
+}
+
 // Returns the canonical combo for a keydown, or null while only modifiers are
 // held (so capture mode keeps waiting for a real key).
 export function comboFromEvent(event: KeyboardEvent): string | null {
+  // IME composition (Chinese/Japanese/Korean input): the keydown events
+  // during composition carry preedit keystrokes and the commit keypress
+  // (Enter/Space/Shift for candidate selection). Treating them as combos
+  // fires unrelated keybinds — e.g. typing 你 with a Chinese IME sent a
+  // keydown that dispatched `session.new` and silently opened a new session.
+  // Bail out entirely while composing.
+  if (event.isComposing || event.key === 'Process') {
+    return null
+  }
+
   if (MODIFIER_CODES.has(event.code)) {
     return null
   }
 
-  const base = baseKeyFromCode(event.code)
+  // A keydown whose `key` is a modifier name but whose `code` is a regular
+  // key is not a real modifier chord — legacy IMEs that synthesize keystrokes
+  // (Q9 2002 sends key="Control" with code="KeyW") produce these, and they
+  // would canonicalize to phantom combos (Ctrl+W → close active tab). Ignore.
+  if (MODIFIER_KEYS.has(event.key)) {
+    return null
+  }
+
+  const base = baseKeyFromEventKey(event.key, event.shiftKey) ?? baseKeyFromCode(event.code)
 
   if (!base) {
     return null
@@ -115,79 +166,13 @@ export function canonicalizeCombo(combo: string): string {
   return IS_MAC ? combo : combo.replace(/\bctrl\b/g, 'mod')
 }
 
-// Base tokens whose name differs from the accelerator vocabulary Tauri's global
-// shortcut plugin parses. Everything else (letters, digits, F-keys, punctuation)
-// passes through as-is.
-const ACCELERATOR_KEYS: Record<string, string> = {
-  '`': 'Backquote',
-  backspace: 'Backspace',
-  down: 'Down',
-  enter: 'Enter',
-  escape: 'Escape',
-  left: 'Left',
-  right: 'Right',
-  space: 'Space',
-  tab: 'Tab',
-  up: 'Up'
-}
-
-/**
- * A canonical combo as an OS-level accelerator (`mod+shift+space` →
- * `CommandOrControl+Shift+Space`).
- *
- * This is the seam between the rebindable registry and the system: a global
- * hotkey is claimed from the OS, not from a DOM listener, so it needs the string
- * the platform's shortcut API understands rather than the one this app matches
- * keydowns against. `CommandOrControl` is what `mod` already means.
- *
- * Returns null for a combo the OS can't take — a bare key or a lone Shift chord
- * would swallow that keystroke system-wide, which is never what a user meant by
- * binding it.
- */
-export function acceleratorFromCombo(combo: string): null | string {
-  const parts = combo.split('+')
-  const base = parts.pop()
-
-  if (!base) {
-    return null
-  }
-
-  const mods = new Set(parts)
-
-  if (!mods.has('mod') && !mods.has('ctrl') && !mods.has('alt')) {
-    return null
-  }
-
-  const tokens: string[] = []
-
-  if (mods.has('mod')) {
-    tokens.push('CommandOrControl')
-  }
-
-  if (mods.has('ctrl')) {
-    // On macOS `ctrl` is physical Control alongside Cmd; elsewhere it IS `mod`,
-    // and repeating it would produce `Control+Control+…`.
-    tokens.push(IS_MAC ? 'Control' : 'CommandOrControl')
-  }
-
-  if (mods.has('alt')) {
-    tokens.push('Alt')
-  }
-
-  if (mods.has('shift')) {
-    tokens.push('Shift')
-  }
-
-  const key = ACCELERATOR_KEYS[base] ?? (/^f\d{1,2}$/.test(base) ? base.toUpperCase() : base.toUpperCase())
-
-  return [...new Set(tokens), key].join('+')
-}
-
 const TOKEN_LABELS: Record<string, string> = {
   enter: '↵',
   escape: 'Esc',
   backspace: '⌫',
   tab: '⇥',
+  pageup: 'PgUp',
+  pagedown: 'PgDn',
   space: 'Space',
   up: '↑',
   down: '↓',
@@ -207,9 +192,6 @@ function labelForBase(base: string): string {
   return base.length === 1 ? base.toUpperCase() : base
 }
 
-// Display token for one modifier ("mod" → "⌘" on macOS, "Ctrl" elsewhere). Exported
-// through the plugin SDK so plugins can label the platform modifier the way the
-// app does (the shared kanban sample uses it for its select hint).
 export function formatModifierToken(mod: string): string {
   if (mod === 'mod') {
     return IS_MAC ? '⌘' : 'Ctrl'
@@ -246,12 +228,49 @@ export function formatCombo(combo: string): string {
   return IS_MAC ? tokens.join('') : tokens.join('+')
 }
 
+/** Tauri / OS accelerator spelling for a canonical combo (`mod+shift+h` → `CommandOrControl+Shift+H`). */
+export function acceleratorFromCombo(combo: string): string | null {
+  const parts = canonicalizeCombo(combo)
+    .split('+')
+    .map(part => part.trim())
+    .filter(Boolean)
+
+  if (!parts.length) {
+    return null
+  }
+
+  return parts
+    .map(part => {
+      if (part === 'mod') {
+        return 'CommandOrControl'
+      }
+
+      if (part.length === 1) {
+        return part.toUpperCase()
+      }
+
+      if (/^f\d{1,2}$/.test(part)) {
+        return part.toUpperCase()
+      }
+
+      return part.charAt(0).toUpperCase() + part.slice(1)
+    })
+    .join('+')
+}
+
 // True when focus currently sits inside an element matching `selector`. The
 // primitive for focus-scoped shortcuts — e.g. routing ⌘W to whichever surface
 // (terminal, preview, …) owns focus.
 export function isFocusWithin(selector: string): boolean {
   return document.activeElement?.closest(selector) != null
 }
+
+// Overlays that cover the whole window (portaled to the body, or the overlay
+// shell itself): dialogs, menus, listboxes, every Radix popper layer. One
+// anywhere means the composer is behind it — its keys, and any focus the
+// user has inside it, are the overlay's own.
+export const OVERLAY_SURFACE =
+  '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper],[data-overlay-surface]'
 
 // True when focus is in a text-entry surface, so bare-key shortcuts don't fire
 // while the user is typing.
@@ -266,24 +285,51 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   )
 }
 
-// A primary modifier (Cmd/Ctrl/Control/Alt) fires even while typing (e.g. ⌘K or
-// ⌃Tab from the composer); bare/Shift-only combos are suppressed in inputs.
-//
-// `alt` is in the set because the two chords that need it most are composer-side:
-// ⌥B toggles voice and ⌥1-9 switch chat tabs, both of which are pressed with the
-// caret sitting in the composer. The cost is macOS-specific — ⌥+letter there
-// composes a special character (⌥B = "∫"), so a bound ⌥ combo shadows that
-// character in text fields. Only the two shipped defaults are affected; the
-// panel can rebind either.
-export function comboAllowedInInput(combo: string): boolean {
-  return /^(?:mod|ctrl|alt)(?:\+|$)/.test(combo)
-}
+const INPUT_SAFE_ACTIONS = new Set([
+  'composer.modelPicker',
+  'composer.voice',
+  'keybinds.openPanel',
+  'nav.commandPalette',
+  'session.next',
+  'session.prev',
+  'view.findInPage'
+])
 
-// Shift plus a single character — i.e. a CAPITAL LETTER (or `!`, `?`, …). Such a
-// chord is a keystroke before it is a shortcut, so type-to-focus wins it whenever
-// the composer would take the character: `shift+n` shipping as a New session
-// default otherwise means a message can never START with an N. Multi-char bases
-// (shift+enter, shift+tab) type nothing and keep their binding.
-export function isShiftPrintableCombo(combo: string): boolean {
-  return /^shift\+.$/.test(combo)
+const TEXT_NAVIGATION_KEYS = new Set(['up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown'])
+
+// Only explicit text-entry-safe actions fire while typing. A primary-modifier
+// chord (Cmd/Ctrl) is a deliberate two-key gesture that every browser and chat
+// app fires even with focus in a text field (⌘N, ⌘T, ⌘K, ⌃Tab…), so those stay
+// global — restoring the pre-#86586 behavior. Editing/navigation chords such
+// as Ctrl+Arrow/PageUp must stay with the input even if a user rebinds them to
+// a global navigation action, and bare/Shift-only combos (typed letters) are
+// gated by the allowlist so they never hijack normal typing.
+export function actionAllowedInInput(actionId: string, combo: string): boolean {
+  const parts = combo.split('+')
+  const base = parts.pop()
+
+  // A bare modifier (no key) is not a real chord — `comboFromEvent` never
+  // yields one, but reject it here so a malformed stored binding can't pass
+  // the shape-only mod/ctrl check below.
+  if (!base || base === 'mod' || base === 'ctrl') {
+    return false
+  }
+
+  // Navigation keys stay with the focused input only for chords that can BE
+  // text navigation: a single primary modifier (⌘← line-start, Ctrl+PgUp,
+  // ⌘⇧← selection) or bare Alt (⌥← word-jump). A chord that carries Alt on
+  // top of a primary modifier (⌘⌥←, Ctrl+Alt+←) has no native text-editing
+  // meaning, so an explicitly rebound global action keeps firing while
+  // typing — the same shape as the shipped `mod+alt+t` tab-strip default.
+  const hasPrimary = parts.includes('mod') || parts.includes('ctrl')
+
+  if (TEXT_NAVIGATION_KEYS.has(base) && !(hasPrimary && parts.includes('alt'))) {
+    return false
+  }
+
+  if (/^(?:mod|ctrl)(?:\+|$)/.test(combo)) {
+    return true
+  }
+
+  return INPUT_SAFE_ACTIONS.has(actionId)
 }

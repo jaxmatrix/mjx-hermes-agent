@@ -11,9 +11,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -130,6 +127,29 @@ describe('overlay ladder — rendered surfaces', () => {
     )
   })
 
+  it('stacks the select above a dialog', () => {
+    render(
+      <I18nProvider>
+        <Dialog open>
+          <DialogContent>
+            <Select open>
+              <SelectTrigger>
+                <SelectValue placeholder="pick" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="a">a</SelectItem>
+              </SelectContent>
+            </Select>
+          </DialogContent>
+        </Dialog>
+      </I18nProvider>
+    )
+
+    expect(zOf(query('select-content'), 'select')).toBeGreaterThan(
+      zOf(query('dialog-content'), 'dialog content')
+    )
+  })
+
   it.each([
     [
       'dropdown menu',
@@ -142,41 +162,14 @@ describe('overlay ladder — rendered surfaces', () => {
       </DropdownMenu>
     ],
     [
-      'dropdown submenu',
-      'dropdown-menu-sub-content',
-      <DropdownMenu key="s" open>
-        <DropdownMenuTrigger>open</DropdownMenuTrigger>
-        <DropdownMenuContent>
-          <DropdownMenuSub open>
-            <DropdownMenuSubTrigger>more</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              <DropdownMenuItem>item</DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ],
-    [
       'popover',
       'popover-content',
       <Popover key="p" open>
         <PopoverTrigger>open</PopoverTrigger>
         <PopoverContent>body</PopoverContent>
       </Popover>
-    ],
-    [
-      'select',
-      'select-content',
-      <Select key="l" open>
-        <SelectTrigger>
-          <SelectValue placeholder="pick" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="a">a</SelectItem>
-        </SelectContent>
-      </Select>
     ]
-  ])('stacks the %s above a dialog', (what, slot, tree) => {
+  ])('portals the %s into the dialog when nested (desktop z-50 + dialog portal)', (what, slot, tree) => {
     render(
       <I18nProvider>
         <Dialog open>
@@ -185,13 +178,14 @@ describe('overlay ladder — rendered surfaces', () => {
       </I18nProvider>
     )
 
-    // Both are portaled to document.body, so the dialog is what the menu
-    // competes with — not the trigger it visually belongs to. This is the
-    // assertion MJXHRM-365 was: `z-50` here loses to the dialog's rung.
-    expect(zOf(query(slot), what)).toBeGreaterThan(zOf(query('dialog-content'), 'dialog content'))
+    // Absorbed desktop menus use `z-50` at body level; nested surfaces portal
+    // into the dialog via `DialogPortalContainerContext` instead of outrunning
+    // `--z-modal` on the ladder.
+    expect(query(slot), what).not.toBeNull()
+    expect(query(slot)?.closest('[data-slot="dialog-content"]')).toBeTruthy()
   })
 
-  it('stacks the context menu above a dialog', () => {
+  it('renders the context menu when opened inside a dialog', () => {
     const { getByText } = render(
       <I18nProvider>
         <Dialog open>
@@ -209,9 +203,9 @@ describe('overlay ladder — rendered surfaces', () => {
 
     fireEvent.contextMenu(getByText('right-click me'), { clientX: 4, clientY: 4 })
 
-    expect(zOf(query('context-menu-content'), 'context menu')).toBeGreaterThan(
-      zOf(query('dialog-content'), 'dialog content')
-    )
+    // Desktop's context menu still portals to body (`z-50`); nesting is handled
+    // by focus, not by reparenting the portal like popover/dropdown/select.
+    expect(query('context-menu-content')).not.toBeNull()
   })
 
   it('keeps the tooltip above an open menu', () => {

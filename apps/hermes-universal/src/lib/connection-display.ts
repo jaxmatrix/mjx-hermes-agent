@@ -1,120 +1,82 @@
-import type { ConnectionView } from '@/store/connections'
+import type { DesktopRegistryConnection } from '@/global'
 
-/**
- * How a list of sources is ordered, searched and described.
- *
- * PURE, and never exposes a secret: `connectionEndpointLabel` renders a host and
- * a user, never a token, never a preview, never a header value. Desktop states
- * the same rule as a test name — *"keeps technical endpoints available on demand
- * without exposing secrets"* — and it is the reason the Gateways page shows an
- * endpoint on demand rather than always: a screen-share should not publish a
- * Tailscale topology.
- */
-
-/** Below this many sources the list is short enough to read; a search box would
- *  be chrome with nothing to do. */
 export const CONNECTION_SEARCH_THRESHOLD = 8
 
-/**
- * Local first (it is this device), then labels case-insensitively with numeric
- * order so "box 2" sorts before "box 10".
- *
- * Returns a NEW array: the registry's own order is the durable `order` field and
- * must not be disturbed by a display concern.
- */
-export function sortConnectionsForDisplay(connections: ConnectionView[]): ConnectionView[] {
-  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+const connectionLabelCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base'
+})
 
-  return [...connections].sort((a, b) => {
-    if (a.kind !== b.kind && (a.kind === 'local' || b.kind === 'local')) {
-      return a.kind === 'local' ? -1 : 1
-    }
+/** Local stays anchored; every other gateway has one stable, human-readable order. */
+export function sortConnectionsForDisplay<T extends Pick<DesktopRegistryConnection, 'id' | 'kind' | 'label'>>(
+  connections: readonly T[]
+): T[] {
+  return [...connections].sort((left, right) => {
+    const localOrder = Number(right.kind === 'local') - Number(left.kind === 'local')
 
-    return collator.compare(a.label, b.label) || a.order - b.order
+    return (
+      localOrder ||
+      connectionLabelCollator.compare(left.label, right.label) ||
+      connectionLabelCollator.compare(left.id, right.id)
+    )
   })
 }
 
-/** Accent- and case-insensitive, so "studio" finds "Stüdio". */
-function fold(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase()
+function normalizeSearchText(value: string): string {
+  return value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase()
 }
 
-/**
- * Does this source match a search term?
- *
- * Matches the label, the transport details (host, user, URL, remote profile) and
- * the kind — the last because "ssh" is what someone types when they are looking
- * for the box they reach that way.
- */
-export function connectionSearchMatches(connection: ConnectionView, term: string): boolean {
-  const needle = fold(term.trim())
+/** Search non-secret details users can see or reasonably remember about a gateway. */
+export function connectionMatchesQuery(
+  connection: DesktopRegistryConnection,
+  query: string,
+  aliases: readonly string[] = []
+): boolean {
+  const needles = normalizeSearchText(query).trim().split(/\s+/).filter(Boolean)
 
-  if (!needle) {
+  if (needles.length === 0) {
     return true
   }
 
-  return [connection.label, connection.kind, connection.url, connection.host, connection.user, connection.remoteProfile]
+  const haystack = [
+    connection.label,
+    connection.kind,
+    connection.url,
+    connection.host,
+    connection.user,
+    connection.port == null ? null : String(connection.port),
+    connection.org,
+    connection.remoteProfile,
+    ...aliases
+  ]
     .filter((value): value is string => Boolean(value))
-    .some(value => fold(value).includes(needle))
+    .join(' ')
+
+  const normalizedHaystack = normalizeSearchText(haystack)
+
+  return needles.every(needle => normalizedHaystack.includes(needle))
 }
 
-/**
- * The endpoint, for the row's on-demand detail line.
- *
- * A `local` source has no address to show — it is this machine — and saying
- * "127.0.0.1:<ephemeral port>" would be a number that changes every launch.
- */
-export function connectionEndpointLabel(connection: ConnectionView): null | string {
-  switch (connection.kind) {
-    case 'ssh': {
-      const host = connection.host ?? ''
-      const user = connection.user ? `${connection.user}@` : ''
-      const port = connection.port && connection.port !== 22 ? `:${connection.port}` : ''
+/** Human-readable, non-secret endpoint for on-demand gateway details. */
+export function connectionEndpoint(connection: DesktopRegistryConnection): null | string {
+  if (connection.kind === 'ssh') {
+    const host = connection.host?.trim()
 
-      return host ? `${user}${host}${port}` : null
-    }
-
-    case 'cloud':
-    case 'remote':
-      // Host and path only: the URL's userinfo half can carry a password
-      // (`normalizeBaseUrl` keeps whatever was typed), and this string reaches
-      // tooltips and screenshots.
-      try {
-        const parsed = new URL(connection.url ?? '')
-
-        return `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`
-      } catch {
-        return connection.url ?? null
-      }
-
-    default:
+    if (!host) {
       return null
+    }
+
+    const authority = `${connection.user?.trim() ? `${connection.user.trim()}@` : ''}${host}`
+
+    return connection.port == null ? authority : `${authority}:${connection.port}`
   }
+
+  return connection.url?.trim() || null
 }
 
-/** Which sources address the SAME backend, by install id. Only the rows AFTER
- *  the first are hinted, so the hint reads as information rather than an
- *  accusation against the one the user set up first. */
-export function sameBackendHints(installIds: Record<string, string | undefined>): Record<string, string> {
-  const firstByInstall = new Map<string, string>()
-  const hints: Record<string, string> = {}
+/** Full gateway identity for a hover tip without keeping technical routing in chrome. */
+export function connectionTooltip(connection: DesktopRegistryConnection): string {
+  const endpoint = connectionEndpoint(connection)
 
-  for (const [connectionId, installId] of Object.entries(installIds)) {
-    if (!installId) {
-      continue
-    }
-
-    const first = firstByInstall.get(installId)
-
-    if (first) {
-      hints[connectionId] = first
-    } else {
-      firstByInstall.set(installId, connectionId)
-    }
-  }
-
-  return hints
+  return endpoint ? `${connection.label}\n${endpoint}` : connection.label
 }

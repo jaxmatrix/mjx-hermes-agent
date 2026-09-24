@@ -10,7 +10,7 @@
  */
 
 import { IS_DESKTOP } from '@/lib/platform'
-import { $quickEntryEnabled } from '@/store/quick-entry'
+import { $quickEntry } from '@/store/quick-entry'
 import { closeSatelliteWindow, isSatelliteWindowOpen, openSatelliteWindow } from '@/store/windows'
 
 /** The surface id, and therefore the `?win=` flag and the `sat-quick` label. */
@@ -134,21 +134,12 @@ export function canUseQuickEntry(): boolean {
 
 /** Summon it. False when the platform can't, or the user turned it off. */
 export async function openQuickEntry(): Promise<boolean> {
-  if (!canUseQuickEntry() || !$quickEntryEnabled.get()) {
+  if (!canUseQuickEntry() || !$quickEntry.get().enabled) {
     return false
   }
 
-  // Arm the return trip BEFORE the window exists. The quick window sends its
-  // hello the moment it mounts, and a bridge installed after that would answer
-  // nothing — leaving a window that shows "not connected" over a live gateway.
-  //
-  // Imported here rather than at module scope so that holding a reference to
-  // this window's geometry does not drag the chat and session stores in behind
-  // it — the same reason `hud/handoff.ts` defers `@/store/session`.
-  const { installQuickEntryBridge } = await import('./bridge')
-
-  installQuickEntryBridge()
-
+  // Primary's useQuickEntryBridge already owns submit + pushState over
+  // hermesDesktop; arming the channel bridge here would double-route submits.
   const label = await openSatelliteWindow(QUICK_ENTRY_SURFACE)
 
   if (!label) {
@@ -156,6 +147,8 @@ export async function openQuickEntry(): Promise<boolean> {
   }
 
   void placeQuickEntryWindow(label)
+
+  void import('./channel').then(({ emitQuickEntryShown }) => emitQuickEntryShown())
 
   return true
 }

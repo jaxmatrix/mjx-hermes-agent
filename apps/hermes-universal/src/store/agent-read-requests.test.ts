@@ -15,18 +15,23 @@ const terminal = vi.hoisted(() => ({ read: vi.fn<(options: unknown) => unknown>(
 
 vi.mock('@/app/right-pane/terminal/buffer', () => ({ readActiveTerminal: terminal.read }))
 
-vi.mock('@/store/gateway', () => ({
-  addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
-    stream.route = listener
+vi.mock('@/store/gateway-client', async () => {
+  const { atom } = await import('@/store/atom')
 
-    return () => {
-      stream.route = null
-    }
-  },
-  requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
-}))
+  return {
+    $gatewayState: atom('open'),
+    addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
+      stream.route = listener
 
-import { requestGateway } from '@/store/gateway'
+      return () => {
+        stream.route = null
+      }
+    },
+    requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
+  }
+})
+
+import { requestGateway } from '@/store/gateway-client'
 
 import {
   __resetAgentReadRequests,
@@ -376,10 +381,7 @@ describe('tour.request', () => {
 
     // Same context argument, for symmetry: a bot session's tour must not be
     // able to take a surface the user is not looking at either.
-    expect(driver).toHaveBeenCalledWith(
-      { action: 'targets', surface: 'app', selector: '.rail' },
-      { sessionId: null }
-    )
+    expect(driver).toHaveBeenCalledWith({ action: 'targets', surface: 'app', selector: '.rail' }, { sessionId: null })
     expect(rpc).toHaveBeenCalledWith('tour.respond', {
       request_id: 't2',
       text: JSON.stringify({ matched: 2, step: 0 })

@@ -1,36 +1,42 @@
-import { type Codec, persistentAtom } from '@/lib/persisted'
-import { atom, computed, type ReadableAtom } from '@/store/atom'
+import { atom, computed, type ReadableAtom } from 'nanostores'
 
-// Tool-call display mode (mirrors desktop `store/tool-view.ts`). `product` hides
-// raw tool payloads; `technical` shows full input/output. Persisted per-device.
+import { persistBoolean, storedBoolean } from '@/lib/storage'
+import { modeBound } from '@/store/interface-mode'
+
 export type ToolViewMode = 'product' | 'technical'
 
-const codec: Codec<ToolViewMode> = {
-  decode: raw => (raw === 'technical' ? 'technical' : 'product'),
-  encode: value => value
-}
-
-export const $toolViewMode = persistentAtom<ToolViewMode>('hermes.toolView', 'product', codec)
-
-export const setToolViewMode = (mode: ToolViewMode) => $toolViewMode.set(mode)
-
-// --- Per-row disclosure open/closed state (ported from desktop) ---------------
-// A map of disclosureId → open, so a tool row's expanded state survives the
-// thread virtualizer unmounting/remounting the row as it scrolls. Persisted to
-// localStorage (a device-local UI preference), capped so it can't grow forever.
 type ToolDisclosureStates = Record<string, boolean>
 
-const TOOL_DISCLOSURE_STORAGE_KEY = 'hermes.toolDisclosure.v1'
+const TOOL_VIEW_TECHNICAL_STORAGE_KEY = 'hermes.desktop.toolView.technical'
+const HIDE_CODE_DIFFS_STORAGE_KEY = 'hermes.desktop.toolView.hideCodeDiffs'
+const TOOL_DISCLOSURE_STORAGE_KEY = 'hermes.desktop.toolDisclosure.v1'
 const MAX_DISCLOSURE_STATES = 240
 
-export const $toolDisclosureStates = atom<ToolDisclosureStates>(loadToolDisclosureStates())
-// `$toolDisclosureOpen` is called bare in a render body, so it MUST return the
-// same atom for the same id or `useStore` resubscribes every render. Keyed by a
-// single disclosure id, so the map is bounded by the distinct rows a window has
-// rendered.
-const disclosureOpenCache = new Map<string, ReadableAtom<boolean | undefined>>()
+// Simple mode rests on product summaries, diffs folded, without touching either
+// preference.
+const $toolViewModePref = atom<ToolViewMode>(
+  storedBoolean(TOOL_VIEW_TECHNICAL_STORAGE_KEY, false) ? 'technical' : 'product'
+)
 
+const $hideCodeDiffsPref = atom(storedBoolean(HIDE_CODE_DIFFS_STORAGE_KEY, false))
+
+export const $toolViewMode = modeBound('toolViewMode', $toolViewModePref, mode => $toolViewModePref.set(mode))
+export const $hideCodeDiffs = modeBound('hideCodeDiffs', $hideCodeDiffsPref, hidden => $hideCodeDiffsPref.set(hidden))
+export const $toolDisclosureStates = atom<ToolDisclosureStates>(loadToolDisclosureStates())
+const disclosureOpenCache = new Map<string, ReadableAtom<boolean | undefined>>()
+const anyDisclosureOpenCache = new Map<string, ReadableAtom<boolean>>()
+
+$toolViewModePref.subscribe(mode => persistBoolean(TOOL_VIEW_TECHNICAL_STORAGE_KEY, mode === 'technical'))
+$hideCodeDiffsPref.subscribe(hidden => persistBoolean(HIDE_CODE_DIFFS_STORAGE_KEY, hidden))
 $toolDisclosureStates.subscribe(persistToolDisclosureStates)
+
+export function setToolViewMode(mode: ToolViewMode) {
+  $toolViewMode.set(mode)
+}
+
+export function setHideCodeDiffs(hidden: boolean) {
+  $hideCodeDiffs.set(hidden)
+}
 
 export function $toolDisclosureOpen(id: string): ReadableAtom<boolean | undefined> {
   let cached = disclosureOpenCache.get(id)
@@ -48,17 +54,17 @@ export function $toolDisclosureOpen(id: string): ReadableAtom<boolean | undefine
  *
  * Computed rather than reading the whole map so a toggle anywhere in the
  * transcript only re-renders the runs whose own answer changed.
- *
- * NOT memoized in a module map, unlike `$toolDisclosureOpen` above. The caller
- * scopes this to a `useMemo` on the id list, so a module cache buys no identity
- * stability — and it would have to be keyed on the JOINED list, which grows by
- * one id every time a run gains a tool call. A run of N calls therefore left N
- * retained atoms behind keyed by N strings of increasing length: O(N²)
- * characters per run, never released, in the store a render-cost budget exists
- * to keep bounded. Detached computeds are collected when nothing listens.
  */
 export function $anyToolDisclosureOpen(ids: readonly string[]): ReadableAtom<boolean> {
-  return computed($toolDisclosureStates, states => ids.some(id => Boolean(states[id])))
+  const key = ids.join('|')
+  let cached = anyDisclosureOpenCache.get(key)
+
+  if (!cached) {
+    cached = computed($toolDisclosureStates, states => ids.some(id => Boolean(states[id])))
+    anyDisclosureOpenCache.set(key, cached)
+  }
+
+  return cached
 }
 
 function loadToolDisclosureStates(): ToolDisclosureStates {

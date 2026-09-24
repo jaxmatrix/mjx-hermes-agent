@@ -1,7 +1,8 @@
 import type * as React from 'react'
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
 
+import { TitlebarIcon } from '@/app/shell/titlebar-icon'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { PageLoader } from '@/components/page-loader'
 import { Button } from '@/components/ui/button'
@@ -17,40 +18,36 @@ import {
 } from '@/components/ui/pagination'
 import { RowButton } from '@/components/ui/row-button'
 import { Tip } from '@/components/ui/tooltip'
-import { getSessionMessages, listAllProfileSessions } from '@/hermes'
-import { useTapHandlers } from '@/hooks/use-tap'
+import { getAllSessionMessages, listAllProfileSessions } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
+import { resolveBrandIcon } from '@/lib/brand-icon'
 import {
   ExternalLink,
   ExternalLinkIcon,
   hostPathLabel,
-  openExternalLink,
+  shortHostLabel,
   urlSlugTitleLabel,
   useLinkTitle
 } from '@/lib/external-link'
-import { FileImage, FileText, FolderOpen, Link2, Loader2, RefreshCw } from '@/lib/icons'
-import { downloadGatewayMediaFile } from '@/lib/media'
-import { IS_TAURI } from '@/lib/platform'
+import { FileImage, FileText, FolderOpen, Link2 } from '@/lib/icons'
+import { downloadGatewayMediaFile, isArtifactFilePath, isRemoteGateway } from '@/lib/media'
 import { normalize } from '@/lib/text'
 import { fmtDayTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
-import { useDisplayPath } from '@/store/display-home'
-import { downloadPath } from '@/store/downloads'
-import { notifyError } from '@/store/notifications'
+import { notify, notifyError } from '@/store/notifications'
 
 import { useRefreshHotkey } from '../hooks/use-refresh-hotkey'
 import { useRouteEnumParam } from '../hooks/use-route-enum-param'
+import { openSessionFromPicker } from '../open-session'
 import { PageSearchShell } from '../page-search-shell'
-import { sessionRoute } from '../routes'
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
-import { artifactOpenAction } from './artifact-open'
 import {
   ARTIFACT_FILTERS,
   type ArtifactFilter,
   artifactImageSrc,
   type ArtifactRecord,
-  collectArtifactsForSession
+  loadArtifactsForSessions
 } from './artifact-utils'
 
 function formatArtifactTime(timestamp: number): string {
@@ -95,8 +92,6 @@ function paginationItems(page: number, pageCount: number): Array<number | 'ellip
 }
 
 type CellCtx = {
-  /** The whole record, not its href: opening a gateway-local artifact goes
-   *  through the transport off `value`, and only a link uses `href`. */
   onOpen: (artifact: ArtifactRecord) => void | Promise<void>
   onOpenChat: (sessionId: string) => void
 }
@@ -130,29 +125,54 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
   const [filePage, setFilePage] = useState(1)
 
   const [refreshing, setRefreshing] = useState(false)
+  const refreshInFlightRef = useRef(false)
 
   const refreshArtifacts = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      return
+    }
+
+    refreshInFlightRef.current = true
     setRefreshing(true)
 
     try {
       const sessions = (await listAllProfileSessions(30, 1)).sessions
-      const results = await Promise.allSettled(sessions.map(session => getSessionMessages(session.id, session.profile)))
-      const nextArtifacts: ArtifactRecord[] = []
 
-      results.forEach((result, index) => {
-        if (result.status !== 'fulfilled') {
-          return
-        }
+      const { artifacts: nextArtifacts, failures } = await loadArtifactsForSessions(
+        sessions,
+        async session => (await getAllSessionMessages(session.id, session.profile)).messages
+      )
 
-        const session = sessions[index]
-        nextArtifacts.push(...collectArtifactsForSession(session, result.value.messages))
-      })
+      if (failures.length > 0) {
+        const safeLimitFailures = failures.filter(({ error }) =>
+          String(error instanceof Error ? error.message : error).includes('safe-load limit')
+        ).length
+
+        const otherFailures = failures.length - safeLimitFailures
+
+        const detail = [
+          safeLimitFailures ? `${safeLimitFailures} exceeded the safe transcript load limit.` : '',
+          otherFailures ? `${otherFailures} could not be read.` : ''
+        ]
+          .filter(Boolean)
+          .join(' ')
+
+        notify({
+          id: 'artifacts-partial-load',
+          kind: 'warning',
+          title: a.failedLoad,
+          message: `Skipped ${failures.length} of ${sessions.length} recent sessions while indexing artifacts.`,
+          detail,
+          durationMs: 10_000
+        })
+      }
 
       setArtifacts(nextArtifacts.sort((left, right) => right.timestamp - left.timestamp))
     } catch (err) {
       notifyError(err, a.failedLoad)
       setArtifacts([])
     } finally {
+      refreshInFlightRef.current = false
       setRefreshing(false)
     }
   }, [a])
@@ -251,40 +271,26 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
 
   const openArtifact = useCallback(
     async (artifact: ArtifactRecord) => {
-      // Which of the two it is is a pure question about the record — see
-      // `./artifact-open`, where the "a gateway path must never be handed to
-      // the OS browser" invariant is pinned without rendering anything.
-      const action = artifactOpenAction(artifact)
+      const { href } = artifact
 
       try {
-        if (action.kind === 'download') {
-          // A gateway-local artifact is bytes on the GATEWAY's disk, so Rust
-          // fetches it over the authenticated transport and streams it to the
-          // path the save dialog returned — the bytes never enter the webview.
-          //
-          // `downloadPath` is the tray spine, and it resolves when the transfer
-          // is QUEUED, not when the bytes land: a 4 GB artifact must not hold
-          // this handler open for twenty minutes. It also does not reject when
-          // the transfer fails — the tray row is what reports that. Which is
-          // why there is no success toast here any more: the old one fired on
-          // "queued" and told the user the file was saved before a single byte
-          // had been written.
-          //
-          // Off-Tauri (plain-browser dev, vitest) there is no tray and no Rust
-          // transport, so `downloadPath` returns null having done nothing; the
-          // buffered blob fallback inside `downloadGatewayMediaFile` is the
-          // only route that works there.
-          if (IS_TAURI) {
-            await downloadPath(action.path)
-          } else {
-            await downloadGatewayMediaFile(action.path)
-          }
+        // A gateway-local file resolves to file:// in remote mode (the file
+        // lives on the gateway, not this disk). Opening that locally fails —
+        // and an OAuth remote connection has no query token to build a download
+        // URL. Fetch the bytes over the authenticated fs bridge instead.
+        // Tilde/relative hrefs have no file URL form. Keep them gateway-owned:
+        // expanding them on the client would target the wrong home or cwd.
+        if (isRemoteGateway() && isArtifactFilePath(artifact.value)) {
+          await downloadGatewayMediaFile(artifact.value, { sessionId: artifact.sessionId, profile: artifact.profile })
 
           return
         }
 
-        // http(s) artifacts are somebody else's URL and still open outside.
-        await openExternalLink(action.href)
+        if (window.hermesDesktop?.openExternal) {
+          await window.hermesDesktop.openExternal(href)
+        } else {
+          window.open(href, '_blank', 'noopener,noreferrer')
+        }
       } catch (err) {
         notifyError(err, a.openFailed)
       }
@@ -302,13 +308,12 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
     })
   }, [])
 
-  const openChat = useCallback((sessionId: string) => navigate(sessionRoute(sessionId)), [navigate])
-
-  // Stable, because it is the prop every memoized cell compares. A fresh object
-  // (or a fresh inline `onOpenChat`) here would make those memo boundaries dead
-  // code — the table is up to 100 rows × 3 cells, so this is the half of the
-  // change that does the work.
-  const cellCtx = useMemo<CellCtx>(() => ({ onOpen: openArtifact, onOpenChat: openChat }), [openArtifact, openChat])
+  // Stable ctx: recreating it (or its onOpenChat closure) every render made
+  // every artifact cell re-render whenever the page did — and a link cell's
+  // async title fetch re-rendered the page repeatedly. openArtifact is already
+  // a useCallback; navigate is stable, so onOpenChat can be too.
+  const openChat = useCallback((sessionId: string) => openSessionFromPicker(sessionId, navigate), [navigate])
+  const cellCtx: CellCtx = useMemo(() => ({ onOpen: openArtifact, onOpenChat: openChat }), [openArtifact, openChat])
 
   return (
     <PageSearchShell
@@ -329,7 +334,7 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
             size="icon-titlebar"
             variant="ghost"
           >
-            {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {refreshing ? <TitlebarIcon name="loading" spinning /> : <TitlebarIcon name="refresh" />}
           </Button>
         </Tip>
       }
@@ -369,10 +374,10 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
                   {pagedImageArtifacts.map(artifact => (
                     <ArtifactImageCard
                       artifact={artifact}
-                      ctx={cellCtx}
                       failedImage={failedImageIds.has(artifact.id)}
                       key={artifact.id}
                       onImageError={markImageFailed}
+                      onOpenChat={sessionId => openSessionFromPicker(sessionId, navigate)}
                     />
                   ))}
                 </div>
@@ -458,27 +463,22 @@ function ArtifactsPagination({ className, itemLabel, onPageChange, page, pageSiz
 
 interface ArtifactImageCardProps {
   artifact: ArtifactRecord
-  /** The same ctx the table cells get — the card's title is a download target,
-   *  not decoration, and it must go through the one `openArtifact`. */
-  ctx: CellCtx
   failedImage: boolean
   onImageError: (id: string) => void
+  onOpenChat: (sessionId: string) => void
 }
 
-function ArtifactImageCard({ artifact, ctx, failedImage, onImageError }: ArtifactImageCardProps) {
+function ArtifactImageCard({ artifact, failedImage, onImageError, onOpenChat }: ArtifactImageCardProps) {
   const { t } = useI18n()
   const a = t.artifacts
   const kindLabel = artifact.kind === 'image' ? a.kindImage : artifact.kind === 'file' ? a.kindFile : a.kindLink
   const [src, setSrc] = useState('')
-  // Rule 31: a card in a scrolling grid is exactly the target the Android
-  // WebView rules against when a quick jab is followed by a pixel of movement.
-  const openTap = useTapHandlers(() => void ctx.onOpen(artifact))
 
   useEffect(() => {
     let active = true
 
     setSrc('')
-    void artifactImageSrc(artifact.value, artifact.href)
+    void artifactImageSrc(artifact.value)
       .then(nextSrc => {
         if (active) {
           setSrc(nextSrc)
@@ -498,9 +498,6 @@ function ArtifactImageCard({ artifact, ctx, failedImage, onImageError }: Artifac
   return (
     <article
       className="group/artifact overflow-hidden rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-chat-bubble-background)"
-      // Durable tour handle (see lib/tour). Every card carries it, so the
-      // selector resolves to the first one — "an artifact card", which is what
-      // a tour explaining the gallery wants to point at.
       data-tour="artifact-card"
     >
       <div
@@ -524,35 +521,23 @@ function ArtifactImageCard({ artifact, ctx, failedImage, onImageError }: Artifac
       </div>
 
       <div className="space-y-1.5 p-2">
-        {/* The card's body is a real button, not a labelled <div>: this is the
-            target the user reported as dead — "clicking the image title it does
-            nothing, it should download". A sibling of the two other targets on
-            the card rather than their parent, because a <button> inside a
-            <button> is invalid DOM and React says so at runtime: the image is
-            already the Zoomable's trigger, and Chat is its own button. */}
-        <RowButton
-          className="flex w-full min-w-0 cursor-pointer flex-col gap-1.5 text-start transition-colors hover:text-foreground"
-          title={a.download(artifact.label)}
-          {...openTap}
-        >
-          <span className="block min-w-0 w-full">
-            <span className="mb-0.5 flex items-center gap-1 text-[0.625rem] uppercase tracking-[0.08em] text-(--ui-text-tertiary)">
-              <FileImage className="size-3" />
-              {kindLabel}
-            </span>
-            <span className="block truncate text-[length:var(--conversation-caption-font-size)] font-medium">
-              {artifact.label}
-            </span>
-            <span className="mt-0.5 block truncate text-[0.625rem] text-(--ui-text-tertiary)">{artifact.value}</span>
-          </span>
+        <div className="min-w-0">
+          <div className="mb-0.5 flex items-center gap-1 text-[0.625rem] uppercase tracking-[0.08em] text-(--ui-text-tertiary)">
+            <FileImage className="size-3" />
+            {kindLabel}
+          </div>
+          <div className="truncate text-[length:var(--conversation-caption-font-size)] font-medium">
+            {artifact.label}
+          </div>
+          <div className="mt-0.5 truncate text-[0.625rem] text-(--ui-text-tertiary)">{artifact.value}</div>
+        </div>
 
-          <span className="block w-full truncate text-[0.625rem] text-(--ui-text-tertiary)">
-            {artifact.sessionTitle} · {formatArtifactTime(artifact.timestamp)}
-          </span>
-        </RowButton>
+        <div className="truncate text-[0.625rem] text-(--ui-text-tertiary)">
+          {artifact.sessionTitle} · {formatArtifactTime(artifact.timestamp)}
+        </div>
 
         <div className="flex flex-wrap gap-1.5">
-          <Button onClick={() => ctx.onOpenChat(artifact.sessionId)} size="xs" type="button" variant="textStrong">
+          <Button onClick={() => onOpenChat(artifact.sessionId)} size="xs" type="button" variant="textStrong">
             <FolderOpen className="size-3" />
             {a.chat}
           </Button>
@@ -576,11 +561,6 @@ function ArtifactCellAction({
   onClick?: () => void
   title?: string
 }) {
-  // Rule 31, unconditionally (hooks precede the branch): a table row is the
-  // other target a scrolling touch surface loses `click` on. The <a> branch
-  // needs none — an anchor activation is not the engine's verdict to withhold.
-  const tap = useTapHandlers(() => onClick?.())
-
   if (href) {
     return (
       <ExternalLink
@@ -597,20 +577,17 @@ function ArtifactCellAction({
   return (
     <RowButton
       className="flex h-full w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-start text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) font-normal text-(--ui-text-secondary) no-underline underline-offset-4 decoration-current/20 transition-colors hover:text-foreground hover:underline"
-      {...tap}
+      onClick={onClick}
     >
       {children}
     </RowButton>
   )
 }
 
-// The three cells below are memoized (desktop parity). Both props are stable —
-// `artifact` is an element of the fetched array, `ctx` is memoized above — so
-// re-rendering the view for a search keystroke or a page change no longer
-// re-runs every cell of every row that did not move.
 const PrimaryCell = memo(function PrimaryCell({ artifact, ctx }: { artifact: ArtifactRecord; ctx: CellCtx }) {
   const isLink = artifact.kind === 'link'
-  const Icon = isLink ? Link2 : FileText
+  const brand = isLink ? resolveBrandIcon(shortHostLabel(artifact.href)) : null
+  const Icon = brand ?? (isLink ? Link2 : FileText)
   const fetchedTitle = useLinkTitle(isLink ? artifact.href : null)
   const label = isLink ? fetchedTitle || urlSlugTitleLabel(artifact.href) : artifact.label
 
@@ -633,17 +610,13 @@ const PrimaryCell = memo(function PrimaryCell({ artifact, ctx }: { artifact: Art
 
 const LocationCell = memo(function LocationCell({ artifact }: { artifact: ArtifactRecord; ctx: CellCtx }) {
   const { t } = useI18n()
-  // A non-link artifact's location is a path on the GATEWAY's filesystem — that
-  // is where the run that produced it wrote the file (MJXHRM-394). Links keep
-  // their host/path shortening; a URL has no home to collapse.
-  const displayPath = useDisplayPath()
   const isLink = artifact.kind === 'link'
-  const value = isLink ? hostPathLabel(artifact.value) : displayPath(artifact.value)
+  const value = isLink ? hostPathLabel(artifact.value) : artifact.value
   const copyLabel = isLink ? t.artifacts.copyUrl : t.artifacts.copyPath
 
   return (
     <div className="group/location flex min-w-0 items-center gap-1.5">
-      <Tip label={value}>
+      <Tip label={artifact.value}>
         <div
           className={cn(
             'min-w-0 flex-1 truncate text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)',
@@ -656,7 +629,7 @@ const LocationCell = memo(function LocationCell({ artifact }: { artifact: Artifa
       <CopyButton
         appearance="icon"
         buttonSize="icon-xs"
-        className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/location:opacity-100 coarse:opacity-100"
+        className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/location:opacity-100"
         iconClassName="size-3.5"
         label={copyLabel}
         text={artifact.value}

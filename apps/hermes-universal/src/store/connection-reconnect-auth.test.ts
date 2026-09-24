@@ -17,7 +17,7 @@ vi.mock('@/lib/auth', () => ({
   portalLogout: vi.fn().mockResolvedValue(undefined),
   portalAgentSignIn: vi.fn().mockResolvedValue({ connected: true, baseUrl: 'https://a1' })
 }))
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -45,7 +45,7 @@ vi.mock('@/store/local-backend', () => ({
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
 
-import type * as GatewayStore from '@/store/gateway'
+import type * as GatewayStore from '@/store/gateway-client'
 
 import type * as ConnectionStore from './connection'
 
@@ -78,7 +78,7 @@ describe('auto-reconnect — who may drive an interactive sign-in', () => {
 
     const auth = await import('@/lib/auth')
     const { httpRequest } = await import('@/transport/http')
-    const gateway = await import('@/store/gateway')
+    const gateway = await import('@/store/gateway-client')
 
     // Back to 'idle' BEFORE the store subscribes, so each test's `set('closed')` is a real
     // transition. That atom is shared across `resetModules`, and re-setting a value it

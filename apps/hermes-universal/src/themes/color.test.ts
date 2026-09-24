@@ -8,21 +8,19 @@
  * only pass if the perceptual math is actually running.
  */
 
+import { contrastRatio, ensureContrast, mix } from '@hermes/shared/color'
 import { describe, expect, it } from 'vitest'
 
 import {
-  contrastRatio,
-  ensureContrast,
   ensureContrastOklch,
   harmonize,
   hexToOklch,
   hueDelta,
   maxChroma,
-  mix,
   mixOklab,
   oklchToHex,
   oklchToSrgb255,
-  readableOn,
+  readableInk,
   withHue
 } from './color'
 
@@ -234,20 +232,22 @@ describe('ensureContrastOklch', () => {
   })
 })
 
-describe('readableOn', () => {
+describe('readableInk', () => {
   // The luminance-threshold version got exactly these wrong, in the direction
-  // that ships unreadable text: it answered white for both.
+  // that ships unreadable text: it answered white for both. Desktop ink is
+  // `#161616` / `#ffffff` (not pure black) — see readableInk → DESKTOP_INKS.
   it.each([
     ['#4f9e5e', '#161616'], // GitHub dark green — white is 3.29:1, near-black 5.50:1
     ['#cba6f7', '#161616'] // Catppuccin mauve — white is 2.03:1
   ])('picks the foreground that actually measures better on %s', (bg, expected) => {
-    expect(readableOn(bg)).toBe(expected)
-    expect(contrastRatio(bg, expected)).toBeGreaterThan(
-      contrastRatio(bg, expected === '#ffffff' ? '#161616' : '#ffffff')
-    )
+    expect(readableInk(bg)).toBe(expected)
+    const chosen = contrastRatio(bg, expected) ?? 0
+    const alternate = contrastRatio(bg, expected === '#ffffff' ? '#161616' : '#ffffff') ?? 0
+
+    expect(chosen).toBeGreaterThan(alternate)
   })
 
   it('still answers white on a genuinely dark surface', () => {
-    expect(readableOn('#0d1117')).toBe('#ffffff')
+    expect(readableInk('#0d1117')).toBe('#ffffff')
   })
 })

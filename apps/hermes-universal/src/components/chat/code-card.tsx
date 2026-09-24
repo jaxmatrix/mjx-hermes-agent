@@ -8,10 +8,6 @@ import { cn } from '@/lib/utils'
  * etc.) sized for the conversation column. Background only — no border, no
  * header, no language label — so a code block reads as a tinted slab of the
  * reply rather than an attached artifact.
- *
- * `group/code relative` is what the floating copy button hangs off: the button
- * is absolutely positioned in this box's corner and reveals on
- * `group-hover/code`, so neither class is decorative.
  */
 function CodeCard({ className, ...props }: React.ComponentProps<'div'>) {
   return (

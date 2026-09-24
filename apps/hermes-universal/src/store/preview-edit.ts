@@ -1,25 +1,30 @@
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
-// Ported from desktop's store/preview-edit.ts. Tracks which open files have
-// unsaved edits, keyed by absolute path — the tab strip reads this to show the
-// amber "modified" dot; the preview-file editor is the sole writer.
-export const $dirtyPreviewPaths = atom<Set<string>>(new Set())
+// URLs of preview targets that have unsaved spot-editor changes, keyed by
+// `target.url` so the rail can render a VS Code-style "modified" dot on the tab
+// without threading editor state up through the pane. The editor in
+// `preview-file.tsx` is the sole writer; the rail tabs are the readers.
+export const $dirtyPreviewUrls = atom<Record<string, true>>({})
 
-export function setPreviewDirty(path: string, dirty: boolean): void {
-  const current = $dirtyPreviewPaths.get()
-  const has = current.has(path)
+export function setPreviewDirty(url: string, dirty: boolean): void {
+  if (!url) {
+    return
+  }
+
+  const current = $dirtyPreviewUrls.get()
+  const has = Boolean(current[url])
 
   if (dirty === has) {
     return
   }
 
-  const next = new Set(current)
-
   if (dirty) {
-    next.add(path)
-  } else {
-    next.delete(path)
+    $dirtyPreviewUrls.set({ ...current, [url]: true })
+
+    return
   }
 
-  $dirtyPreviewPaths.set(next)
+  const next = { ...current }
+  delete next[url]
+  $dirtyPreviewUrls.set(next)
 }

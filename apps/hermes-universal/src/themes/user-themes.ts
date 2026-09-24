@@ -1,53 +1,29 @@
 /**
- * User-installed themes registry — the extensibility seam the theme context
- * reads for `availableThemes` and every skin lookup, so an installed theme shows
- * up wherever a built-in does (the theme picker + `/skin`) with no per-surface
- * wiring.
+ * User-installed desktop themes (currently: converted VS Code themes).
  *
- * Ported from apps/desktop/src/themes/user-themes.ts, including the Marketplace
- * import surface (`marketplaceIdOf`, `$marketplaceInstalls`) — search + install
- * run through `store/marketplace.ts` and `app/settings/appearance-section.tsx`.
- * The registry is localStorage-backed. `atom` routes through the `@/store/atom`
- * seam.
+ * This is the extensibility seam. The theme context reads the *merged* registry
+ * (built-ins + user themes) for `availableThemes` and for every skin lookup, so
+ * an installed theme shows up everywhere a built-in does — the Cmd-K palette,
+ * the Appearance settings grid, and `/skin` — with no per-surface wiring.
  *
- * The one unexposed path is `installVscodeThemeFromText` (`themes/install.ts`),
- * which has no UI call site — there is no paste-JSON or file-picker surface.
- * Desktop has none either, so this is parity-neutral, not a gap.
+ * Stored as a localStorage record so the boot-time paint (which runs before
+ * React mounts) can resolve a user theme synchronously, same as built-ins.
  */
 
+import { atom, computed } from 'nanostores'
+
 import { registry } from '@/contrib/registry'
-import { atom, computed } from '@/store/atom'
 
 import { $backendThemes } from './backend-sync'
 import { BUILTIN_THEMES } from './presets'
-import type { DesktopTheme, DesktopThemeColors } from './types'
+import { type DesktopTheme, isValidTheme } from './types'
 
-const USER_THEMES_KEY = 'hermes-user-themes-v1'
+const USER_THEMES_KEY = 'hermes-desktop-user-themes-v1'
 
-// Marketplace-imported themes carry `VS Code · <extensionId>` as their description
-// (set by `buildThemeFromMarketplace`); the prefix is how we recover the id.
+// Marketplace imports stamp their description "VS Code · <publisher.extension>"
+// (see `convertVscodeColorTheme`). This is the one place that convention is read
+// back out, so every install surface can tell what's already installed.
 const MARKETPLACE_DESC_PREFIX = 'VS Code · '
-
-// The minimal set of color keys a stored theme must carry to be usable. We keep
-// this loose — `applyTheme` tolerates missing optionals via fallbacks — but a
-// theme with no background/foreground/primary is junk and gets dropped.
-const REQUIRED_COLOR_KEYS: ReadonlyArray<keyof DesktopThemeColors> = ['background', 'foreground', 'primary']
-
-function isValidTheme(value: unknown): value is DesktopTheme {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const theme = value as Partial<DesktopTheme>
-
-  if (typeof theme.name !== 'string' || typeof theme.label !== 'string' || !theme.colors) {
-    return false
-  }
-
-  const colors = theme.colors as unknown as Record<string, unknown>
-
-  return REQUIRED_COLOR_KEYS.every(key => typeof colors[key] === 'string')
-}
 
 function readStored(): Record<string, DesktopTheme> {
   try {
@@ -148,14 +124,10 @@ export const $marketplaceInstalls = computed($userThemes, themes => {
   return map
 })
 
-// ── Contributed themes — the `themes` registry area ──────────────────────────
-// A data contribution IS a DesktopTheme. Same validity bar as an installed theme;
-// built-in names can't be shadowed, and user-installed themes win over
+// ── Contributed themes — the `themes` registry area ─────────────────────────
+// A data contribution IS a DesktopTheme. Same validity bar as an installed
+// theme; built-in names can't be shadowed, and user-installed themes win over
 // contributed ones of the same name (the user's explicit install is intent).
-//
-// Contributed themes are NEVER written to the user-themes localStorage key: they
-// live and die with the plugin that registered them, so unloading a plugin can't
-// leave a dead theme behind.
 
 export const THEMES_AREA = 'themes'
 
@@ -175,7 +147,7 @@ export function contributedThemes(): DesktopTheme[] {
   return out
 }
 
-/** Resolve a theme by name across the merged registry (built-in + user + backend + contributed). */
+/** Resolve a theme by name across the merged set (built-in + user + backend + contributed). */
 export function resolveTheme(name: string): DesktopTheme | undefined {
   return (
     BUILTIN_THEMES[name] ??
@@ -185,10 +157,7 @@ export function resolveTheme(name: string): DesktopTheme | undefined {
   )
 }
 
-/** Built-ins first (stable order), then contributed, then backend skins, then user
- *  themes by install order. The filters make the listed winner per name agree with
- *  `resolveTheme`: an explicit user install beats a skin the backend pushed, which
- *  beats a plugin contribution. */
+/** Built-ins first (stable order), then contributed, then backend skins, then user installs. */
 export function listAllThemes(): DesktopTheme[] {
   const user = $userThemes.get()
   const backend = $backendThemes.get()

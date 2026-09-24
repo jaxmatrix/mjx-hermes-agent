@@ -1,31 +1,24 @@
-import { authMcpServer, cancelMcpOAuthFlow, getMcpCatalog, getMcpOAuthFlow, listMcpServers } from '@/hermes'
+import { capabilityScoped } from '@/api/client'
+import { addMcpServer, getMcpCatalog, listMcpServers, removeMcpServer } from '@/hermes'
 import { translateNow } from '@/i18n'
-import { openExternalLink } from '@/lib/external-link'
 import { completeMcpDesktopOAuth, McpOAuthCancelled } from '@/lib/mcp-dashboard-oauth'
-import { MCP_DIRECTORY } from '@/lib/mcp-directory'
-import { removeMcpServerEntry, writeMcpServerEntry } from '@/lib/mcp-servers'
 import { prettyName } from '@/lib/text'
 import { type ComposerSuggestion, registerDraftProvider } from '@/store/composer-suggestions'
-import { requestGateway } from '@/store/gateway'
+import { $gateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
+import type { McpCatalogEntry } from '@/types/hermes'
 
 /**
- * The MCP draft provider — the suggestion bus's founding member.
+ * The MCP draft provider — the suggestion bus's founding member (PR #85036).
  *
- * Ported from apps/desktop/src/store/suggestion-providers/mcp.ts. Matches the
- * draft against the Nous-approved MCP catalog's `suggest` metadata
- * (`GET /api/mcp/catalog` — the same reviewed manifests behind
+ * Matches the draft against the Nous-approved MCP catalog's `suggest`
+ * metadata (`GET /api/mcp/catalog` — the same reviewed manifests behind
  * `hermes mcp catalog`), by whole-word keyword and pasted-link host suffix,
  * excluding servers already configured. The catalog is the single source of
- * truth for suggestible servers; `lib/mcp-directory.ts` remains only as a
- * compatibility rung for older backends whose entries carry no `suggest` field —
- * which is exactly what that file's own header says it is for.
- *
- * A suggestion's `invoke` runs the whole connect: validated config write →
- * browser OAuth → live tool reload, with rollback on cancel/failure so a decline
- * never strands a half-configured server. The click IS the consent; no agent
- * turn is involved. (The agent-initiated counterpart is the `setup_mcp` card,
- * which runs the same primitives behind an explicit approve.)
+ * truth for suggestible servers. A suggestion's invoke runs the whole
+ * connect: validated config write → browser OAuth → live tool reload, with
+ * rollback on cancel/failure so a decline never strands a half-configured
+ * server.
  */
 
 const CONFIGURED_TTL_MS = 5 * 60_000
@@ -34,24 +27,22 @@ const CATALOG_TTL_MS = 5 * 60_000
 // Names already present in mcp_servers config (enabled or not) — those need a
 // toggle/auth at most, not an "add this server" pill. Cached briefly; a miss
 // (older backend, transient error) suggests nothing rather than nagging.
-let configuredNames: null | Set<string> = null
+let configuredNames: Set<string> | null = null
 let configuredAt = 0
 
 interface SuggestibleServer {
-  /** Hostname suffixes ("atlassian.net") matched against URLs in the draft. */
-  hosts?: string[]
-  keywords: string[]
   server: string
+  keywords: string[]
+  hosts?: string[]
   /** Streamable-HTTP/SSE endpoint written to config on invoke. */
   url: string
 }
 
-// Suggestible servers from the catalog (entries with `suggest` + an http url),
-// or the static directory on backends that predate `suggest`.
-let suggestible: null | SuggestibleServer[] = null
+// Suggestible servers from the catalog (entries with `suggest` + an http url).
+let suggestible: SuggestibleServer[] | null = null
 let suggestibleAt = 0
 
-/** Drop the caches (profile switch / after an install or a setup card). */
+/** Drop the caches (profile switch / after an install). */
 export function invalidateMcpSuggestionIndex(): void {
   configuredNames = null
   configuredAt = 0
@@ -79,9 +70,27 @@ async function loadSuggestible(): Promise<SuggestibleServer[]> {
 
   const { entries } = await getMcpCatalog()
 
-  const fromCatalog: SuggestibleServer[] = entries
+  const fromCatalog = buildMcpSuggestionIndex(entries)
+
+  suggestible = fromCatalog
+  suggestibleAt = Date.now()
+
+  return suggestible
+}
+
+/** This older composer path runs hosted OAuth. Local/setup-dependent tasks use manage_connections instead. */
+export function buildMcpSuggestionIndex(
+  entries: readonly Pick<McpCatalogEntry, 'name' | 'url' | 'suggest' | 'auth_type' | 'transport'>[]
+): SuggestibleServer[] {
+  return entries
     .filter(
-      entry => entry.suggest && entry.url && (entry.suggest.keywords.length > 0 || entry.suggest.hosts.length > 0)
+      entry =>
+        entry.transport === 'http' &&
+        entry.auth_type === 'oauth' &&
+        !entry.suggest?.requires_app &&
+        entry.suggest &&
+        entry.url &&
+        (entry.suggest.keywords.length > 0 || entry.suggest.hosts.length > 0)
     )
     .map(entry => ({
       hosts: entry.suggest!.hosts,
@@ -89,32 +98,17 @@ async function loadSuggestible(): Promise<SuggestibleServer[]> {
       server: entry.name,
       url: entry.url!
     }))
-
-  // Compatibility rung: an older backend serves the catalog without any
-  // `suggest` metadata. Fall back to the static directory rather than silently
-  // losing the feature (remove once the backend contract bumps).
-  suggestible =
-    fromCatalog.length > 0
-      ? fromCatalog
-      : MCP_DIRECTORY.map(entry => ({
-          hosts: entry.hosts,
-          keywords: entry.keywords,
-          server: entry.name,
-          url: entry.url
-        }))
-  suggestibleAt = Date.now()
-
-  return suggestible
 }
 
 interface KeywordEntry {
-  hosts?: string[]
-  keywords: string[]
   server: string
+  keywords: string[]
+  /** Hostname suffixes ("atlassian.net") matched against URLs in the draft. */
+  hosts?: string[]
 }
 
-// Hostnames of http(s) URLs in the draft. Loose on purpose — a draft is not a
-// document, so a trailing-punctuation host ("linear.app,") still counts.
+// Hostnames of http(s) URLs in the draft. Loose on purpose — a draft is not
+// a document, so a trailing-punctuation host ("linear.app,") still counts.
 const URL_HOST_RE = /https?:\/\/([^\s/,)\]}"'<>]+)/gi
 
 const draftHosts = (text: string): string[] =>
@@ -131,18 +125,18 @@ const draftHosts = (text: string): string[] =>
 const hostMatches = (host: string, suffix: string): boolean => host === suffix || host.endsWith(`.${suffix}`)
 
 export interface McpMatch {
+  server: string
   /** The keyword or host that matched, for the pill's tooltip. */
   keyword: string
-  server: string
 }
 
 const MAX_MATCHES = 2
 
-// Whole-word (unicode-aware) keyword hit that the user has FINISHED typing: at
-// least one character must follow the match (the lookahead already guarantees
-// it's a boundary). A hit still under the caret — "figma" as the last thing
-// typed, debounce elapsed mid-thought — is not intent yet, it's eavesdropping on
-// a word in progress; the pill waits for the space/period.
+// Whole-word (unicode-aware) keyword hit that the user has FINISHED typing:
+// at least one character must follow the match (the lookahead already
+// guarantees it's a boundary). A hit still under the caret — "figma" as the
+// last thing typed, debounce elapsed mid-thought — is not intent yet, it's
+// eavesdropping on a word in progress; the pill waits for the space/period.
 const keywordHit = (haystack: string, candidate: string): boolean => {
   const pattern = new RegExp(
     `(?<![\\p{L}\\p{N}])${candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`,
@@ -158,10 +152,10 @@ const keywordHit = (haystack: string, candidate: string): boolean => {
   return false
 }
 
-/** Pure matcher, exported for tests: pasted-link host hits (the strongest intent
- *  signal) and completed whole-word keyword hits against the draft, capped at
- *  MAX_MATCHES. Host hits skip the completed-word guard — a paste is a
- *  deliberate act, and the URL routinely ends the draft. */
+/** Pure matcher, exported for tests: pasted-link host hits (the strongest
+ *  intent signal) and completed whole-word keyword hits against the draft,
+ *  capped at MAX_MATCHES. Host hits skip the completed-word guard — a paste
+ *  is a deliberate act, and the URL routinely ends the draft. */
 export function matchSuggestions(text: string, index: KeywordEntry[]): McpMatch[] {
   const haystack = text.toLowerCase()
   const hosts = draftHosts(text)
@@ -171,8 +165,8 @@ export function matchSuggestions(text: string, index: KeywordEntry[]): McpMatch[
     // A pasted vendor link beats any keyword: report the host as the trigger.
     const host = entry.hosts?.find(suffix => hosts.some(candidate => hostMatches(candidate, suffix)))
 
-    // Whole-word match so "linearly" doesn't suggest Linear. Suggest keywords
-    // are lowercase; multi-word keywords match as phrases.
+    // Whole-word match so "linearly" doesn't suggest Linear. Suggest
+    // keywords are lowercase; multi-word keywords match as phrases.
     const keyword = host ?? entry.keywords.find(candidate => keywordHit(haystack, candidate))
 
     if (keyword) {
@@ -187,33 +181,32 @@ export function matchSuggestions(text: string, index: KeywordEntry[]): McpMatch[
   return matches
 }
 
-async function connect(known: SuggestibleServer, sessionId: null | string, cancelled: () => boolean): Promise<void> {
+async function connect(known: SuggestibleServer, sessionId: string | null, cancelled: () => boolean): Promise<void> {
+  const oauthScope = capabilityScoped()
+
   try {
-    // The same merge-over-fresh write the `setup_mcp` card and the deep-link
-    // dialog use (lib/mcp-servers.ts) — one install path, not three.
-    await writeMcpServerEntry(known.server, { transport: 'http', url: known.url })
+    await addMcpServer({ name: known.server, url: known.url }, oauthScope)
 
     try {
       await completeMcpDesktopOAuth({
-        cancel: cancelMcpOAuthFlow,
-        cancelled,
-        openExternal: openExternalLink,
         serverName: known.server,
-        start: authMcpServer,
-        status: getMcpOAuthFlow
+        profile: oauthScope,
+        cancelled
       })
     } catch (error) {
-      // Decline/failure means "no server" — roll back the config write rather
-      // than stranding an unauthorized entry the next turn tries to spawn.
-      // Best-effort; the primary error wins.
-      await removeMcpServerEntry(known.server).catch(() => {})
-
+      // Decline/failure means "no server" — roll back the config write
+      // rather than stranding an unauthorized entry (authoritative-write
+      // rule). Best-effort; the primary error wins.
+      await removeMcpServer(known.server, oauthScope).catch(() => {})
       throw error
     }
 
-    // Tools reach the live session before the pill claims success — the same
-    // write-through the Capabilities tab and the setup card use.
-    await requestGateway('reload.mcp', { confirm: true, session_id: sessionId ?? undefined }).catch(() => {})
+    // Tools reach the live session before the pill claims success — the
+    // same write-through the Capabilities tab and the setup card use.
+    await $gateway
+      .get()
+      ?.request('reload.mcp', { confirm: true, session_id: sessionId ?? undefined })
+      .catch(() => {})
 
     invalidateMcpSuggestionIndex()
   } catch (error) {
@@ -225,7 +218,7 @@ async function connect(known: SuggestibleServer, sessionId: null | string, cance
   }
 }
 
-function toSuggestion(match: McpMatch, known: SuggestibleServer, sessionId: null | string): ComposerSuggestion {
+function toSuggestion(match: McpMatch, known: SuggestibleServer, sessionId: string | null): ComposerSuggestion {
   const name = prettyName(match.server)
   const copy = (key: string, ...args: unknown[]) => translateNow(`composer.mcpSuggestions.${key}`, ...args)
 

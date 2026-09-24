@@ -1,0 +1,2883 @@
+{
+  "version": 1,
+  "source": "apps/desktop/electron/preload.ts",
+  "archiveBranch": "archive/hermes-universal-pre-pipeline",
+  "generatedAt": "2026-09-23T21:42:50.387Z",
+  "counts": {
+    "ported": 227,
+    "no-mapping": 34
+  },
+  "members": [
+    {
+      "id": "glassSupported",
+      "ipc": null,
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "translucencySupported",
+      "ipc": null,
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "localModelsEnabled",
+      "ipc": null,
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "guestOnboardingEnabled",
+      "ipc": null,
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "skipIntro",
+      "ipc": "hermes:connection",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getConnection",
+      "ipc": "hermes:connection",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getConnectionFor",
+      "ipc": "hermes:connection:for",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getProfileRoutes",
+      "ipc": "hermes:plugin-profile-routes",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "revalidateConnection",
+      "ipc": "hermes:connection:revalidate",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "touchBackend",
+      "ipc": "hermes:backend:touch",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getPoolLimits",
+      "ipc": "hermes:pool-limits:get",
+      "status": "no-mapping",
+      "reason": "no mapping: no backend pool — one unified server per connection serves every profile",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setPoolLimits",
+      "ipc": "hermes:pool-limits:set",
+      "status": "no-mapping",
+      "reason": "no mapping: no backend pool — one unified server per connection serves every profile",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getGatewayWsUrl",
+      "ipc": "hermes:gateway:ws-url",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getGatewayWsUrlFor",
+      "ipc": "hermes:gateway:ws-url-for",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getAgentRoster",
+      "ipc": "hermes:agents:roster",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "openSessionWindow",
+      "ipc": "hermes:window:openSession",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: store/windows.ts opens every window kind through Rust itself — it flushes the composer drafts first and records the pop-out so its close hands the stream back; no caller reaches for the bridge",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "openSessionInTerminal",
+      "ipc": "hermes:window:openInTerminal",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "openWindow",
+      "ipc": "hermes:window:openInstance",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: store/windows.ts (open_instance_window); no caller reaches for the bridge",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "openBrowserWindow",
+      "ipc": "hermes:window:openBrowser",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onBrowserPopoutClosed",
+      "ipc": "hermes:browser-popout:closed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "claimAmbientCue",
+      "ipc": "hermes:ambient:claim",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "windowControls.custom",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "windowControls.minimize",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "windowControls.toggleMaximize",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "windowControls.close",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "wakeIndicator.getState",
+      "ipc": "hermes:wake-indicator:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "wakeIndicator.setState",
+      "ipc": "hermes:wake-indicator:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "wakeIndicator.onState",
+      "ipc": "hermes:wake-indicator:state",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "chatOnboarding.grow",
+      "ipc": "hermes:chat-onboarding:grow",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "chatOnboarding.soloBoot",
+      "ipc": "hermes:chat-onboarding:solo-boot",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "introReveal.open",
+      "ipc": "hermes:intro-reveal:open",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "introReveal.close",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "introReveal.skip",
+      "ipc": "hermes:connection",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "introReveal.ready",
+      "ipc": "hermes:intro-reveal:ready",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "introReveal.onSkip",
+      "ipc": "hermes:intro-reveal:skip",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "introReveal.onClosed",
+      "ipc": "hermes:intro-reveal:closed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.open",
+      "ipc": "hermes:intro-reveal:open",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.close",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.setBounds",
+      "ipc": "hermes:pet-overlay:set-bounds",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.setIgnoreMouse",
+      "ipc": "hermes:pet-overlay:ignore-mouse",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.setFocusable",
+      "ipc": "hermes:pet-overlay:set-focusable",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.pushState",
+      "ipc": "hermes:pet-overlay:state",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.control",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.onState",
+      "ipc": "hermes:wake-indicator:state",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "petOverlay.onControl",
+      "ipc": "hermes:pet-overlay:control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.nativeDrag",
+      "ipc": "hermes:launch-flags",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.windowing.clientPlacement",
+      "ipc": null,
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.windowing.controlDrag",
+      "ipc": "hermes:hud:open",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.windowing.nativeDrag",
+      "ipc": "hermes:launch-flags",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.windowing.solid",
+      "ipc": "hermes:hud:open",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.windowing.workspaceTransfer",
+      "ipc": "hermes:hud:open",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.open",
+      "ipc": "hermes:intro-reveal:open",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.close",
+      "ipc": "hermes:window-control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.setIgnoreMouse",
+      "ipc": "hermes:pet-overlay:ignore-mouse",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.beginMove",
+      "ipc": "hermes:hud:begin-move",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.endMove",
+      "ipc": "hermes:hud:end-move",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.moveBy",
+      "ipc": "hermes:hud:move-by",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.setWorkspaceTransfer",
+      "ipc": "hermes:hud:workspace-transfer",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.setBounds",
+      "ipc": "hermes:pet-overlay:set-bounds",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.resetLayout",
+      "ipc": "hermes:hud:reset-layout",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.setFrost",
+      "ipc": "hermes:hud:frost",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.setSession",
+      "ipc": "hermes:hud:session",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.onGoto",
+      "ipc": "hermes:hud:goto",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.onChanged",
+      "ipc": "hermes:hud:changed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.onCursor",
+      "ipc": "hermes:hud:cursor",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hud.onGameOverlay",
+      "ipc": "hermes:hud:game-overlay",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hudModifier.getSettings",
+      "ipc": "hermes:hud-modifier:settings:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hudModifier.setEnabled",
+      "ipc": "hermes:hud-modifier:settings:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hudModifier.openPermissionSettings",
+      "ipc": "hermes:hud-modifier:permission",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "hudModifier.onStatus",
+      "ipc": "hermes:hud-modifier:status",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "screenshot.getSettings",
+      "ipc": "hermes:hud-modifier:settings:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "screenshot.setEnabled",
+      "ipc": "hermes:hud-modifier:settings:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "screenshot.openPermissionSettings",
+      "ipc": "hermes:hud-modifier:permission",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "screenshot.capture",
+      "ipc": "hermes:screenshot:capture",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "screenshot.onStatus",
+      "ipc": "hermes:hud-modifier:status",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "screenshot.onRequest",
+      "ipc": "hermes:screenshot:request",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.getSettings",
+      "ipc": "hermes:hud-modifier:settings:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.setSettings",
+      "ipc": "hermes:quick-entry:settings:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.submit",
+      "ipc": "hermes:pet-overlay:control",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.dismiss",
+      "ipc": "hermes:quick-entry:dismiss",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.pushState",
+      "ipc": "hermes:pet-overlay:state",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.onState",
+      "ipc": "hermes:wake-indicator:state",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.onSubmit",
+      "ipc": "hermes:quick-entry:submit",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "quickEntry.onShown",
+      "ipc": "hermes:quick-entry:shown",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getBootProgress",
+      "ipc": "hermes:boot-progress:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getConnectionConfig",
+      "ipc": "hermes:connection-config:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "saveConnectionConfig",
+      "ipc": "hermes:connection-config:save",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "applyConnectionConfig",
+      "ipc": "hermes:connection-config:apply",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "testConnectionConfig",
+      "ipc": "hermes:connection-config:test",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getSecretStorageEncryption",
+      "ipc": "hermes:secret-storage:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setSecretStorageEncryption",
+      "ipc": "hermes:secret-storage:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.list",
+      "ipc": "hermes:connections:list",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.save",
+      "ipc": "hermes:connection-config:apply",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.remove",
+      "ipc": "hermes:connections:remove",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.setPrimary",
+      "ipc": "hermes:connections:set-primary",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.setLaunchMode",
+      "ipc": "hermes:connections:set-launch-mode",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.setLastUsed",
+      "ipc": "hermes:connections:set-last-used",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.test",
+      "ipc": "hermes:connections:test",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.updateManaged",
+      "ipc": "hermes:connections:update-managed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.updateAll",
+      "ipc": "hermes:connections:update-all",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "connections.onChanged",
+      "ipc": "hermes:hud:changed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "sshConfigHosts",
+      "ipc": "hermes:ssh-config:hosts",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "sshResolveHost",
+      "ipc": "hermes:ssh-config:resolve",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "probeConnectionConfig",
+      "ipc": "hermes:connection-config:probe",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "oauthLoginConnectionConfig",
+      "ipc": "hermes:connection-config:oauth-login",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "oauthLogoutConnectionConfig",
+      "ipc": "hermes:connection-config:oauth-logout",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "cloud.status",
+      "ipc": "hermes:hud-modifier:status",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "cloud.login",
+      "ipc": "hermes:connection-config:oauth-logout",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "cloud.logout",
+      "ipc": "hermes:cloud:status",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "cloud.discover",
+      "ipc": "hermes:cloud:discover",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "cloud.agentSignIn",
+      "ipc": "hermes:cloud:agent-sign-in",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "profile.getDefault",
+      "ipc": "hermes:profile:default:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "profile.setDefault",
+      "ipc": "hermes:profile:default:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "profile.onDefaultChanged",
+      "ipc": "hermes:profile:default:changed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "profile.get",
+      "ipc": "hermes:pool-limits:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "profile.remember",
+      "ipc": "hermes:profile:remember",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "profile.set",
+      "ipc": "hermes:gateway:ws-url",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "api",
+      "ipc": "hermes:api",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "notify",
+      "ipc": "hermes:notify",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "requestMicrophoneAccess",
+      "ipc": "hermes:requestMicrophoneAccess",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "readWindowBelow",
+      "ipc": "hermes:window:readBelow",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "readFileDataUrl",
+      "ipc": "hermes:readFileDataUrl",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "readFileDataUrlForAttach",
+      "ipc": "hermes:readFileDataUrlForAttach",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "dataUrlReadMax.get",
+      "ipc": "hermes:pool-limits:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "dataUrlReadMax.set",
+      "ipc": "hermes:gateway:ws-url",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "readFileText",
+      "ipc": "hermes:readFileText",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "readPluginSource",
+      "ipc": "hermes:readPluginSource",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "selectPaths",
+      "ipc": "hermes:selectPaths",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "selectSavePath",
+      "ipc": "hermes:selectSavePath",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "writeClipboard",
+      "ipc": "hermes:writeClipboard",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "readClipboard",
+      "ipc": "hermes:readClipboard",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "saveGatewayFile",
+      "ipc": "hermes:saveGatewayFile",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "saveImageFromUrl",
+      "ipc": "hermes:saveImageFromUrl",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "contextMenuEdit",
+      "ipc": "hermes:context-menu:edit",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "contextMenuCopyImage",
+      "ipc": "hermes:context-menu:copy-image",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "contextMenuSpellcheck",
+      "ipc": "hermes:context-menu:spellcheck",
+      "status": "no-mapping",
+      "reason": "no mapping: Tauri webviews expose no Chromium misspelling/replace/add-word IPC; OS underline may still apply in-field; Hermes suggestion menu stays absent (context_menu.rs BridgeSupport.spelling=false)",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "contextMenuGuestAddWord",
+      "ipc": "hermes:context-menu:guest-add-word",
+      "status": "no-mapping",
+      "reason": "no mapping: Tauri webviews expose no Chromium misspelling/replace/add-word IPC; guest dictionary add has no session API on wry",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onContextMenuSpellcheck",
+      "ipc": "hermes:context-menu-spellcheck",
+      "status": "no-mapping",
+      "reason": "no mapping: no embedder context-menu misspelling event on WebKitGTK/WKWebView/WebView2 without a v2 engine adapter that does not exist yet",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "saveImageBuffer",
+      "ipc": "hermes:saveImageBuffer",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "capturePreview",
+      "ipc": "hermes:capturePreview",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "savePastedText",
+      "ipc": "hermes:savePastedText",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "saveClipboardImage",
+      "ipc": "hermes:saveClipboardImage",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getPathForFile",
+      "ipc": "hermes:normalizePreviewTarget",
+      "status": "no-mapping",
+      "reason": "no mapping: a Tauri webview never sees a dropped File’s path; OS drops arrive as paths on onDragDropEvent (app/chat/use-file-drop.ts)",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "normalizePreviewTarget",
+      "ipc": "hermes:normalizePreviewTarget",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "watchPreviewFile",
+      "ipc": "hermes:watchPreviewFile",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "watchDirectory",
+      "ipc": "hermes:watchDirectory",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "stopPreviewFileWatch",
+      "ipc": "hermes:stopPreviewFileWatch",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setActiveWork",
+      "ipc": "hermes:active-work",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setTitleBarTheme",
+      "ipc": "hermes:titlebar-theme",
+      "status": "no-mapping",
+      "reason": "no mapping: every window is frameless, and universal’s own window buttons take the theme from CSS",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setNativeTheme",
+      "ipc": "hermes:native-theme",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setTranslucency",
+      "ipc": "hermes:translucency",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setKeepAwake",
+      "ipc": "hermes:keep-awake",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "minimizeToTray.get",
+      "ipc": "hermes:pool-limits:set",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: store/background-mode.ts + set_background_mode — Keep Running is the same job; a second bridge would duplicate the Settings row",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "minimizeToTray.set",
+      "ipc": "hermes:gateway:ws-url",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: store/background-mode.ts + set_background_mode — Keep Running is the same job; a second bridge would duplicate the Settings row",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "minimizeToTray.onChanged",
+      "ipc": "hermes:hud:changed",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: store/background-mode.ts + set_background_mode — Keep Running is the same job; a second bridge would duplicate the Settings row",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setDisableF12",
+      "ipc": "hermes:devtools:disable-f12",
+      "status": "no-mapping",
+      "reason": "no mapping: a release build has no devtools (no `devtools` cargo feature), so F12 opens nothing",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setPreviewShortcutActive",
+      "ipc": "hermes:previewShortcutActive",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "openExternal",
+      "ipc": "hermes:openExternal",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "mcpOauth.listen",
+      "ipc": "hermes:mcp-oauth:listen",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "mcpOauth.wait",
+      "ipc": "hermes:mcp-oauth:listen",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "mcpOauth.cancel",
+      "ipc": "hermes:mcp-oauth:cancel",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "openPreviewInBrowser",
+      "ipc": "hermes:openPreviewInBrowser",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "reachPreviewUrl",
+      "ipc": "hermes:preview:reach",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "setActiveConnectionRoute",
+      "ipc": "hermes:connection:active-route",
+      "status": "no-mapping",
+      "reason": "no mapping: Electron holds a route per window to reach previews through; browser_reach_url takes the scope on every call, so Rust has nothing to hold",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "fetchLinkTitle",
+      "ipc": "hermes:fetchLinkTitle",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "resolveFavicon",
+      "ipc": "hermes:resolveFavicon",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "sanitizeWorkspaceCwd",
+      "ipc": "hermes:workspace:sanitize",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "settings.getDefaultProjectDir",
+      "ipc": "hermes:setting:defaultProjectDir:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "settings.setDefaultProjectDir",
+      "ipc": "hermes:setting:defaultProjectDir:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "settings.pickDefaultProjectDir",
+      "ipc": "hermes:setting:defaultProjectDir:pick",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "zoom.get",
+      "ipc": "hermes:pool-limits:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "zoom.factor",
+      "ipc": "hermes:zoom:set-percent",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "zoom.setPercent",
+      "ipc": "hermes:zoom:set-percent",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "zoom.onChanged",
+      "ipc": "hermes:hud:changed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "revealLogs",
+      "ipc": "hermes:logs:reveal",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getRecentLogs",
+      "ipc": "hermes:logs:recent",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "reportRendererError",
+      "ipc": "hermes:logs:renderer-error",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "readDir",
+      "ipc": "hermes:fs:readDir",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "gitRoot",
+      "ipc": "hermes:fs:gitRoot",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "revealPath",
+      "ipc": "hermes:fs:reveal",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "openDir",
+      "ipc": "hermes:fs:openDir",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "desktopPluginsRoot",
+      "ipc": "hermes:fs:desktopPluginsRoot",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "reconcileDesktopPlugins",
+      "ipc": "hermes:fs:reconcileDesktopPlugins",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "logsRoot",
+      "ipc": "hermes:fs:logsRoot",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "renamePath",
+      "ipc": "hermes:fs:rename",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "writeTextFile",
+      "ipc": "hermes:fs:writeText",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "trashPath",
+      "ipc": "hermes:fs:trash",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.worktreeList",
+      "ipc": "hermes:git:worktreeList",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.worktreeAdd",
+      "ipc": "hermes:git:worktreeAdd",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.worktreeRemove",
+      "ipc": "hermes:git:worktreeRemove",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.branchSwitch",
+      "ipc": "hermes:git:branchSwitch",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.branchList",
+      "ipc": "hermes:git:branchList",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.baseBranchList",
+      "ipc": "hermes:git:baseBranchList",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.repoStatus",
+      "ipc": "hermes:git:repoStatus",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.fileDiff",
+      "ipc": "hermes:git:fileDiff",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.scanRepos",
+      "ipc": "hermes:git:scanRepos",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.list",
+      "ipc": "hermes:connections:list",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.diff",
+      "ipc": "hermes:git:review:diff",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.stage",
+      "ipc": "hermes:git:review:stage",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.unstage",
+      "ipc": "hermes:git:review:unstage",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.revert",
+      "ipc": "hermes:git:review:revert",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.revParse",
+      "ipc": "hermes:git:review:revParse",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.commit",
+      "ipc": "hermes:git:review:commit",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.commitContext",
+      "ipc": "hermes:git:review:commitContext",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.push",
+      "ipc": "hermes:pet-overlay:state",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.shipInfo",
+      "ipc": "hermes:git:review:shipInfo",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.prList",
+      "ipc": "hermes:git:review:prList",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "git.review.createPr",
+      "ipc": "hermes:git:review:createPr",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.attach",
+      "ipc": "hermes:terminal:attach",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.cwd",
+      "ipc": "hermes:workspace:sanitize",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.dispose",
+      "ipc": "hermes:terminal:dispose",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.resize",
+      "ipc": "hermes:terminal:resize",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.start",
+      "ipc": "hermes:mcp-oauth:listen",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.write",
+      "ipc": "hermes:terminal:write",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.onData",
+      "ipc": null,
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "terminal.onExit",
+      "ipc": null,
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onClosePreviewRequested",
+      "ipc": "hermes:close-preview-requested",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: keybinds (use-keybinds.ts) — Universal has no Electron application menu; the same chords fire in-process",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onPreviewNav",
+      "ipc": "hermes:preview-nav",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: keybinds (use-keybinds.ts) — Universal has no Electron application menu; the same chords fire in-process",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onOpenFolderRequested",
+      "ipc": "hermes:open-folder-requested",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: keybinds (workspace.openFolder) — Universal has no Electron application menu; the same chords fire in-process",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onOpenUpdatesRequested",
+      "ipc": "hermes:open-updates",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: keybinds / Settings → Updates — Universal has no Electron application menu; the same chords fire in-process",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onDeepLink",
+      "ipc": "hermes:deep-link",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: store/deep-link.ts consumes every hermes:// kind in every window kind; a second handler would act on each link twice",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "signalDeepLinkReady",
+      "ipc": "hermes:deep-link-ready",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: the router drains Rust’s buffer itself (deep_link_ready), after it subscribes",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "probePluginRepo",
+      "ipc": "hermes:plugin:probe",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "installDesktopPlugin",
+      "ipc": "hermes:plugin:installDesktop",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "removeDesktopPlugin",
+      "ipc": "hermes:plugin:removeDesktop",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onWindowStateChanged",
+      "ipc": "hermes:window-state-changed",
+      "status": "no-mapping",
+      "reason": "no correct mapping: isFullscreen must stay false (universal’s drawn window buttons stay in fullscreen, so desktop must keep its inset), and Tauri raises no minimize or visibility event — the DOM’s visibilitychange, which desktop’s pause controller also reads, is the signal",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onFocusSession",
+      "ipc": "hermes:focus-session",
+      "status": "no-mapping",
+      "reason": "cannot fire: no notification click on a desktop OS",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onNotificationAction",
+      "ipc": "hermes:notification-action",
+      "status": "no-mapping",
+      "reason": "cannot fire: no notification buttons on a desktop OS, and no phone root listens for an approval’s",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onNotificationActivate",
+      "ipc": "hermes:notification-activate",
+      "status": "no-mapping",
+      "reason": "cannot fire: tauri-plugin-notification has no click hook on a desktop OS; a phone’s tap goes through store/plugin-notify-handlers.ts",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onPreviewFileChanged",
+      "ipc": "hermes:preview-file-changed",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onBackendExit",
+      "ipc": "hermes:backend-exit",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onPoolBackendRetiring",
+      "ipc": "hermes:pool:retiring",
+      "status": "no-mapping",
+      "reason": "no mapping: no backend pool — one unified server per connection",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onConnectionApplied",
+      "ipc": "hermes:connection:applied",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onPowerResume",
+      "ipc": "hermes:power-resume",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getOnBattery",
+      "ipc": "hermes:power-battery:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onBatteryChanged",
+      "ipc": "hermes:power-battery",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onBootProgress",
+      "ipc": "hermes:boot-progress",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getBootstrapState",
+      "ipc": "hermes:bootstrap:get",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "continueBootstrapLocal",
+      "ipc": "hermes:bootstrap:continue-local",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "recycleBackend",
+      "ipc": "hermes:backend:recycle",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "resetBootstrap",
+      "ipc": "hermes:bootstrap:reset",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "repairBootstrap",
+      "ipc": "hermes:bootstrap:repair",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "cancelBootstrap",
+      "ipc": "hermes:bootstrap:cancel",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: LocalInstallPanel + local_install_cancel — Electron’s DesktopInstallOverlay is a different install path; universal never dials these",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onBootstrapEvent",
+      "ipc": "hermes:bootstrap:event",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getVersion",
+      "ipc": "hermes:version",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "relaunchApp",
+      "ipc": "hermes:app:relaunch",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getMachineProfile",
+      "ipc": "hermes:machine:profile",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "getRemoteDisplayReason",
+      "ipc": "hermes:get-remote-display-reason",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "uninstall.summary",
+      "ipc": "hermes:uninstall:summary",
+      "status": "no-mapping",
+      "reason": "no mapping: Tauri ships no in-app uninstaller; the OS package manager owns removal",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "uninstall.run",
+      "ipc": "hermes:connection",
+      "status": "no-mapping",
+      "reason": "no mapping: Tauri ships no in-app uninstaller; the OS package manager owns removal",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "updates.check",
+      "ipc": "hermes:updates:check",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "updates.apply",
+      "ipc": "hermes:connection-config:test",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "updates.getBranch",
+      "ipc": "hermes:updates:branch:get",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "updates.setBranch",
+      "ipc": "hermes:updates:branch:set",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "updates.onProgress",
+      "ipc": "hermes:updates:progress",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "themes.fetchMarketplace",
+      "ipc": "hermes:vscode-theme:fetch",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "themes.searchMarketplace",
+      "ipc": "hermes:vscode-theme:search",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "findInPage",
+      "ipc": "hermes:find-in-page",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "stopFindInPage",
+      "ipc": "hermes:stop-find-in-page",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onFoundInPage",
+      "ipc": "hermes:found-in-page",
+      "status": "ported",
+      "reason": "not in port-decisions.json — preload-drift requires the bridge to expose it",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    },
+    {
+      "id": "onOpenFindBarRequested",
+      "ipc": "hermes:open-find-bar",
+      "status": "no-mapping",
+      "reason": "owned elsewhere: keybinds (view.findInPage) — Universal has no Electron application menu; the same chords fire in-process",
+      "platforms": [
+        "desktop-webview",
+        "android",
+        "ios"
+      ]
+    }
+  ]
+}

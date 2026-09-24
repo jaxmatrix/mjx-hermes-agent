@@ -1,9 +1,9 @@
 /**
  * The core `hermes://` routes, registered through the same door a plugin uses.
  *
- * ONE side-effect import from `main.tsx` — this import IS the wiring — so the
- * built-in route table is readable in one place instead of being scattered
- * across the stores that own the surfaces. Each handler stays a two-liner: the
+ * ONE call from `boot.ts`, before the router is armed, so the built-in route
+ * table is readable in one place instead of being scattered across the stores
+ * that own the surfaces. Each handler stays a two-liner: the
  * work belongs to the store it delegates to.
  *
  * Nothing here ACTS. `mcp/install` parks a pending request behind a
@@ -25,9 +25,8 @@ function slotArg(key: string, value: string): string {
 }
 
 /**
- * Register the core routes. Called once at import — the side effect IS the
- * wiring — and exported so a test can rebuild the table after clearing it,
- * rather than re-importing this module into a second registry.
+ * Register the core routes. Called once, by `boot.ts` — importing this module
+ * registers nothing — and by a test rebuilding the table after clearing it.
  */
 export function registerBuiltinDeepLinkRoutes(): void {
   // `hermes://mcp/install?name=…&config=<base64>` — MJXHRM-454's dialog.
@@ -82,7 +81,6 @@ export function registerBuiltinDeepLinkRoutes(): void {
           enable: action.enable,
           force: action.force,
           legacyHint: action.legacyHint,
-          origin: 'deep-link',
           repo: action.repo
         })
 
@@ -92,5 +90,3 @@ export function registerBuiltinDeepLinkRoutes(): void {
     })
   }
 }
-
-registerBuiltinDeepLinkRoutes()

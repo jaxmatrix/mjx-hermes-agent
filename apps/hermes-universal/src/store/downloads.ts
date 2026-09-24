@@ -187,7 +187,7 @@ let stopPeerSync: (() => void) | undefined
  * Start hearing other WebViews' downloads. Idempotent.
  *
  * Called once from `main.tsx`, which is where every other cross-WebView sync in
- * this app is armed (`themes/appearance-sync`, `store/gateway-switch-sync`,
+ * this app is armed (`themes/appearance-sync`,
  * `store/agent-read-requests`). It is deliberately NOT a module-scope
  * registration: `downloads-tray.tsx` imports this module, the tray is in the
  * titlebar, and the titlebar is reachable from a large part of the app — so a

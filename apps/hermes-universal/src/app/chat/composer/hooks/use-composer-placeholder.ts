@@ -29,6 +29,7 @@ export function useComposerPlaceholder({ disabled, reconnecting, sessionId }: Us
 
   const prevSessionIdRef = useRef(sessionId)
 
+   
   useEffect(() => {
     const prev = prevSessionIdRef.current
     prevSessionIdRef.current = sessionId

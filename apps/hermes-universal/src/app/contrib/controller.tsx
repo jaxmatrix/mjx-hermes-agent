@@ -1,715 +1,844 @@
-import '@/store/session-tile-delegate' // side-effect: registers the SessionTileDelegate
-import '@/store/start-work-session' // side-effect: composer branch-off → new session in the worktree
+import { useStore } from '@nanostores/react'
+import { atom, computed } from 'nanostores'
+import type { CSSProperties, ReactElement, PointerEvent as ReactPointerEvent } from 'react'
 
-import { computed } from 'nanostores'
-import { type ReactElement, useEffect } from 'react'
-import { useLocation } from 'react-router-dom'
-
-import { composerTargetForPane, markActiveComposer } from '@/app/chat/composer/focus'
+import { SessionDraftTitle } from '@/app/chat/session-draft-title'
+import { SessionStatusDot } from '@/app/chat/session-status-dot'
 import { PALETTE_AREA, type PaletteContribution, paletteToggle } from '@/app/command-palette/contrib'
+import { type StatusbarItem } from '@/app/shell/statusbar-controls'
+import { AskDirective } from '@/components/assistant-ui/ask-directive'
 import { InlinePreviewDirective } from '@/components/assistant-ui/inline-preview-directive'
+import { IdleMount } from '@/components/idle-mount'
+import { OnboardingChatDirective } from '@/components/onboarding-chat/directive'
 import { $layoutEditMode, toggleLayoutEditMode } from '@/components/pane-shell/edit-mode'
-import { registerTile, registerTiles } from '@/components/pane-shell/tile/registry'
-import { allPaneIds, group, split } from '@/components/pane-shell/tree/model'
-import { LAYOUTS_AREA } from '@/components/pane-shell/tree/presets'
+import { allPaneIds } from '@/components/pane-shell/tree/model'
 import { LayoutTreeRoot } from '@/components/pane-shell/tree/renderer'
 import {
   $layoutTree,
-  bindTreeSideVisibility,
+  bindPaneVisibility,
+  bindToolPaneCollapse,
   declareDefaultTree,
   dismissTreePane,
-  mirrorLayoutTree,
+  isPaneVisible,
+  markCollapsePane,
   paneRootSide,
   registerLayoutResetHandler,
   registerPaneCloser,
   registerPaneOpener,
+  removeTreePane,
   resetLayoutTree,
-  setPaneCollapsed,
-  setTreePaneHidden,
+  revealTreePane,
+  setStripTabHidden,
+  targetZoneTabStripVisible,
+  togglePaneVisible,
+  toggleTargetZoneTabStrip,
   watchContributedPanes
 } from '@/components/pane-shell/tree/store'
+import { $workspaceOwnerLabels, workspaceOwnerTitle } from '@/components/pane-shell/workspace-scope'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import { discoverBundledPlugins } from '@/contrib/plugins'
+import { Slot } from '@/contrib/react/slot'
 import { registry } from '@/contrib/registry'
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
-import { translateNow } from '@/i18n'
-import { LayoutDashboard, PanelBottom, Plug } from '@/lib/icons'
+import { LocalizedTabTitle, translateNow } from '@/i18n'
+import { NEW_SESSION_TITLE, sessionTitle as storedSessionTitle } from '@/lib/chat-runtime'
+import {
+  Download,
+  FileText,
+  LayoutDashboard,
+  PanelBottom,
+  PanelTop,
+  SlidersHorizontal,
+  Terminal,
+  Upload,
+  Users,
+  Zap
+} from '@/lib/icons'
 import { type KeybindContribution, KEYBINDS_AREA } from '@/lib/keybinds/actions'
-import { WORKSPACE_PANE_ID } from '@/lib/pane-ids'
-import { IS_MOBILE } from '@/lib/platform'
+import { isOnboardingEnabled } from '@/lib/onboarding-enabled'
 import { TRANSCRIPT_DIRECTIVE_AREA, type TranscriptDirectiveContribution } from '@/lib/transcript-directives'
-import { $chatBubbles, addBubble, bubbleRuntimeKey, switchToBubble } from '@/store/chat-bubbles'
-import { $draftTitles, draftTitleFor } from '@/store/composer'
-import { $gatewayState } from '@/store/gateway'
+import { setYoloEnabled } from '@/lib/yolo-session'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
+import { $interfaceMode, $showsAdvancedChrome, setModeContext, toggleSimpleMode } from '@/store/interface-mode'
 import {
-  $panesFlipped,
-  $rightSidebarOpen,
+  $fileBrowserOpen,
   $sidebarOpen,
-  $terminalOpen,
-  FILE_TREE_DEFAULT_WIDTH,
-  FILE_TREE_MAX_WIDTH,
-  FILE_TREE_MIN_WIDTH,
+  FILE_BROWSER_DEFAULT_WIDTH,
+  FILE_BROWSER_MAX_WIDTH,
+  FILE_BROWSER_MIN_WIDTH,
+  fileBrowserSide,
+  setFileBrowserOpen,
   setSidebarOpen,
-  setTerminalOpen,
   SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_MAX_WIDTH
+  SIDEBAR_MAX_WIDTH,
+  sidebarSide
 } from '@/store/layout'
-import { startNewSession, startNewSessionTab } from '@/store/new-session'
-import { openPluginInstallRequest } from '@/store/plugin-install-request'
-import { $reviewOpen, closeReview, REVIEW_PANE_ID } from '@/store/review'
-import { $activeStoredSessionId, openSession, setBranchedSessionOpener } from '@/store/session'
-import { chatTabTitle, SESSION_ROW_SOURCES, sessionRowFor } from '@/store/session-lookup'
-import { $sessionOwnerLabels } from '@/store/session-owner-label'
-import { watchSessionPins } from '@/store/session-pin-sync'
-import { $activeSessionKey } from '@/store/session-state-types'
+import { $profiles } from '@/store/profile'
+import { $profileRailVisible } from '@/store/profile-rail-prefs'
+import { runExportProfileFlow, runImportProfileFlow } from '@/store/profile-share'
 import {
-  $focusedChatPane,
-  closeSessionTile,
-  focusWorkspaceSession,
-  invalidateRuntimeBindings,
-  nextSessionTileForWorkspace,
-  openBranchTile,
-  setVisibleBubbleKeysProvider
-} from '@/store/session-states'
-import { watchPersistedUnread } from '@/store/session-unread'
+  $reviewOpen,
+  $reviewScopeCwd,
+  $reviewScopeTarget,
+  closeReview,
+  openReview,
+  REVIEW_PANE_ID
+} from '@/store/review'
+import { $currentCwd, $selectedStoredSessionId, $sessions, $yoloActive, sessionMatchesStoredId } from '@/store/session'
+import { watchSessionPins } from '@/store/session-pin-sync'
+import { $botChatScopes } from '@/store/session-states'
+import { watchUnreadWriteGuard } from '@/store/session-unread-remote'
 import { $statusbarVisible } from '@/store/statusbar-prefs'
-import { $effectiveCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
+import { isBrowserWindow, isHudWindow } from '@/store/windows'
 
+import { BrowserPopoutShell } from '../chat/browser-popout-shell'
+import type { SessionDragPayload } from '../chat/composer/inline-refs'
 import { watchPreviewTiles } from '../chat/preview-tile'
 import { watchRouteTiles } from '../chat/route-tile'
-import { SessionStatusDot } from '../chat/session-status-dot'
-import { stackSessionTilesIntoMain, watchSessionTiles, WorkspaceTabMenu } from '../chat/session-tile'
-import { ChatSidebar } from '../chat/sidebar'
-import { $workspacePage, isWorkspacePagePath, syncWorkspacePage } from '../routes'
+import { startSessionDrag } from '../chat/session-drag'
+import {
+  SessionTileCloseConfirm,
+  stackSessionTilesIntoMain,
+  startUnrestoredTileTitleBackfill,
+  watchSessionTiles,
+  WorkspaceTabMenu
+} from '../chat/session-tile'
+import { AppContextMenu } from '../context-menu/app-context-menu'
+import { HudShell } from '../hud/hud-shell'
+import { $terminalTakeover, setTerminalTakeover } from '../right-pane/store'
+import { $workspaceIsPage, WORKSPACE_PAGE_HEADER_AREA } from '../routes'
 
-import { FilesPane, ReviewPaneContent, TerminalPane, WorkspaceRoutes } from './panes'
+import { BASIC_TREE, DEFAULT_TREE, registerLayoutPresets } from './layout-presets'
+import { bindLayoutSides } from './layout-sides'
+import { FilesPane, LogsPane, ReviewPaneContent } from './panes'
+import { ContribWiring, WiredPane } from './wiring'
 
 /**
- * Layout-tree contribution root (ported from desktop's `app/contrib/
- * controller.tsx`). Every workspace surface — the chat sidebar, the routed
- * chat/pages, files, preview, review, terminal — is registered as a
- * `area:'panes'` contribution; the layout tree stores only pane ids and
- * resolves content from the registry. `ContribController` renders the tree.
- *
- * Universal differences from desktop:
- *  - The titlebar and statusbar are NOT rendered here — universal keeps its own
- *    `Titlebar`/`Statusbar` in MobileController (Phase 8 makes them
- *    focused-session-aware). This file owns only the workspace grid.
- *  - Surfaces are self-wired, so panes render their components directly (no
- *    `WiredPane`/`WiringActions` indirection).
- *  - The command rows (`layout.editMode`, `layout.reset`, `plugins.reload`) are
- *    `palette` contributions, and `layout.editMode` is also a rebindable
- *    `keybinds` contribution — the same declarative surfaces a plugin uses.
+ * Stripped-down app root (bb/contrib-areas) on the layout TREE model, mounting
+ * the REAL app surfaces. The title bar and status bar sit OUTSIDE the grid
+ * (fixed chrome) but are fully composable: title bar renders `titleBar.left/
+ * right` slots; the status bar consumes `statusBar.left/right` DATA
+ * contributions (payload = StatusbarItem). Core registers its items through
+ * the same calls a plugin would use.
  */
 
-// ONE render identity for the workspace pane — syncWorkspaceTitle re-registers
-// the contribution (new title) and a fresh closure would remount the chat. The
-// anchor div carries `data-session-anchor="workspace"` so geometry.ts can
-// publish --workspace-left/right from the main zone's edges.
-// h-full (NOT flex-1): the TreeGroup pane body (tree-group.tsx) is a non-flex
-// `overflow-auto` container, so a `flex-1` child is inert and collapses to
-// content height — the chat then grows unbounded and the body scrolls it
-// (messages stuck at the bottom). The body HAS a definite height, so `h-full`
-// gives `.chat` (flex:1 1 auto, needs a bounded flex-col parent) real room to
-// fill and scroll its own thread internally.
-const renderWorkspacePane = () => (
-  <div className="flex h-full min-h-0 min-w-0 flex-col" data-composer-target="main" data-session-anchor="workspace">
-    <WorkspaceRoutes />
-  </div>
-)
+// ---------------------------------------------------------------------------
+// Pane contributions. `data.placement` = semantic role for grid presets;
+// `data.minWidth/maxWidth/minHeight/maxHeight` = the SAME clamps the app's
+// `Pane` props declare — the layout tree sizes zones by weight (percentage)
+// but a zone never shrinks/grows past its active pane's clamp.
+// Headers are contextual (tree-side): a pane alone in a zone shows no
+// header/tab by default; stacked panes show chips. Double-click a zone
+// toggles its header either way.
+// ---------------------------------------------------------------------------
 
-// The workspace tab carries the loaded session's context menu — same verbs as a
-// tile tab, so main + tiles read as one row of session tabs.
+// ONE render identity for the workspace pane — syncWorkspaceTitle re-registers
+// the contribution (new title) and a fresh closure would remount the chat.
+const renderWorkspacePane = () => <WiredPane part="chatRoutes" />
+
+// Boot-hidden panes mount behind display:none (instant-toggle contract) — defer
+// them to idle so they're off the first-paint path, warm before reveal.
+const idle = (node: ReactElement) => <IdleMount>{node}</IdleMount>
+// The main tab carries the same session context menu as tile tabs (targets
+// the loaded primary session; no menu on a fresh draft).
 const wrapWorkspaceTab = (tab: ReactElement) => <WorkspaceTabMenu>{tab}</WorkspaceTabMenu>
 
-// NO `IdleMount` WRAPPER ANY MORE (MJXHRM-373).
-//
-// `files` and `review` used to render through one, on the premise that a
-// boot-hidden pane mounts behind `display:none` and idle-deferring it keeps that
-// mount off the first-paint path while staying "warm before reveal". The zone
-// renderer never mounted a toggled-off pane at all, so there was nothing to
-// defer — and now that it keeps a hidden pane's body (see below), the rule is
-// LAZY UNTIL FIRST SHOWN, then kept. Which leaves idle-deferring able to do only
-// one thing: delay the frame the user pressed ⌘G for.
+/** The `@session` payload for the workspace tab — the loaded primary session,
+ *  or null on a fresh draft / full-page view (nothing to link). */
+const workspaceDragPayload = (): SessionDragPayload | null => {
+  const selected = $selectedStoredSessionId.get()
 
-registerTiles([
+  if (!selected || $workspaceIsPage.get()) {
+    return null
+  }
+
+  const stored = $sessions.get().find(s => sessionMatchesStoredId(s, selected))
+
+  return { id: selected, profile: stored?.profile ?? '', title: stored ? storedSessionTitle(stored) : '' }
+}
+
+// The main tab drags like a session tile — drop it on a composer to link the
+// chat, on a zone/edge to stack/split. Defers (`false`) to the generic pane
+// move when there's no loaded session to carry.
+const workspaceTabDrag = (event: ReactPointerEvent<HTMLElement>, onTap: () => void) => {
+  const payload = workspaceDragPayload()
+
+  if (!payload) {
+    return false
+  }
+
+  startSessionDrag(payload, event, { onTap })
+
+  return true
+}
+
+registry.registerMany([
   {
     id: 'sessions',
-    kind: 'sessions',
-    title: 'sessions',
-    placement: 'left',
+    area: 'panes',
+    // String fallback only (menus, drag ghosts); the tab itself renders
+    // `tabTitle` below so the strip follows `display.language` once it loads.
+    title: translateNow('sidebar.sessions'),
     // Collapsible: leaves the grid on narrow viewports (edge overlay instead).
-    // dock: where a RE-ADOPTED tile lands (healed from a stale dismissal).
-    chrome: {
+    // dock: where a RE-ADOPTED pane lands (healed from a stale dismissal) —
+    // its default-ish spot beside main, not a random same-placement stack.
+    data: {
+      placement: 'left',
       collapsible: true,
       dock: { pane: 'workspace', pos: 'left' },
-      revealAliases: ['chat-sidebar']
-    },
-    sizing: {
+      revealAliases: ['chat-sidebar'],
+      // Standing chrome: no close gestures at all — the tab is shown/hidden
+      // (zone menu Show/Hide rows + the auto-registered ⌘K toggle below).
+      hideOnly: true,
+      tabTitle: () => <LocalizedTabTitle select={t => t.sidebar.sessions} />,
+      tabTitleText: () => translateNow('sidebar.sessions'),
       width: `${SIDEBAR_DEFAULT_WIDTH}px`,
       minWidth: `${SIDEBAR_DEFAULT_WIDTH}px`,
       maxWidth: `${SIDEBAR_MAX_WIDTH}px`
     },
-    render: () => <ChatSidebar variant="pane" />
+    render: () => <WiredPane part="sidebar" />
   },
   {
     id: 'workspace',
-    kind: 'chat',
-    // Live-retitled to the loaded session (or the draft's own text) by
-    // syncWorkspaceTitle below.
-    title: translateNow('sidebar.nav.new-session'),
-    placement: 'main',
-    chrome: { linkTarget: true, tabWrap: wrapWorkspaceTab, uncloseable: true },
-    sizing: { minWidth: '22vw' },
-    // The `+` on the strip this tile sits in: another chat.
-    onNewTab: startNewSessionTab,
+    area: 'panes',
+    // Live-retitled to the loaded session by syncWorkspaceTitle below.
+    title: NEW_SESSION_TITLE,
+    data: {
+      placement: 'main',
+      minWidth: '22vw',
+      tabDrag: workspaceTabDrag,
+      tabWrap: wrapWorkspaceTab,
+      uncloseable: true
+    },
     render: renderWorkspacePane
   },
   {
     id: 'terminal',
-    kind: 'terminal',
-    title: 'terminal',
-    placement: 'bottom',
-    // toolPanel: its toggle collapses the zone to a rail instead of hiding it,
-    // and its ✕ removes it from the layout (⌃` brings it back).
-    // revealOnPreset: a layout that places the terminal turns it on so the zone
-    // shows instead of staying collapsed behind ⌃`.
-    chrome: { revealOnPreset: true, toolPanel: true },
-    // A single-tile zone declaring a height is a FIXED track (a short deck, not
-    // a third of the window).
-    sizing: { height: '20vh', minHeight: '7.5rem', maxHeight: '80vh' },
-    render: () => <TerminalPane />
+    area: 'panes',
+    // Register-time sample; the tab renders `tabTitle` (see sessions).
+    title: translateNow('sidebar.terminal'),
+    // height sizes the fixed track (a single-pane zone declaring a height is a
+    // fixed track — the preset weight is moot): a short deck, not a third of
+    // the window.
+    //
+    // NO minHeight: a tool panel drags all the way down to its collapsed
+    // header (the sash floors it at COLLAPSED_ZONE_PX and folds the zone to
+    // its rail there). A real floor left a sliver of unusable terminal.
+    data: {
+      placement: 'bottom',
+      height: '20vh',
+      maxHeight: '80vh',
+      lifecycleKeepAlive: true,
+      tabTitle: () => <LocalizedTabTitle select={t => t.sidebar.terminal} />,
+      tabTitleText: () => translateNow('sidebar.terminal')
+    },
+    render: () => <WiredPane part="terminal" />
   },
   {
     id: 'files',
-    kind: 'files',
-    title: 'files',
-    placement: 'right',
-    chrome: {
+    area: 'panes',
+    title: translateNow('sidebar.files'),
+    // dock: re-adoption target after a stale dismissal (see sessions).
+    data: {
+      placement: 'right',
       collapsible: true,
       dock: { pane: 'workspace', pos: 'right' },
-      revealAliases: ['file-tree', 'file-browser']
+      revealAliases: ['file-browser'],
+      width: FILE_BROWSER_DEFAULT_WIDTH,
+      minWidth: FILE_BROWSER_MIN_WIDTH,
+      maxWidth: FILE_BROWSER_MAX_WIDTH,
+      tabTitle: () => <LocalizedTabTitle select={t => t.sidebar.files} />,
+      tabTitleText: () => translateNow('sidebar.files')
     },
-    sizing: {
-      width: `${FILE_TREE_DEFAULT_WIDTH}px`,
-      minWidth: `${FILE_TREE_MIN_WIDTH}px`,
-      maxWidth: `${FILE_TREE_MAX_WIDTH}px`
-    },
-    render: () => <FilesPane />
+    render: () => idle(<FilesPane />)
   },
   {
     id: 'review',
-    kind: 'review',
-    title: 'review',
-    placement: 'right',
-    // The git-diff sidebar: hidden until ⌘G ($reviewOpen); its zone collapses
-    // while hidden.
-    chrome: { collapsible: true, revealAliases: [REVIEW_PANE_ID] },
-    sizing: {
-      width: `${FILE_TREE_DEFAULT_WIDTH}px`,
-      minWidth: `${FILE_TREE_MIN_WIDTH}px`,
-      maxWidth: `${FILE_TREE_MAX_WIDTH}px`
+    area: 'panes',
+    title: translateNow('sidebar.review'),
+    // The second right sidebar: hidden until ⌘G ($reviewOpen) — bound below
+    // like the other chrome toggles; its zone collapses while hidden.
+    data: {
+      placement: 'right',
+      collapsible: true,
+      revealAliases: [REVIEW_PANE_ID],
+      width: FILE_BROWSER_DEFAULT_WIDTH,
+      minWidth: FILE_BROWSER_MIN_WIDTH,
+      maxWidth: FILE_BROWSER_MAX_WIDTH,
+      tabTitle: () => <LocalizedTabTitle select={t => t.sidebar.review} />,
+      tabTitleText: () => translateNow('sidebar.review')
     },
-    render: () => <ReviewPaneContent />
+    render: () => idle(<ReviewPaneContent />)
   }
 ])
 
 // ---------------------------------------------------------------------------
-// Layout presets — CHAT (main) always dominates. These BUILT-IN presets are
-// read-only; custom save/delete shipped and lives in `tree/presets.ts`
-// (`saveCurrentLayoutAs` / `deleteUserPreset`). Same shape as desktop minus the
-// optional `logs` pane (not ported to universal).
+// Chrome contributions. The title bar and status bar are fixed chrome outside
+// the grid, composable through these areas. Everything real lives in the real
+// components (TitlebarControls / useStatusbarItems). Sample PLUGIN
+// contributions don't live here — they're their own files under `src/plugins/`,
+// auto-discovered by discoverBundledPlugins() below.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_TREE = split(
-  'row',
-  [
-    group(['sessions'], { id: 'grp-sessions' }),
-    group(['workspace'], { id: 'grp-main' }),
-    split(
-      'column',
-      [
-        split(
-          'row',
-          [group(['review'], { id: 'grp-review' }), group(['files'], { id: 'grp-files' })],
-          [1, 1.2],
-          'spl-rail'
-        ),
-        group(['terminal'], { id: 'grp-terminal' })
-      ],
-      [1.6, 1],
-      'spl-right'
-    )
-  ],
-  [1, 3.4, 1.25],
-  'spl-root'
-)
-
-// No `preview` slot in any preset: a preview is a TILE now, one pane per open
-// file, docked beside main when it opens (see app/chat/preview-tile.tsx). A
-// preset can't reserve a slot for a pane that doesn't exist until you open one.
-const FOCUS_TREE = split('row', [group(['sessions']), group(['workspace', 'files', 'review', 'terminal'])], [1, 4.6])
-
-const TERMINAL_TREE = split(
-  'column',
-  [
-    split('row', [group(['sessions']), group(['workspace']), group(['files', 'review'])], [1, 3.2, 1.2]),
-    group(['terminal'])
-  ],
-  [3, 1]
-)
-
-const QUAD_TREE = split(
-  'column',
-  [
-    split('row', [group(['sessions', 'files']), group(['workspace'])], [1, 3]),
-    split('row', [group(['terminal']), group(['review'])], [1.4, 1])
-  ],
-  [3, 1]
-)
-
-// The bundled templates. User-saved presets join the same area from presets.ts
-// (source: 'user'), which is also where save/delete/persist live.
 registry.registerMany([
-  { id: 'default', area: LAYOUTS_AREA, title: 'Default', order: 0, data: DEFAULT_TREE },
-  { id: 'focus', area: LAYOUTS_AREA, title: 'Focus', order: 10, data: FOCUS_TREE },
-  { id: 'terminal-deck', area: LAYOUTS_AREA, title: 'Terminal deck', order: 20, data: TERMINAL_TREE },
-  { id: 'quad', area: LAYOUTS_AREA, title: 'Quad', order: 30, data: QUAD_TREE }
-])
-
-declareDefaultTree(DEFAULT_TREE)
-
-registry.registerMany([
+  // Titlebar center stays empty on purpose: session title lives in tabs +
+  // sidebar; place/cwd lives in the sidebar project tree. Center is drag
+  // chrome (plugins can still contribute to titleBar.center if needed).
   // Layout edit mode registers through the SAME declarative surfaces plugins
-  // use: a rebindable keybind (collision-checked in the settings panel) and a
-  // command row whose hint tracks the live binding. Without them the mode has
-  // no door — the palette it opens is the only way to author a layout.
+  // use: a rebindable keybind (collision-checked in the panel) + a ⌘K row
+  // whose hotkey hint tracks the live binding.
   {
+    id: 'layout.editMode',
     area: KEYBINDS_AREA,
     data: {
-      defaults: ['mod+shift+\\'],
       id: 'layout.editMode',
       label: 'Toggle layout edit mode',
+      defaults: ['mod+shift+\\'],
       run: toggleLayoutEditMode
-    } satisfies KeybindContribution,
-    id: 'layout.editMode'
+    } satisfies KeybindContribution
   },
   paletteToggle({
-    action: 'layout.editMode',
-    get: () => $layoutEditMode.get(),
-    icon: LayoutDashboard,
     id: 'layout.editMode',
-    keywords: ['layout', 'zones', 'panes', 'edit', 'rearrange'],
     label: 'Toggle layout edit mode',
+    action: 'layout.editMode',
+    icon: LayoutDashboard,
+    keywords: ['layout', 'zones', 'panes', 'edit', 'rearrange'],
+    get: () => $layoutEditMode.get(),
     set: enabled => $layoutEditMode.set(enabled)
   }),
-  // The core `::preview{file="…"}` transcript directive — the model (or a
-  // skill) renders a workspace HTML file LIVE inside its own message, in a
-  // sandboxed frame served over `hermes-artifact://` (see the component for why
-  // not `srcdoc`). Also the reference consumer for the `transcript.directives`
-  // area plugins register into, and the seam MJXHRM-445's Bot Mode cards take.
+  // The agent's write -> see loop: rescan <hermes home>/desktop-plugins
+  // without relaunching (same-id reloads dispose the previous incarnation).
   {
+    id: 'plugins.reload',
+    area: PALETTE_AREA,
+    data: {
+      id: 'plugins.reload',
+      label: 'Reload desktop plugins',
+      keywords: ['plugins', 'reload', 'refresh', 'desktop'],
+      run: () => void discoverRuntimePlugins()
+    } satisfies PaletteContribution
+  },
+  // The core `::preview{file="…"}` transcript directive — the model (or a
+  // skill) renders a workspace HTML file LIVE inside its own message
+  // (sandboxed srcdoc iframe; falls back to the classic preview card for
+  // non-HTML targets and remote gateways). Also the reference consumer for
+  // the `transcript.directives` area plugins register into.
+  {
+    id: 'transcript.preview',
     area: TRANSCRIPT_DIRECTIVE_AREA,
     data: {
       name: 'preview',
       render: ({ attrs, streaming }) => <InlinePreviewDirective attrs={attrs} streaming={streaming} />
-    } satisfies TranscriptDirectiveContribution,
-    id: 'transcript.preview'
+    } satisfies TranscriptDirectiveContribution
   },
+  ...(isOnboardingEnabled()
+    ? [
+        {
+          id: 'transcript.onboarding',
+          area: TRANSCRIPT_DIRECTIVE_AREA,
+          data: {
+            name: 'onboarding',
+            render: ({ attrs, streaming }) => <OnboardingChatDirective attrs={attrs} streaming={streaming} />
+          } satisfies TranscriptDirectiveContribution
+        },
+        // ::ask is the guided chat's question card, registered only with the
+        // onboarding flag. B4 decides its wider use.
+        {
+          id: 'transcript.ask',
+          area: TRANSCRIPT_DIRECTIVE_AREA,
+          data: {
+            name: 'ask',
+            render: ({ attrs, streaming }) => <AskDirective attrs={attrs} streaming={streaming} />
+          } satisfies TranscriptDirectiveContribution
+        }
+      ]
+    : []),
   {
+    id: 'layout.reset',
     area: PALETTE_AREA,
     data: {
-      icon: LayoutDashboard,
       id: 'layout.reset',
-      keywords: ['layout', 'reset', 'default', 'panes'],
       label: 'Reset layout',
+      icon: LayoutDashboard,
+      keywords: ['layout', 'reset', 'default', 'panes'],
       run: resetLayoutTree
-    } satisfies PaletteContribution,
-    id: 'layout.reset'
+    } satisfies PaletteContribution
   },
   // Hiding the bar removes the surface that would otherwise offer it back, so
-  // the command menu is the guaranteed door in (alongside the rebindable ⌘⇧S).
+  // ⌘K is the guaranteed door in (alongside the rebindable ⌘⇧S).
   paletteToggle({
-    action: 'view.toggleStatusbar',
-    get: () => $statusbarVisible.get(),
-    icon: PanelBottom,
     id: 'view.toggleStatusbar',
-    keywords: ['status bar', 'statusbar', 'bottom bar', 'hide', 'show', 'chrome'],
     label: 'Toggle status bar',
+    action: 'view.toggleStatusbar',
+    icon: PanelBottom,
+    keywords: ['status bar', 'statusbar', 'bottom bar', 'hide', 'show', 'chrome'],
+    get: () => $statusbarVisible.get(),
     set: enabled => $statusbarVisible.set(enabled)
   }),
-  // The manual rescan door, for when the poll's cadence isn't enough (or the
-  // gateway door skipped content-diffing because the tree is large).
+  paletteToggle({
+    id: 'view.toggleProfileRail',
+    label: 'Toggle profile rail',
+    action: 'view.toggleProfileRail',
+    icon: Users,
+    keywords: ['profile rail', 'profile bar', 'profile strip', 'profiles', 'sidebar', 'hide', 'show', 'chrome'],
+    get: () => $profileRailVisible.get(),
+    set: enabled => $profileRailVisible.set(enabled)
+  }),
+  // Simple hides most of the chrome that would offer the way back, so ⌘K is a
+  // guaranteed door (alongside the layout editor and Settings → Appearance).
+  paletteToggle({
+    id: 'view.simpleMode',
+    label: 'Simple mode',
+    action: 'view.toggleSimpleMode',
+    icon: SlidersHorizontal,
+    keywords: ['simple', 'advanced', 'mode', 'interface', 'chrome', 'minimal', 'focus', 'distraction'],
+    get: () => $interfaceMode.get() === 'simple',
+    set: toggleSimpleMode
+  }),
+  paletteToggle({
+    id: 'view.toggleTabStrip',
+    label: 'Toggle tabs',
+    action: 'view.toggleTabStrip',
+    icon: PanelTop,
+    keywords: ['tab strip', 'tab bar', 'tabs', 'header', 'zone', 'hide', 'show', 'chrome'],
+    // On-screen truth for the zone the verbs target, not a stored flag: a zone
+    // on auto has no stored value, and the row must read as "what pressing
+    // this does to what I can see".
+    get: () => Boolean(targetZoneTabStripVisible()),
+    set: () => void toggleTargetZoneTabStrip()
+  }),
+  // The keybind panel's non-titlebar door (the keyboard icon is gone).
   {
+    id: 'keybinds.panel',
     area: PALETTE_AREA,
     data: {
-      icon: Plug,
-      id: 'plugins.reload',
-      keywords: ['plugin', 'rescan', 'reload'],
-      // A key, not a string: the row is registered once at boot, and a literal
-      // would keep the boot locale's wording after a language switch.
-      labelKey: 'settings.plugins.rescan',
-      run: discoverRuntimePlugins
-    } satisfies PaletteContribution,
-    id: 'plugins.reload'
+      id: 'keybinds.panel',
+      label: 'Keyboard shortcuts',
+      keywords: ['keybinds', 'shortcuts', 'hotkeys', 'keyboard'],
+      run: () => window.dispatchEvent(new CustomEvent('hermes:open-keybinds'))
+    } satisfies PaletteContribution
   },
-  // The other door to the install dialog (Settings ▸ Plugins is the first).
-  // Deliberately NOT a keybind: installing a plugin is not a chord-worthy
-  // action, and a `KEYBIND_ACTIONS` row costs an i18n key and a check:i18n gate.
+  // Profile sharing: bundle the active profile (config, skills, theme, layout)
+  // into a portable archive, or adopt someone else's. Both open native dialogs,
+  // so the palette closing on select is correct.
   {
+    id: 'profile.export',
     area: PALETTE_AREA,
     data: {
-      icon: Plug,
-      id: 'plugins.install',
-      keywords: ['plugin', 'install', 'git', 'repository', 'clone', 'add'],
-      labelKey: 'settings.plugins.installFromGit',
-      run: () => openPluginInstallRequest({ origin: 'settings', repo: '' })
-    } satisfies PaletteContribution,
-    id: 'plugins.install'
+      id: 'profile.export',
+      label: 'Export profile…',
+      icon: Upload,
+      keywords: ['profile', 'export', 'share', 'bundle', 'theme', 'settings', 'backup'],
+      run: () => void runExportProfileFlow()
+    } satisfies PaletteContribution
+  },
+  {
+    id: 'profile.import',
+    area: PALETTE_AREA,
+    data: {
+      id: 'profile.import',
+      label: 'Import profile…',
+      icon: Download,
+      keywords: ['profile', 'import', 'share', 'bundle', 'archive', 'restore'],
+      run: () => void runImportProfileFlow()
+    } satisfies PaletteContribution
   }
 ])
 
-// Bundled plugins load AFTER core, so a plugin can override a same-id core
-// contribution. This also starts the disk door's watcher (contrib/plugins.ts →
-// watchRuntimePlugins), which is what makes an agent's write→see loop work.
+registerLayoutPresets()
+
+declareDefaultTree(DEFAULT_TREE, BASIC_TREE)
+
+// Bundled plugins load AFTER core, so a same-id contribution from a plugin
+// deliberately overrides the core default (last writer wins). Third-party
+// runtime plugins will flow through the same discovery seam.
 discoverBundledPlugins()
 
-// Plugin panes (and any contributed pane) join the tree by their `placement`
-// hint the moment they register.
+// Plugin panes join the tree by their `placement` hint the moment they
+// register — incl. runtime plugins arriving seconds after boot.
 watchContributedPanes()
 
-// Mirror `$sessionTiles` into layout-tree panes and collapse tiles into the
-// workspace on a layout reset. Page (route) tiles and PREVIEW tiles ride the
-// same mirror, keyed by path instead of session id. (Tile sessions stream off
-// the shared gateway stream: THE event router self-registers on import — see
-// store/event-router.ts.)
-watchSessionTiles()
-watchRouteTiles()
-watchPreviewTiles()
+// Session + route (page) tiles: persisted splits register panes docked beside
+// main. A popped-out Browser and the HUD have no layout tree — registering
+// tiles there would still run, and preview-tile watching would try to dock
+// into a tree this window never renders (and, in the HUD, paint a webview
+// into the transparent overlay).
+if (!isBrowserWindow() && !isHudWindow()) {
+  watchSessionTiles()
+  startUnrestoredTileTitleBackfill()
+  watchRouteTiles()
+  watchPreviewTiles()
+}
 
-// Mirror sidebar pins into the backend keep-flag — the only pin channel every
-// client on this gateway shares, and the one the auto-archive sweep and the
-// list endpoints' pinned back-fill both read. Pre-existing local pins migrate
-// transparently on the first reconcile.
+// Mirror sidebar pins into the backend keep-flag so the auto-archive sweep
+// never hides a pinned chat (and pre-existing pins migrate transparently).
 watchSessionPins()
 
-// The DURABLE half of "finished — unread". The transient marker dies with the
-// window, so without this a turn that finished while you were elsewhere — or
-// while the app was closed — is forgotten by the next start. Registers itself
-// as `store/session`'s unread-persistence hook; a secondary window opts out
-// (it sees a sliver of the lists and would clobber the primary's records).
-watchPersistedUnread()
+// Release unread-write guards once a list page confirms the value we wrote.
+watchUnreadWriteGuard()
 
-// A reconnect issues new runtime ids, so every binding we hold is dead. Drop
-// the bindings (NOT the sessions — a draft's unsent text is the one thing that
-// cannot be re-fetched) and let each visible surface re-resume its own session.
-let wasGatewayOpen = $gatewayState.get() === 'open'
-
-$gatewayState.subscribe(state => {
-  const isOpen = state === 'open'
-
-  if (isOpen && !wasGatewayOpen) {
-    invalidateRuntimeBindings()
-  }
-
-  wasGatewayOpen = isOpen
-})
-
-// The bubble strip's sessions are on screen on mobile, so the LRU must not
-// evict them. Registered here rather than imported by session-states, which
-// chat-bubbles already depends on.
-setVisibleBubbleKeysProvider(() =>
-  $chatBubbles
-    .get()
-    .map(bubble => bubbleRuntimeKey(bubble.storedSessionId))
-    .filter((key): key is string => Boolean(key))
-)
-
-// Branching a chat opens the branch BESIDE it and FRONTS it, leaving the parent
-// exactly where it was — the same placement `SessionTileDelegate` gives a branch
-// made from a tab, shared by the one made from an assistant message. Registered
-// here for the same reason as the provider above: `store/session` cannot import
-// tiles or bubbles without a cycle, and this is the layer that knows which of
-// the two this platform has.
-//
-// On mobile the strip is the tab bar: `addBubble` alone parks the branch in it
-// as a BACKGROUND chat (its own contract — "WITHOUT switching to it"), so the
-// user branched and stayed exactly where they were, with a new dot to hunt for.
-// The switch is what "opens in a new chat" means; it costs nothing, because
-// `addBubble` has already seeded the parent as a bubble of its own, so the chat
-// being left is one tap away rather than displaced.
-setBranchedSessionOpener((storedSessionId, parentStoredId) => {
-  if (IS_MOBILE) {
-    addBubble(storedSessionId)
-    switchToBubble(storedSessionId)
-  } else {
-    openBranchTile(storedSessionId, parentStoredId)
-  }
-})
-
-registerLayoutResetHandler(stackSessionTilesIntoMain)
-
-// The main tab reads as its SESSION (the loaded title, "New session" on a fresh
-// draft). register() replaces same-id in place; the render fn is the shared
-// constant above, so the pane content never remounts.
+// The main tab reads as its SESSION (the loaded title, "New session" on a
+// fresh draft) — a stack of main + tiles is then just a row of session names.
+// register() replaces same-id in place; the render fn is the shared constant
+// above, so the pane content never remounts.
 const syncWorkspaceTitle = () => {
-  const selected = $activeStoredSessionId.get()
-  // The wider lookup, not `$sessions` alone: a session older than the loaded
-  // recents page is not a new one, and reading "New session" over a named chat
-  // is the tab lying about what it holds (MJXHRM-386).
-  const stored = sessionRowFor(selected)
-  // A page takes the tab's NAME while it shows — the strip stays up (sessions
-  // are tiles now, so it is the way back to them) and a tab reading "New
-  // session" over Capabilities would name the wrong thing.
-  const page = $workspacePage.get()
+  const selected = $selectedStoredSessionId.get()
+  const stored = selected ? $sessions.get().find(s => sessionMatchesStoredId(s, selected)) : null
 
-  registerTile({
+  registry.register({
     id: 'workspace',
-    kind: 'chat',
-    // Named by the SAME resolver every session tile's tab uses: a page, then the
-    // session, then "loading", and only a chat with no session at all is a draft
-    // — named after what has been typed into it. That last branch is what this
-    // tab was missing while the tile beside it had it: the main pane is where a
-    // new chat is composed, so it is the tab the draft's name matters most on.
-    //
-    // The draft's text is stashed under the composer's scope key, which for the
-    // primary chat is the live session key (`draft:N` until a session exists) —
-    // the same key `tileRuntimeKey` resolves for the draft tile.
-    title: chatTabTitle({ draftTitle: draftTitleFor($activeSessionKey.get()), page, selected, stored }),
-    placement: 'main',
-    chrome: {
-      // The tab's lead dot — the SAME component the sidebar row, the switcher
-      // and the mobile bubble strip render, so the main tab can never disagree
-      // with them about a session's colour OR its status. It subscribes for
-      // itself, so a turn starting no longer re-registers this tile.
+    area: 'panes',
+    // The placeholder, not the draft's live name — `tabTitle` below renders
+    // that. Keeping it here would re-register the pane on every keystroke.
+    // A bot chat reads as its BOT: every canonical Bot Chat is stored under
+    // the same name, which told two open bots apart by nothing (#99152).
+    title: workspaceOwnerTitle(
+      stored ? storedSessionTitle(stored) : NEW_SESSION_TITLE,
+      selected ? $botChatScopes.get()[selected] : undefined
+    ),
+    data: {
+      // The tab's status dot — the SAME primitive the sidebar row and session
+      // tiles render, so the main tab never disagrees with its sidebar row. A
+      // fresh draft has no session to key by, which IS its status: the dot
+      // resolves to `draft` and marks the tab rather than leaving a hole.
       tabLead: () => <SessionStatusDot session={stored} storedSessionId={selected} />,
-      linkTarget: true,
+      // A draft's name lives in its composer, not in any session row, so the
+      // label subscribes to it directly — typing renames the tab without
+      // re-registering the pane.
+      tabTitle: stored ? undefined : () => <SessionDraftTitle scope={selected} />,
+      // Pages aren't tab-able: the main zone's bar stands down while one shows.
+      headerVeto: $workspaceIsPage.get(),
+      // Page-owned controls take the vetoed tab row. Deliberately NOT the
+      // `titleBar.center` slot: that one stays mounted in the titlebar on every
+      // route so plugin components (and their effects) survive navigation.
+      headerContent:
+        $workspaceIsPage.get() && registry.getArea(WORKSPACE_PAGE_HEADER_AREA).length
+          ? () => <Slot area={WORKSPACE_PAGE_HEADER_AREA} />
+          : undefined,
+      placement: 'main',
+      minWidth: '22vw',
+      tabDrag: workspaceTabDrag,
       tabWrap: wrapWorkspaceTab,
       uncloseable: true
     },
-    sizing: { minWidth: '22vw' },
-    onNewTab: startNewSessionTab,
     render: renderWorkspacePane
   })
 }
 
-$activeStoredSessionId.listen(syncWorkspaceTitle)
-// Every source the wider lookup reads, so a tab that resolved through the
-// pinned cache or the project tree retitles when the real row arrives.
-SESSION_ROW_SOURCES.forEach(source => source.listen(syncWorkspaceTitle))
-// The draft's name, and the key it is filed under. `$draftTitles` writes only
-// when the DERIVED title changes (`publishDraftTitle`), on the stash's 400ms
-// debounce, and stops changing past the 48-character cut — so this is a handful
-// of re-registrations per draft, not one per keystroke. `$activeSessionKey`
-// moves when a fresh draft is minted, which is a rename to the placeholder that
-// no other atom here announces: `$activeStoredSessionId` was already null.
-$draftTitles.listen(syncWorkspaceTitle)
-$activeSessionKey.listen(syncWorkspaceTitle)
-// No `$sessionColorById` listener: the lead dot resolves colour AND status for
-// itself, so a project recolour repaints the dot without re-registering the
-// tile (which invalidates the whole tree).
-$workspacePage.listen(syncWorkspaceTitle)
-// A plugin naming a profile (`Radar: …`) retitles the tab without any row moving.
-$sessionOwnerLabels.listen(syncWorkspaceTitle)
+$selectedStoredSessionId.listen(syncWorkspaceTitle)
+$sessions.listen(syncWorkspaceTitle)
+$botChatScopes.listen(syncWorkspaceTitle)
+$workspaceOwnerLabels.listen(syncWorkspaceTitle)
+$workspaceIsPage.listen(syncWorkspaceTitle)
+registry.subscribeArea(WORKSPACE_PAGE_HEADER_AREA, syncWorkspaceTitle)
 
-// Typing lands in the chat you are LOOKING at. The focus bus resolves `'active'`
-// through a module latch; without this it moves only when a composer is focused
-// outright, so clicking a tile's transcript — or a tile simply mounting last —
-// left the keys with another chat.
-$focusedChatPane.listen(pane => markActiveComposer(composerTargetForPane(pane)))
+// Layout reset collapses every session tile into main as a tab (after the
+// workspace) instead of re-scattering them — pre-placed before adoption.
+registerLayoutResetHandler(stackSessionTilesIntoMain)
 
 // ---------------------------------------------------------------------------
-// Titlebar toggles → tree. Universal's titlebar buttons keep their store
-// semantics ($sidebarOpen / $rightSidebarOpen / $panesFlipped); the tree
+// Titlebar chrome toggles -> tree. The TitlebarControls buttons keep their
+// store semantics ($sidebarOpen / $fileBrowserOpen / $panesFlipped); the tree
 // reacts — a hidden pane's zone collapses (content stays mounted), the flip
 // toggle mirrors the root row.
 // ---------------------------------------------------------------------------
 
-function bindPaneVisibility(
-  paneId: string,
-  $open: { get(): boolean; listen(fn: (open: boolean) => void): void },
-  close?: () => void,
-  open?: () => void
-) {
-  setTreePaneHidden(paneId, !$open.get())
-  $open.listen(isOpen => setTreePaneHidden(paneId, !isOpen))
+// HIDE-STYLE PANES (files, review, preview): the binding lives in the tree
+// store — bindPaneVisibility — alongside bindToolPaneCollapse, so both are
+// testable against the real function instead of a copy.
 
-  if (close) {
-    registerPaneCloser(paneId, close)
-  }
+// TOOL PANELS (terminal, logs): the binding lives in the tree store —
+// bindToolPaneCollapse — so the boot rule it encodes is testable against the
+// real function instead of a copy. See its docblock for the semantics.
 
-  if (open) {
-    registerPaneOpener(paneId, open)
-  }
-}
+bindLayoutSides()
 
-// TOOL PANELS (terminal): the toggle COLLAPSES the zone to a persistent rail
-// (tab stays) instead of hiding it — the IntelliJ/VS-Code tool-window model.
-function bindPaneCollapse(
-  paneId: string,
-  $open: { get(): boolean; listen(fn: (open: boolean) => void): void },
-  close: () => void,
-  open: () => void
-) {
-  setPaneCollapsed(paneId, !$open.get())
-  $open.listen(isOpen => setPaneCollapsed(paneId, !isOpen))
-  registerPaneCloser(paneId, close)
-  registerPaneOpener(paneId, open)
-}
+// Workspace-scoped surfaces: the file tree and git diff only mean something
+// inside a project. A detached chat (no cwd) hides them — their zones
+// collapse and the chat absorbs the width; picking a project brings them
+// back. The terminal is NOT workspace-gated: unlike the old shell (where it
+// rode the rail's row and vanished with it), its zone stands on its own.
+const $hasWorkspace = computed($currentCwd, cwd => Boolean(cwd.trim()))
 
-// SIDES have one source of truth: the TREE. The legacy $panesFlipped flag is
-// DERIVED from where the sessions zone actually sits, so dragging sessions
-// across — or applying a mirrored preset — remaps the flip automatically. The
-// flip action mirrors the tree only when they disagree.
-const sessionsOnRight = () => {
-  const tree = $layoutTree.get()
-
-  if (!tree) {
-    return null
-  }
-
-  const order = allPaneIds(tree)
-  const sessions = order.indexOf('sessions')
-  const main = order.indexOf('workspace')
-
-  return sessions >= 0 && main >= 0 ? sessions > main : null
-}
-
-$layoutTree.subscribe(() => {
-  const flipped = sessionsOnRight()
-
-  if (flipped !== null && flipped !== $panesFlipped.get()) {
-    $panesFlipped.set(flipped)
-  }
-})
-
-$panesFlipped.listen(flipped => {
-  const current = sessionsOnRight()
-
-  if (current !== null && current !== flipped) {
-    mirrorLayoutTree()
-  }
-})
-
-// POSITIONAL side toggles: $sidebarOpen ≙ the LEFT side of the main zone,
-// $rightSidebarOpen ≙ the RIGHT — everything on that side hides together,
-// whatever panes have been rearranged there.
-bindTreeSideVisibility('left', $sidebarOpen, setSidebarOpen)
-bindTreeSideVisibility('right', $rightSidebarOpen, open => $rightSidebarOpen.set(open))
-
-// Workspace-scoped surfaces: the file tree + git diff only mean something
-// inside a project. The terminal is NOT workspace-gated: its zone stands on its
-// own.
+// The tree pane's own presence tracks ⌘J directly, not just the column's
+// collapse — otherwise a pane revealed into that shared column would drag the
+// tree along with it.
 //
-// `$effectiveCwd`, not `$currentCwd`: a detached chat falls back to the backend
-// workspace root, so these surfaces have somewhere to point instead of hiding —
-// which is what the terminal and statusbar have always done. That leaves the
-// gate false only until the root lands, so fetch it up front rather than
-// relying on the statusbar hook (its only other caller) being mounted.
-void ensureWorkspaceCwd()
-
-const $hasWorkspace = computed($effectiveCwd, cwd => Boolean(cwd.trim()))
-
-bindPaneVisibility('files', $hasWorkspace)
+// Both get a CLOSER and an OPENER. The closer keeps ⌘J/⌘G truthful when the
+// pane is closed from the tab menu; the opener is its mirror, so bringing the
+// pane back through the tree (the toggle's reveal path, the rail, a preset)
+// writes the store too. Without the opener the boolean went stale the moment
+// anything but the toggle showed the pane — the divergence this whole change
+// is about.
+bindPaneVisibility(
+  'files',
+  computed([$hasWorkspace, $fileBrowserOpen], (workspace, open) => workspace && open),
+  () => setFileBrowserOpen(false),
+  () => setFileBrowserOpen(true)
+)
 // ⌘G — the review sidebar appears/disappears (and comes to the front).
 bindPaneVisibility(
   'review',
   computed([$reviewOpen, $hasWorkspace], (open, workspace) => open && workspace),
-  closeReview
+  closeReview,
+  () => openReview($reviewScopeCwd.get(), $reviewScopeTarget.get())
 )
 // ⌃` / statusbar toggle — the terminal COLLAPSES to a rail (tab stays), not
-// hides.
-//
-// "PTYs stay alive while collapsed" was written here as a statement of intent
-// and was FALSE until MJXHRM-373. `setPaneCollapsed` sets `minimized` on the
-// terminal's tree group, and the zone renderer used to render its body only
-// while `!minimized` — so collapsing unmounted `TerminalView`, whose cleanup
-// invokes `pty_kill`. Every ⌃` killed the shell. It is true now because the
-// renderer HIDES a folded zone's body instead of unmounting it; the guarantee
-// lives there, not here.
-bindPaneCollapse(
+// hides; PTYs stay alive while collapsed (see PersistentTerminal). Simple has
+// no terminal: where chrome is off a closed one hides, rail and all, and ⌃`
+// is the door for the session.
+bindToolPaneCollapse(
   'terminal',
-  $terminalOpen,
-  () => setTerminalOpen(false),
-  () => setTerminalOpen(true)
+  $terminalTakeover,
+  () => setTerminalTakeover(false),
+  () => setTerminalTakeover(true),
+  $showsAdvancedChrome
+)
+// Without the statusbar, the rail is the only way to switch profiles or gateways.
+$profiles.subscribe(profiles => setModeContext({ profileCount: profiles.length }))
+$connectionsRegistry.subscribe(registry => setModeContext({ connectionCount: registry?.connections.length ?? 0 }))
+// ⌘K door onto the same pane the keybind and statusbar pill flip — was a
+// one-way "open" row under Go to, so it never showed on/off and couldn't hide.
+// Reads the TREE like every other pane toggle: `$terminalTakeover` stays true
+// behind a stacked sibling tab or a minimized zone, which would light the row
+// "on" for a terminal that isn't on screen.
+registry.register(
+  paletteToggle({
+    id: 'view.showTerminal',
+    label: 'Toggle terminal',
+    action: 'view.showTerminal',
+    icon: Terminal,
+    keywords: ['terminal', 'shell', 'console', 'pty'],
+    get: () => isPaneVisible('terminal'),
+    set: () => togglePaneVisible('terminal')
+  })
 )
 
-// Sessions/files Close = collapse their SIDE — but only while the pane actually
-// lives in that root side column. Dragged next to main, a side collapse can't
-// hide it, so Close falls back to dismissal there.
-registerPaneCloser('sessions', () =>
-  paneRootSide('sessions') === 'left' ? setSidebarOpen(false) : dismissTreePane('sessions')
+// Logs are ⌘K-ONLY chrome: the pane contribution EXISTS only while $logsOpen
+// is on. Off (the default) keeps logs out of the registry and the tree
+// entirely — no secondary tab riding the terminal strip, no preset or
+// adoption path that resurrects it. Session-only on purpose (not persisted):
+// a fresh boot never re-opens logs automatically. The palette toggle is the
+// single door in; tab ✕ / ⌘W / the toggle itself remove it again.
+const $logsOpen = atom(false)
+
+let unregisterLogsPane: (() => void) | null = null
+
+const syncLogsPane = (open: boolean) => {
+  if (open) {
+    unregisterLogsPane ??= registry.register({
+      id: 'logs',
+      area: 'panes',
+      title: translateNow('sidebar.logs'),
+      // Same tool-panel sizing rule as the terminal above — no minHeight, so
+      // the sash floors it at COLLAPSED_ZONE_PX and folds the zone to its rail
+      // rather than leaving a sliver. dock: its OWN zone beside the terminal —
+      // never a tab in the terminal's strip.
+      data: {
+        placement: 'bottom',
+        dock: { pane: 'terminal', pos: 'right' },
+        height: '20vh',
+        maxHeight: '80vh',
+        tabTitle: () => <LocalizedTabTitle select={t => t.sidebar.logs} />,
+        tabTitleText: () => translateNow('sidebar.logs')
+      },
+      render: () => idle(<LogsPane />)
+    })
+    // Summoning logs is explicit intent — front it (un-dismisses if a ✕ close
+    // left a dismissal record behind).
+    revealTreePane('logs')
+  } else {
+    unregisterLogsPane?.()
+    unregisterLogsPane = null
+
+    // No dismissal record — the next toggle-on must re-adopt cleanly. Also
+    // sweeps 'logs' out of persisted trees from before it was summon-only.
+    // Guarded: removePane rebuilds the tree even for an absent pane, and a
+    // no-op boot sweep would commit (and persist) a fresh identical tree.
+    const tree = $layoutTree.get()
+
+    if (tree && allPaneIds(tree).includes('logs')) {
+      removeTreePane('logs')
+    }
+  }
+}
+
+// Tool-panel tab semantics (✕ / ⌘W route through the store) so the palette
+// toggle stays truthful either way.
+markCollapsePane('logs')
+registerPaneCloser('logs', () => $logsOpen.set(false))
+registerPaneOpener('logs', () => $logsOpen.set(true))
+syncLogsPane($logsOpen.get())
+$logsOpen.listen(syncLogsPane)
+
+registry.register(
+  paletteToggle({
+    id: 'logs.toggle',
+    label: 'Toggle logs',
+    icon: FileText,
+    keywords: ['logs', 'agent log', 'tail', 'debug'],
+    // On-screen, not the store's boolean. Summon-only keeps the two in step
+    // while logs sits in its own zone, but the user can still drag it into the
+    // terminal's strip or minimize its zone — and then `$logsOpen` reads true
+    // with nothing visible, so the row would show "on" and its press would
+    // spend itself re-asserting a value it already held.
+    get: () => isPaneVisible('logs'),
+    set: () => togglePaneVisible('logs')
+  })
 )
-registerPaneCloser('files', () =>
-  paneRootSide('files') === 'right' ? $rightSidebarOpen.set(false) : dismissTreePane('files')
-)
 
-/**
- * The MAIN tab's Close.
- *
- * The workspace pane can't leave the tree, so "closing" it means EMPTYING it,
- * and what fills the hole depends on what is stacked beside it: a session tab in
- * main's own strip shifts INTO main (its tile is dropped and the session loads as
- * the primary — the session stays alive, no busy prompt); with nothing stacked,
- * main drops to a fresh "New session" draft rather than an empty void.
- *
- * Registering a closer is also what gives the tab its close GESTURE — the strip
- * reads `$panesWithCloser`, not the `uncloseable` flag, so the pane stays
- * undismissable while ⌘W / ⌘-click / middle-click / the zone menu all work on it.
- * Without this, ⌘W over a lone main tab was a dead key.
- */
-registerPaneCloser(WORKSPACE_PANE_ID, () => {
-  const next = nextSessionTileForWorkspace()
+// Hide-only chrome tabs (sessions / Bots) get a ⌘K toggle each — the palette
+// door onto the same show/hide the zone menu offers. Auto-registered from the
+// panes area so a plugin's hideOnly pane (Bots registers at plugin load, after
+// this module runs) gets its row for free; disposers keep it in step when a
+// plugin unloads. Registry writes during a subscriber callback are safe (the
+// registry snapshots per-area and re-notifies), and re-registering the same
+// palette id replaces the row instead of stacking duplicates.
+{
+  const stripTabToggles = new Map<string, () => void>()
 
-  if (next) {
-    // Order matters — close the tile FIRST so the selection homes to the
-    // workspace instead of re-fronting the tile it is being promoted out of.
-    closeSessionTile(next)
-    void openSession(next)
+  const syncStripTabToggles = () => {
+    const hideOnlyPanes = registry
+      .getArea('panes')
+      .filter(c => (c.data as { hideOnly?: boolean } | undefined)?.hideOnly)
 
-    return
+    const wanted = new Set(hideOnlyPanes.map(c => c.id))
+
+    for (const [paneId, dispose] of stripTabToggles) {
+      if (!wanted.has(paneId)) {
+        dispose()
+        stripTabToggles.delete(paneId)
+      }
+    }
+
+    for (const pane of hideOnlyPanes) {
+      if (stripTabToggles.has(pane.id)) {
+        continue
+      }
+
+      const title = String(pane.title ?? pane.id)
+
+      stripTabToggles.set(
+        pane.id,
+        registry.register(
+          paletteToggle({
+            id: `strip-tab.${pane.id}`,
+            label: translateNow('zones.toggleStripTab', title),
+            icon: LayoutDashboard,
+            keywords: [title.toLowerCase(), 'tab', 'pane', 'sidebar', 'show', 'hide'],
+            // On-screen truth, same contract as the logs toggle above.
+            get: () => isPaneVisible(pane.id),
+            set: visible => {
+              if (visible) {
+                revealTreePane(pane.id)
+              } else {
+                setStripTabHidden(pane.id, true)
+              }
+            }
+          })
+        )
+      )
+    }
   }
 
-  // Already a blank draft? Then this IS the post-close state; leave it alone
-  // rather than churning a fresh session out from under the composer.
-  if ($activeStoredSessionId.get() !== null) {
-    startNewSession()
+  syncStripTabToggles()
+  registry.subscribeArea('panes', syncStripTabToggles)
+}
+
+// YOLO (dangerous-command approval bypass) is a status-bar zap and a /yolo
+// command; ⌘K is the third door onto the SAME store function, so a user who
+// lives in the palette never has to hunt for the pill.
+registry.register(
+  paletteToggle({
+    id: 'session.yolo',
+    label: 'Toggle yolo',
+    icon: Zap,
+    keywords: ['yolo', 'approvals', 'auto-approve', 'bypass', 'dangerous', 'commands'],
+    get: () => $yoloActive.get(),
+    set: enabled => void setYoloEnabled(enabled).catch(() => undefined)
+  })
+)
+
+// Sessions/files Close = collapse their SIDE (⌘B/⌘J truthful, titlebar button
+// flips back) — but only while the pane actually lives in that root side
+// column. Dragged next to main, a side collapse can't hide it (the collapse
+// skips main-bearing children), so Close falls back to dismissal there —
+// otherwise ⌘W/Close silently no-op. The sessions opener is the mirror: a
+// preset that places the sidebar shows it, ⌘B truthful.
+registerPaneCloser('sessions', () =>
+  paneRootSide('sessions') === sidebarSide() ? setSidebarOpen(false) : dismissTreePane('sessions')
+)
+registerPaneOpener('sessions', () => {
+  if (paneRootSide('sessions') === sidebarSide()) {
+    setSidebarOpen(true)
   }
 })
+registerPaneCloser('files', () =>
+  paneRootSide('files') === fileBrowserSide() ? setFileBrowserOpen(false) : dismissTreePane('files')
+)
 
-/**
- * The workspace grid: mounts the layout tree. Publishes `$workspacePage` from
- * the router location (the workspace tab reads it as its title) and fronts the
- * workspace pane whenever a full page opens in it.
- */
+// ---------------------------------------------------------------------------
+
 export function ContribController() {
-  const { pathname } = useLocation()
+  const sidebarOpen = useStore($sidebarOpen)
+  const statusbarVisible = useStore($statusbarVisible)
 
-  useEffect(() => {
-    syncWorkspacePage(pathname)
+  // HUD mode is the SAME app with its frame removed: the wiring (gateway,
+  // sessions, streams, submit) mounts identically, and only the shell around
+  // the chat surface differs. Branching here rather than at the window entry
+  // is what keeps the HUD's composer the real composer.
+  if (isHudWindow()) {
+    return (
+      <ContribWiring>
+        <AppContextMenu />
+        <HudShell />
+      </ContribWiring>
+    )
+  }
 
-    // A page opens IN the workspace pane, which with session tiles is often a
-    // background tab: front it and claim its zone, or the click lands on a
-    // surface nobody can see. Here rather than in the rail's handler so the
-    // keybinds, the command palette and a deep link all behave the same.
-    if (isWorkspacePagePath(pathname)) {
-      focusWorkspaceSession()
-    }
-  }, [pathname])
+  if (isBrowserWindow()) {
+    return (
+      <ContribWiring>
+        <BrowserPopoutShell />
+      </ContribWiring>
+    )
+  }
 
-  // LayoutTreeRoot is `flex flex-1` — it fills a flex COLUMN with a real height
-  // (desktop wraps it in `flex h-screen flex-col`). MobileController hosts us in
-  // a plain block `min-h-0 flex-1` div, so without this flex-column wrapper the
-  // tree collapses to the chat's content height instead of filling the window.
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
-      <LayoutTreeRoot />
-      {/* The backend-FS picker `selectDesktopPaths` / `selectRemotePaths` route
-          to used to be mounted here, and so did the "Close running tab?" gate
-          (MJXHRM-390). Both moved to `app.tsx`: shell level was already too low
-          — the sidebar and Settings both reach the picker, and the phone closes
-          chats from the bubble strip, but the detached tile window, the HUD, the
-          Android activity screen and both non-tree shells skip this controller
-          entirely. */}
-    </div>
+    <SidebarProvider
+      className="h-screen min-h-0 flex-col bg-background"
+      onOpenChange={setSidebarOpen}
+      open={sidebarOpen}
+      style={{ '--sidebar-width': '100%' } as CSSProperties}
+    >
+      <ContribWiring>
+        <AppContextMenu />
+        <div
+          className="flex h-screen min-h-0 w-screen flex-col bg-(--ui-bg-chrome) text-(--ui-text-primary)"
+          // Window-glass hook: this div and the sidebar-wrapper above it are
+          // the app shell's two full-window opaque painters; the
+          // [data-hermes-glass] rules in styles.css clear them so the tint
+          // painted by <body> is the only thing between the page and the
+          // vibrancy material.
+          data-contrib-shell=""
+          style={{ '--titlebar-height': '0px' } as CSSProperties}
+        >
+          <LayoutTreeRoot titlebar />
+
+          {/* "Close running tab?" — the busy/input-blocked tile close gate. */}
+          <SessionTileCloseConfirm />
+
+          {/* The REAL statusbar (model pill, command center, agents, …) with
+              statusBar.left/right contributions merged in. Unmounted — not
+              just hidden — while toggled off, so its 15s status poll and the
+              per-turn readouts stop with it. */}
+          {statusbarVisible && <WiredPane part="statusbar" />}
+        </div>
+      </ContribWiring>
+    </SidebarProvider>
   )
 }
+
+// Referenced type kept for plugin authors' reference (payload shape of
+// statusBar.* contributions).
+export type { StatusbarItem }

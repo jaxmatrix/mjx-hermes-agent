@@ -1,7 +1,7 @@
 import '@/app/shell/nav-contrib' // side-effect: registers the app's own rail rows
 
 import { useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 import { ConnectionSwitcher } from '@/app/chat/sidebar/connection-switcher'
 import { ProfileRail } from '@/app/chat/sidebar/profile-switcher'
@@ -113,7 +113,7 @@ export function MobileSidebar({ onClose }: { onClose: () => void }) {
       {/* Who you are. On the desktop pane this is a footer, under a nav rail that
           no longer exists here — so it takes the top, where an identity belongs. */}
       <div className="shrink-0 px-2 pb-1 pt-1">
-        <ConnectionSwitcher />
+        <ConnectionSwitcher onConnect={onClose} />
         <ProfileRail />
       </div>
 

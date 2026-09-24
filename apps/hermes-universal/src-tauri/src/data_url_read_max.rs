@@ -203,6 +203,31 @@ pub fn read_capped_file_base64<R: Runtime>(
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// Attachment uploads use a fixed 256 MiB ceiling (Electron
+/// `ATTACHMENT_UPLOAD_DEFAULT_MAX_BYTES`), independent of the user's preview
+/// Settings cap — archives can exceed the default 16 MiB data-URL preference.
+const ATTACHMENT_UPLOAD_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+#[tauri::command]
+pub fn read_capped_file_base64_for_attach<R: Runtime>(
+    app: AppHandle<R>,
+    path: String,
+) -> Result<String, CappedReadError> {
+    let file_path: FilePath = path.parse().map_err(|error| {
+        CappedReadError::failed(format!("{path} is not a readable path: {error}"))
+    })?;
+
+    let file = app
+        .fs()
+        .open(file_path, OpenOptions::new().read(true).clone())
+        .map_err(|error| CappedReadError::failed(error.to_string()))?;
+
+    let known_len = file.metadata().ok().map(|metadata| metadata.len());
+    let bytes = read_capped(file, known_len, ATTACHMENT_UPLOAD_MAX_BYTES)?;
+
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;

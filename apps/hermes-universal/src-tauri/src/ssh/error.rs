@@ -38,8 +38,10 @@ pub enum SshErrorKind {
     /// A lockfile claimed a live backend, but the authenticated ownership probe
     /// disagreed. The record is stale — clean up and respawn.
     AuthenticatedStale,
-    /// A newer attempt for this scope superseded this one. Never surfaced to the
-    /// user as a failure; the newer attempt owns the outcome.
+    /// A newer attempt for this scope superseded this one, throwing away the work
+    /// this caller had just finished. A LOUD failure its caller tears down on;
+    /// whether an attempt ALSO stays silent is the `quiet` flag's question, never
+    /// this kind's (MJXHRM-592).
     Superseded,
     /// The user declined to trust a new host key, or cancelled a prompt.
     Cancelled,
@@ -51,6 +53,13 @@ pub enum SshErrorKind {
 pub struct SshError {
     pub kind: SshErrorKind,
     pub message: String,
+    /// Set only by `SshError::quiet`, and only against a `Quiet` witness the
+    /// tunnel book minted: "a newer primary attempt owns this connection and
+    /// publishes its own result, so say nothing and release nothing". PRIVATE,
+    /// so no other site can mint it and no kind can be mistaken for it. Absent
+    /// from the wire unless it is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quiet: Option<crate::tunnels::Quiet>,
 }
 
 impl SshError {
@@ -58,13 +67,28 @@ impl SshError {
         Self {
             kind,
             message: redact_secrets(&message.into()),
+            quiet: None,
         }
     }
 
     pub fn unknown(message: impl Into<String>) -> Self {
         Self::new(SshErrorKind::Unknown, message)
     }
+
+    /// Mark a failure quiet, keeping its kind and message. The witness is taken
+    /// by value and can only come from the book's `Verdict::Quiet`, so the flag
+    /// cannot be forged — the compiler, not a convention, is what keeps a
+    /// caller's own failure from reaching JS as one the UI ignores.
+    pub fn quiet(witness: crate::tunnels::Quiet, error: SshError) -> SshError {
+        Self {
+            quiet: Some(witness),
+            ..error
+        }
+    }
 }
+
+/// `quiet` is set from a witness, never from a flag a caller chose.
+const _: fn(crate::tunnels::Quiet, SshError) -> SshError = SshError::quiet;
 
 impl std::fmt::Display for SshError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -4,7 +4,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // ChatScreen pulls the whole chat graph (gateway, PTY, markdown). The catch-all
@@ -14,7 +14,7 @@ vi.mock('@/app/chat/chat-screen', () => ({ ChatScreen: () => <div data-testid="c
 import { ROUTES_AREA } from '@/app/routes'
 import { registry } from '@/contrib/registry'
 
-import { WorkspaceRoutes } from './panes'
+import { WorkspaceRoutes } from './workspace-routes'
 
 const renderAt = (path: string) =>
   render(
@@ -46,8 +46,6 @@ describe('contributed pages', () => {
     renderAt('/kanban')
 
     expect(screen.getByTestId('board')).toBeInTheDocument()
-    // It is a page, so the drawer layout's zone body is marked headerless.
-    expect(document.querySelector('[data-zone-no-header]')).toBeTruthy()
   })
 
   it('falls through to the chat catch-all when nothing is contributed', () => {

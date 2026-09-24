@@ -43,10 +43,12 @@ const { connectionRef, FakeSocket, mintWsTicket, speakText } = vi.hoisted(() => 
   }
 })
 
-// `apiRequestProfile` is reached through `@/store/voice-prefs`, which lib/tts
+// `getApiRequestProfile` is reached through `@/store/voice-prefs`, which lib/tts
 // imports for the output volume; the config read/write are never called here.
 vi.mock('@/hermes', () => ({
-  apiRequestProfile: () => null,
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getHermesConfigRecord: vi.fn(),
   saveHermesConfig: vi.fn(),
   speakText
@@ -57,7 +59,7 @@ vi.mock('@/lib/auth', () => ({ mintWsTicket }))
 vi.mock('@/store/connection', () => ({ $connection: { get: () => connectionRef.value } }))
 vi.mock('@/transport/terminal-socket', () => ({ TerminalSocket: FakeSocket }))
 
-import { $voiceOutputVolume, DEFAULT_VOICE_LEVELS } from '@/store/voice-prefs'
+import { $voiceOutputVolume, DEFAULT_VOICE_LEVELS } from '@/store/voice-levels'
 
 import { $ttsSpeaking, speakNow, speakUntilDone, stopSpeaking } from './tts'
 

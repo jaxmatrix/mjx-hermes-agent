@@ -4,8 +4,9 @@ import { Tip } from '@/components/ui/tooltip'
 import { PROFILE_SWATCHES } from '@/lib/profile-color'
 import { cn } from '@/lib/utils'
 
-// Curated codicons for a project glyph (tinted by the chosen color). Ported
-// verbatim from desktop `app/chat/sidebar/projects/project-appearance.tsx`.
+// Curated codicons for a project glyph (tinted by the chosen color). Shared by
+// the kebab's Appearance popover and the right-click menu's Appearance submenu
+// so both offer the same picker.
 export const PROJECT_ICONS = [
   'folder-library',
   'repo',
@@ -45,8 +46,8 @@ interface ProjectAppearancePickerProps {
   onIcon: (icon: null | string) => void
 }
 
-/** Color swatches + icon grid for a project's appearance — one component so
- *  every surface that offers the picker renders an identical one. */
+/** Color swatches + icon grid for a project's appearance — one component so the
+ *  kebab popover and the right-click submenu render an identical picker. */
 export function ProjectAppearancePicker({ color, icon, noColorLabel, onColor, onIcon }: ProjectAppearancePickerProps) {
   return (
     <>

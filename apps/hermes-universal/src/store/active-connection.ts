@@ -1,9 +1,8 @@
-import { setApiRequestProfile } from '@/hermes'
 import { backendScopeKey, connectionIdOf } from '@/lib/backend-scope'
 import { atom, batch, computed } from '@/store/atom'
 import { $connection } from '@/store/connection-atoms'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
-import { $gatewayMode } from '@/store/gateway-switch'
+import { $gatewayMode } from '@/store/gateway-mode'
 
 /**
  * WHICH SOURCE THE APP IS ON — published as ONE value, in ONE notification.
@@ -37,7 +36,11 @@ export interface ActiveConnection {
   /** The dialable descriptor. `token` is absent for a registered connection —
    *  Rust attaches it (MJXHRM-413). */
   connection: Connection
-  /** Normalized profile key (`'default'` when unset). */
+  /** Normalized profile key (`'default'` when unset): the profile this identity
+   *  was BUILT with — named, else last used on this source, else its row's own
+   *  (`resolveConnection`, store/connections). It is the one the primary socket
+   *  serves for the identity's life, which the bridge's `primaryProfile()` reads.
+   *  Not the rail's profile, which moves mid-life (`$activeGatewayProfile`). */
   profile: string
   /** Display label, so no surface has to join against the registry to paint a
    *  chip. */
@@ -139,6 +142,12 @@ export function describeConnection(
 /**
  * THE publication. The only writer of the identity half.
  *
+ * NOT the REST profile (`_apiProfile`, `api/client.ts`): that mirrors
+ * `$activeGatewayProfile`, and desktop's subscriber in `store/profile.ts` is its
+ * one owner. The fold moves it when the hook adopts the primary's profile after
+ * a switch; a mid-life republish (a rename, a tunnel's new base) must not pull
+ * it back to the profile the identity was built with.
+ *
  * `batch()` is nanostores 1.4.2's (pinned since Step 0 — 1.4.0/1.4.1 erased it
  * under Rollup), re-exported through `@/store/atom` like every other store
  * primitive.
@@ -151,16 +160,28 @@ export function publishActiveConnection(next: ActiveConnection | null): void {
 
     if (next) {
       $gatewayMode.set(next.connection.mode ?? next.kind)
-      // The REST scope moves WITH the identity, so no call can be made against
-      // the new base under the old source's profile.
-      //
-      // Only on a non-null publish, which is a deliberate narrowing of the
-      // design: a disconnect is not a profile change, and resetting the scope
-      // there would silently diverge from the persisted `$activeProfile` that
-      // `store/profiles.ts` owns and re-applies at module load.
-      setApiRequestProfile(next.profile === 'default' ? null : next.profile)
     }
   })
+}
+
+/**
+ * Boot is still choosing where this window launches (`restoreLaunchConnection`
+ * reads the registry from Rust, so it cannot finish before the first effects
+ * run). The bridge waits on this ahead of every answer, as it waits on the
+ * cookie jar, so the boot hook's first `getConnection()` sees the launch
+ * identity rather than the null before it.
+ */
+let launch: Promise<void> = Promise.resolve()
+
+export function holdForLaunch(pending: Promise<unknown>): void {
+  launch = pending.then(
+    () => {},
+    () => {}
+  )
+}
+
+export function launchSettled(): Promise<void> {
+  return launch
 }
 
 /**

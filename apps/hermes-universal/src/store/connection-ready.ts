@@ -2,7 +2,7 @@ import { computed } from '@/store/atom'
 
 import { $activeConnection } from './active-connection'
 import { $connection, $connectionPhase, $hasConnected } from './connection-atoms'
-import { $gatewayState } from './gateway'
+import { $gatewayState } from './gateway-client'
 import { $restoring } from './gateway-restore'
 import { $gatewaySwitching } from './gateway-switch'
 

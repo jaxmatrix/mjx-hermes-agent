@@ -6,9 +6,6 @@ interface SidebarPanelLabelProps extends React.ComponentProps<'span'> {
   dotClassName?: string
 }
 
-// Uppercase section label with a small dithered accent dot. Ported from desktop
-// `app/shell/sidebar-label.tsx`. The dot's `currentColor` resolves to the
-// label's `--theme-primary`.
 export function SidebarPanelLabel({ children, className, dotClassName, ...props }: SidebarPanelLabelProps) {
   return (
     <span

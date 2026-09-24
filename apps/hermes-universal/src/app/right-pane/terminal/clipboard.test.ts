@@ -1,56 +1,124 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { terminalClipboardIntent } from './clipboard'
+import { mirrorSelection, terminalClipboardIntent } from './clipboard'
 
-const keydown = (init: KeyboardEventInit & { key: string }) => new KeyboardEvent('keydown', init)
+afterEach(() => {
+  window.getSelection()?.removeAllRanges()
+  document.body.replaceChildren()
+})
 
-describe('terminalClipboardIntent — macOS', () => {
-  const mac = (hasSelection: boolean) => ({ hasSelection, isMac: true })
+const key = (init: Partial<KeyboardEvent> & { key: string }) =>
+  ({ altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, type: 'keydown', ...init }) as KeyboardEvent
 
-  it('⌘C copies a selection and falls through without one', () => {
-    expect(terminalClipboardIntent(keydown({ key: 'c', metaKey: true }), mac(true))).toBe('copy')
-    // ⌘ isn't a terminal modifier, so with nothing selected this is a no-op in
-    // the shell rather than a keystroke we swallowed.
-    expect(terminalClipboardIntent(keydown({ key: 'c', metaKey: true }), mac(false))).toBeNull()
+describe('terminalClipboardIntent', () => {
+  it('never claims a bare Ctrl+C with nothing selected, on either platform', () => {
+    for (const isMac of [true, false]) {
+      expect(terminalClipboardIntent(key({ ctrlKey: true, key: 'c' }), { hasSelection: false, isMac })).toBeNull()
+    }
   })
 
-  it('⌘V pastes regardless of selection', () => {
-    expect(terminalClipboardIntent(keydown({ key: 'v', metaKey: true }), mac(false))).toBe('paste')
+  it('copies on Ctrl+C when text is selected, so a selection is never lost to SIGINT', () => {
+    expect(terminalClipboardIntent(key({ ctrlKey: true, key: 'c' }), { hasSelection: true, isMac: false })).toBe('copy')
   })
 
-  it('leaves bare Ctrl+C as SIGINT', () => {
-    expect(terminalClipboardIntent(keydown({ key: 'c', ctrlKey: true }), mac(true))).toBeNull()
+  it('reserves plain Ctrl+C for the shell on macOS, where ⌘C is the copy chord', () => {
+    expect(terminalClipboardIntent(key({ ctrlKey: true, key: 'c' }), { hasSelection: true, isMac: true })).toBeNull()
+    expect(terminalClipboardIntent(key({ key: 'c', metaKey: true }), { hasSelection: true, isMac: true })).toBe('copy')
+  })
+
+  it('only claims copy when there is something to copy', () => {
+    expect(terminalClipboardIntent(key({ key: 'c', metaKey: true }), { hasSelection: false, isMac: true })).toBeNull()
+    expect(
+      terminalClipboardIntent(key({ ctrlKey: true, key: 'c', shiftKey: true }), { hasSelection: false, isMac: false })
+    ).toBeNull()
+  })
+
+  it('claims paste regardless of selection, since paste has nothing to do with one', () => {
+    expect(terminalClipboardIntent(key({ key: 'v', metaKey: true }), { hasSelection: false, isMac: true })).toBe(
+      'paste'
+    )
+    expect(
+      terminalClipboardIntent(key({ ctrlKey: true, key: 'v', shiftKey: true }), { hasSelection: false, isMac: false })
+    ).toBe('paste')
+  })
+
+  it('leaves shell chords alone: bare Ctrl+V, Alt combos, and keyup', () => {
+    expect(terminalClipboardIntent(key({ ctrlKey: true, key: 'v' }), { hasSelection: false, isMac: false })).toBeNull()
+    expect(
+      terminalClipboardIntent(key({ altKey: true, ctrlKey: true, key: 'c' }), { hasSelection: true, isMac: false })
+    ).toBeNull()
+    expect(
+      terminalClipboardIntent(key({ key: 'c', metaKey: true, type: 'keyup' }), { hasSelection: true, isMac: true })
+    ).toBeNull()
   })
 })
 
-describe('terminalClipboardIntent — Windows/Linux', () => {
-  const pc = (hasSelection: boolean) => ({ hasSelection, isMac: false })
+describe('mirrorSelection', () => {
+  const host = () => {
+    const el = document.createElement('div')
+    const textarea = document.createElement('textarea')
+    textarea.className = 'xterm-helper-textarea'
+    el.appendChild(textarea)
+    document.body.appendChild(el)
 
-  it('Ctrl+Shift+C/V are the explicit chords', () => {
-    expect(terminalClipboardIntent(keydown({ ctrlKey: true, key: 'c', shiftKey: true }), pc(true))).toBe('copy')
-    expect(terminalClipboardIntent(keydown({ ctrlKey: true, key: 'v', shiftKey: true }), pc(false))).toBe('paste')
+    return { el, textarea }
+  }
+
+  it('puts the selection where the OS copy command can find it while the terminal is focused', () => {
+    const { el, textarea } = host()
+    textarea.focus()
+    mirrorSelection(el, 'npm run check')
+
+    expect(textarea.value).toBe('npm run check')
+    expect(textarea.selectionStart).toBe(0)
+    expect(textarea.selectionEnd).toBe('npm run check'.length)
   })
 
-  it('bare Ctrl+C copies ONLY with a selection — otherwise it stays SIGINT', () => {
-    expect(terminalClipboardIntent(keydown({ ctrlKey: true, key: 'c' }), pc(true))).toBe('copy')
-    expect(terminalClipboardIntent(keydown({ ctrlKey: true, key: 'c' }), pc(false))).toBeNull()
+  it('keeps the text staged but does not steal the document selection when chat owns focus', () => {
+    const { el, textarea } = host()
+    const outside = document.createElement('textarea')
+    document.body.appendChild(outside)
+    outside.focus()
+
+    mirrorSelection(el, 'stale terminal scrap')
+
+    expect(textarea.value).toBe('stale terminal scrap')
+    // No `select()` — caret may sit at the end after the value write, but the
+    // range must stay collapsed so the OS copy command still sees chat text.
+    expect(textarea.selectionStart).toBe(textarea.selectionEnd)
+    expect(document.activeElement).toBe(outside)
   })
 
-  it('never claims ⌘ chords off-Mac', () => {
-    expect(terminalClipboardIntent(keydown({ key: 'c', metaKey: true }), pc(true))).toBeNull()
-  })
-})
+  it('does not clobber a live chat highlight even if the terminal still has focus', () => {
+    const { el, textarea } = host()
+    textarea.focus()
 
-describe('terminalClipboardIntent — guards', () => {
-  it('ignores keyup and anything with Alt held', () => {
-    expect(
-      terminalClipboardIntent(new KeyboardEvent('keyup', { key: 'c', metaKey: true }), {
-        hasSelection: true,
-        isMac: true
-      })
-    ).toBeNull()
-    expect(
-      terminalClipboardIntent(keydown({ altKey: true, key: 'c', metaKey: true }), { hasSelection: true, isMac: true })
-    ).toBeNull()
+    const outside = document.createElement('span')
+    outside.textContent = 'chat text'
+    document.body.appendChild(outside)
+    const range = document.createRange()
+    range.selectNodeContents(outside)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    mirrorSelection(el, 'terminal scrap')
+
+    expect(textarea.value).toBe('terminal scrap')
+    expect(textarea.selectionStart).toBe(textarea.selectionEnd)
+    expect(selection.toString()).toBe('chat text')
+  })
+
+  it('clears the mirror when the selection goes away', () => {
+    const { el, textarea } = host()
+    textarea.focus()
+    mirrorSelection(el, 'something')
+    mirrorSelection(el, '')
+
+    expect(textarea.value).toBe('')
+  })
+
+  it('is a no-op before xterm has mounted its textarea', () => {
+    expect(() => mirrorSelection(document.createElement('div'), 'text')).not.toThrow()
   })
 })

@@ -1,35 +1,104 @@
-import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useAuiState } from '@assistant-ui/react'
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 
+import {
+  chatSurfaceRoot,
+  clearSurfaceVar,
+  COMPOSER_HEIGHT_VAR,
+  COMPOSER_SURFACE_HEIGHT_VAR,
+  setSurfaceVar
+} from '@/app/chat/surface-vars'
 import { useResizeObserver } from '@/hooks/use-resize-observer'
-import { $composerPoppedOut } from '@/store/composer-popout'
-import { isSecondaryWindow } from '@/store/windows'
+
+import {
+  COMPOSER_COMPACT_PILL_PX,
+  COMPOSER_FOLD_VOICE_PX,
+  COMPOSER_MINIMAL_PX,
+  COMPOSER_SINGLE_LINE_MAX_PX,
+  COMPOSER_STACK_BREAKPOINT_PX
+} from '../composer-utils'
 
 interface UseComposerMetricsArgs {
+  composerDockRef: RefObject<HTMLDivElement | null>
   composerRef: RefObject<HTMLFormElement | null>
   composerSurfaceRef: RefObject<HTMLDivElement | null>
   editorRef: RefObject<HTMLDivElement | null>
   poppedOut: boolean
 }
 
+/** Every width-driven collapse stage, resolved from the composer's own width. */
+export interface ComposerFit {
+  compactPill: boolean
+  foldVoice: boolean
+  minimal: boolean
+  tight: boolean
+}
+
+const ROOMY: ComposerFit = { compactPill: false, foldVoice: false, minimal: false, tight: false }
+
+const fitForWidth = (width: number): ComposerFit => ({
+  compactPill: width < COMPOSER_COMPACT_PILL_PX,
+  foldVoice: width < COMPOSER_FOLD_VOICE_PX,
+  minimal: width < COMPOSER_MINIMAL_PX,
+  tight: width < COMPOSER_STACK_BREAKPOINT_PX
+})
+
+const sameFit = (a: ComposerFit, b: ComposerFit) =>
+  a.compactPill === b.compactPill && a.foldVoice === b.foldVoice && a.minimal === b.minimal && a.tight === b.tight
+
+interface UseComposerMetricsResult extends ComposerFit {
+  stacked: boolean
+}
+
 /**
- * Publishes the composer's measured height to the CSS vars the thread reads for
- * bottom clearance. All work is edge-gated: the ResizeObserver only fires on
- * real size changes, and the heights are 8px-bucketed so per-keystroke growth
- * never invalidates the tree's computed style.
- *
- * This hook used to ALSO own a layout decision — a width ladder
- * (`stacked` / `compactPill`) that put the controls on their own row below a
- * certain width and otherwise inlined them beside the input. That ladder is
- * gone: the composer is now two rows everywhere, so the same bar appears in the
- * chat screen, on a phone and in the HUD instead of three arrangements the
- * viewport picked between. See the grid in `index.tsx`.
+ * Owns the composer's *sizing* engine: the stacked-vs-inline layout decision
+ * and the measured-height CSS vars the thread reads for bottom clearance. All
+ * work is edge-gated — the ResizeObserver only fires on real size changes, the
+ * height vars are 8px-bucketed so per-keystroke growth never invalidates the
+ * tree's computed style, and the fit only re-renders when it crosses a stage.
  */
 export function useComposerMetrics({
+  composerDockRef,
   composerRef,
   composerSurfaceRef,
   editorRef,
   poppedOut
-}: UseComposerMetricsArgs): void {
+}: UseComposerMetricsArgs): UseComposerMetricsResult {
+  const [expanded, setExpanded] = useState(false)
+  const [fit, setFit] = useState<ComposerFit>(ROOMY)
+
+  // Edge signals, not the live text: these only re-render when emptiness / the
+  // presence of a non-trailing newline actually flips, so typing within a line
+  // costs nothing here.
+  const isEmpty = useAuiState(s => s.composer.text.length === 0)
+  const hasHardNewline = useAuiState(s => s.composer.text.trimEnd().includes('\n'))
+
+  // Expansion (input on its own full-width row, controls below) is driven by
+  // the editor's *actual* rendered height via the ResizeObserver in
+  // syncComposerMetrics — it only fires when the text genuinely wraps to a
+  // second line, so the layout flips exactly at the wrap point rather than at
+  // a guessed character count. We only handle the two cases the observer
+  // can't: an explicit newline (expand before layout settles) and an emptied
+  // draft (collapse back). We never read scrollHeight per keystroke.
+  useEffect(() => {
+    if (isEmpty) {
+      setExpanded(false)
+
+      return
+    }
+
+    if (expanded) {
+      return
+    }
+
+    // Only a non-trailing newline forces an immediate expand. A trailing newline
+    // (or phantom \n from contenteditable junk) is left to the ResizeObserver,
+    // which expands only when the editor's real height actually grows.
+    if (hasHardNewline) {
+      setExpanded(true)
+    }
+  }, [expanded, hasHardNewline, isEmpty])
+
   // Bucket measured heights so we only invalidate the global CSS var when
   // the size crosses a meaningful threshold. Without bucketing, the editor
   // grows ~1px per character → setProperty fires every keystroke → entire
@@ -39,90 +108,79 @@ export function useComposerMetrics({
   // until a wrap or row change actually happens.
   const lastBucketedHeightRef = useRef(0)
   const lastBucketedSurfaceHeightRef = useRef(0)
-  // The element the vars were last written to, so unmount clears the same one.
-  const hostRef = useRef<HTMLElement | null>(null)
-
-  // WHERE the measured vars live: this composer's OWN chat root, not the
-  // document. They used to go on `<html>`, which was fine while one chat was on
-  // screen and wrong the moment tiles arrived — every open chat ran this hook
-  // against the same two variables, so the last one to measure won and every
-  // other tile sized its transcript from a stranger's composer.
-  //
-  // `.chat` (styles.css) is where `--thread-viewport-height` is declared, so a
-  // value written here re-substitutes for this tile and inherits no further.
-  // Falling back to the document keeps the single-surface paths (mobile, a
-  // secondary window) behaving exactly as before.
-  const metricsHost = (composer: HTMLElement): HTMLElement =>
-    composer.closest<HTMLElement>('.chat') ?? document.documentElement
+  const lastFitRef = useRef(ROOMY)
+  // Mirrored into a ref so `syncComposerMetrics` stays referentially stable —
+  // it's the shared ResizeObserver's handler, and a new identity every render
+  // would re-register the observation.
+  const poppedOutRef = useRef(poppedOut)
+  poppedOutRef.current = poppedOut
 
   const syncComposerMetrics = useCallback(() => {
     const composer = composerRef.current
+    // The dock is the full docked footprint — strips, status stack, composer —
+    // so it, not the composer alone, is what the thread has to clear.
+    const dock = composerDockRef.current
 
-    if (!composer) {
+    if (!composer || !dock) {
       return
     }
 
-    hostRef.current = metricsHost(composer)
+    const { height } = dock.getBoundingClientRect()
+    const { width } = composer.getBoundingClientRect()
+    const surfaceHeight = composerSurfaceRef.current?.getBoundingClientRect().height
 
-    // Floating composer is out of the thread's flow — it must not reserve any
-    // bottom clearance. Zero the measured vars so the thread reclaims the space.
-    // (Read globals here so the callback stays stable; mirror the popoutAllowed
-    // gate since secondary windows are forced docked.)
-    if ($composerPoppedOut.get() && !isSecondaryWindow()) {
-      const root = hostRef.current ?? document.documentElement
+    if (width > 0) {
+      const nextFit = fitForWidth(width)
+
+      if (!sameFit(nextFit, lastFitRef.current)) {
+        lastFitRef.current = nextFit
+        setFit(nextFit)
+      }
+    }
+
+    // Expand once the input has actually wrapped past a single line. The
+    // observer only fires on real size changes, so this reads scrollHeight at
+    // most once per wrap (not per keystroke). One line ≈ 28px (1.625rem
+    // min-height + padding); a second line clears ~36px. We only ever expand
+    // here — collapse is handled by the emptied-draft effect to avoid
+    // oscillating across the wrap boundary as the input switches widths.
+    const editor = editorRef.current
+
+    if (editor && editor.scrollHeight > COMPOSER_SINGLE_LINE_MAX_PX) {
+      setExpanded(true)
+    }
+
+    // Floats still need their width-driven controls, but no pane reserves
+    // bottom clearance while the shared composer is detached.
+    if (poppedOutRef.current) {
       lastBucketedHeightRef.current = 0
       lastBucketedSurfaceHeightRef.current = 0
-      root.style.setProperty('--composer-measured-height', '0px')
-      root.style.setProperty('--composer-surface-measured-height', '0px')
+      setSurfaceVar(composer, COMPOSER_HEIGHT_VAR, '0px')
+      setSurfaceVar(composer, COMPOSER_SURFACE_HEIGHT_VAR, '0px')
 
       return
     }
 
-    const { height } = composer.getBoundingClientRect()
-    const surfaceHeight = composerSurfaceRef.current?.getBoundingClientRect().height
-    const root = hostRef.current ?? document.documentElement
-
     if (height > 0) {
-      const bucket = Math.ceil(height / 8) * 8
+      const bucket = Math.round(height / 8) * 8
 
       if (bucket !== lastBucketedHeightRef.current) {
         lastBucketedHeightRef.current = bucket
-        root.style.setProperty('--composer-measured-height', `${bucket}px`)
+        setSurfaceVar(composer, COMPOSER_HEIGHT_VAR, `${bucket}px`)
       }
     }
 
     if (surfaceHeight && surfaceHeight > 0) {
-      const bucket = Math.ceil(surfaceHeight / 8) * 8
+      const bucket = Math.round(surfaceHeight / 8) * 8
 
       if (bucket !== lastBucketedSurfaceHeightRef.current) {
         lastBucketedSurfaceHeightRef.current = bucket
-        root.style.setProperty('--composer-surface-measured-height', `${bucket}px`)
+        setSurfaceVar(composer, COMPOSER_SURFACE_HEIGHT_VAR, `${bucket}px`)
       }
     }
-  }, [composerRef, composerSurfaceRef])
+  }, [composerDockRef, composerRef, composerSurfaceRef, editorRef])
 
-  // MEASURE ONCE, SYNCHRONOUSLY, ON MOUNT — before the browser paints.
-  //
-  // The observer's first delivery is same-frame and pre-paint, but only for the
-  // frame the OBSERVER starts in, and the thread has already laid itself out
-  // against `--composer-fallback-height` by then. Any difference between the
-  // fallback and the real height is a shift the user sees on every chat open:
-  // the transcript renders, then jumps as the real number lands.
-  //
-  // A layout effect here reads a dirty layout and forces one reflow, which the
-  // shared observer's comment warns about at length — that warning is about
-  // MANY elements (a bubble each, a hundred of them on a session switch). This
-  // is ONE element, once per mount, and it buys an exact first paint. The
-  // fallback still exists for the frame before this runs and for surfaces that
-  // never mount a composer.
-  useLayoutEffect(() => {
-    syncComposerMetrics()
-  }, [syncComposerMetrics])
-
-  // `editorRef` is observed but never read: the editor growing a line is what
-  // changes the composer's height, and the observer is how that reaches the
-  // measurement above.
-  useResizeObserver(syncComposerMetrics, composerRef, composerSurfaceRef, editorRef)
+  useResizeObserver(syncComposerMetrics, composerDockRef, composerRef, composerSurfaceRef, editorRef)
 
   // Toggling pop-out changes whether the composer reserves thread clearance.
   // The ResizeObserver may not fire (the box can keep the same box size), so
@@ -132,16 +190,47 @@ export function useComposerMetrics({
     syncComposerMetrics()
   }, [poppedOut, syncComposerMetrics])
 
+   
   useEffect(() => {
-    return () => {
-      // The element we actually wrote to — by unmount the composer ref is
-      // already null, so clearing `.chat` by lookup would find nothing and
-      // leave a dead override behind on a kept-alive tile.
-      const root = hostRef.current
+    // Resolve the owning surface while the composer is still attached; the
+    // unmount cleanup runs after React detached the node, where closest() can
+    // no longer find [data-chat-surface].
+    const root = chatSurfaceRoot(composerRef.current)
 
-      root?.style.removeProperty('--composer-measured-height')
-      root?.style.removeProperty('--composer-surface-measured-height')
-      hostRef.current = null
+    return () => {
+      clearSurfaceVar(root, COMPOSER_HEIGHT_VAR)
+      clearSurfaceVar(root, COMPOSER_SURFACE_HEIGHT_VAR)
+      // The bucket refs mirror what is published, so clearing the vars must
+      // clear them too. This cleanup also runs on a non-final unmount (a
+      // StrictMode effect replay, a Suspense hide); the re-mount then
+      // re-measures the same dock, and with the refs still holding the old
+      // bucket the unchanged-skip check swallowed the republish. The thread
+      // fell back to the :root estimate (~62px) under a dock that could be
+      // 200px tall, and the status stack sat on top of the last turn until a
+      // real resize happened to fire.
+      lastBucketedHeightRef.current = 0
+      lastBucketedSurfaceHeightRef.current = 0
     }
-  }, [])
+  }, [composerRef])
+
+  // Every decision comes from the composer's OWN measured width, never the
+  // viewport's. There used to be a `(max-width: 30rem)` media query in here as
+  // well, and it quietly outranked everything: any window under 480px stacked
+  // the row AND compacted the pill in the same instant, regardless of how much
+  // room the composer actually had. That collapsed the whole progressive ladder
+  // into one step for small windows — HUD mode is ~470px, so it never saw the
+  // ladder at all — and it disagreed with the measured breakpoints (320 to
+  // stack) by 160px. The ResizeObserver knows the real width; the viewport is
+  // not a proxy for it.
+  //
+  // The ladder is monotonic: each stage implies the ones above it, so the pill
+  // is always compact by the time the row stacks, and the voice controls are
+  // always folded before minimal drops them.
+  return {
+    compactPill: fit.compactPill || fit.tight,
+    foldVoice: fit.foldVoice || fit.minimal,
+    minimal: fit.minimal,
+    stacked: expanded || fit.tight,
+    tight: fit.tight
+  }
 }

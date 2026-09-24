@@ -1,36 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as GatewayModule from '@/store/gateway'
+import type * as GatewayModule from '@/store/gateway-client'
 
-const { getHermesConfig, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
-  getHermesConfig: vi.fn(async () => ({}) as unknown),
-  // The client's own disk speaks for the gateway only when the backend was
-  // spawned here; that is the switch between the two discovery paths.
-  localRepoScanSupported: vi.fn(() => true),
-  // The return type is declared, not inferred: inferring it from this one
-  // literal pins the mock to `{active_id: null; projects: never[]}`, and every
-  // later mockImplementation returning a different RPC's shape then fails to
-  // typecheck (MJXHRM-474 / #269, fixed forward here).
-  requestGateway: vi.fn(async (_method: string, _params?: unknown): Promise<Record<string, unknown>> => ({
+const { gateway, getHermesConfig, isDesktopFsRemoteMode, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => {
+  const requestGateway = vi.fn(async (_method: string, _params?: unknown): Promise<Record<string, unknown>> => ({
     active_id: null,
     projects: []
-  })),
-  scanRepos: vi.fn(async () => [{ label: 'app', root: '/home/dev/app' }]),
-  // store/projects → store/session → store/profile → store/profiles, which syncs
-  // the REST scope at import time.
-  setApiRequestProfile: vi.fn()
-}))
+  }))
 
+  return {
+    gateway: { connectionState: 'open' as const, request: requestGateway },
+    getHermesConfig: vi.fn(async () => ({}) as unknown),
+    isDesktopFsRemoteMode: vi.fn(() => false),
+    localRepoScanSupported: vi.fn(() => true),
+    requestGateway,
+    scanRepos: vi.fn(async () => [{ label: 'app', root: '/home/dev/app' }]),
+    setApiRequestProfile: vi.fn()
+  }
+})
+
+vi.mock('@/store/gateway', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $gateway: atom(null),
+    activeGateway: () => gateway,
+    ensureActiveGatewayOpen: async () => gateway
+  }
+})
+
+vi.mock('@/lib/desktop-fs', () => ({ isDesktopFsRemoteMode }))
 vi.mock('@/lib/desktop-git', () => ({ desktopGit: vi.fn(() => ({ scanRepos })) }))
 vi.mock('@/store/repo-scan', () => ({ localRepoScanSupported, scanLocalGitRepos: vi.fn() }))
-vi.mock('@/hermes', () => ({ getHermesConfig, setApiRequestProfile }))
+vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ getHermesConfig, setApiRequestProfile }))
 // Partial mock: store/connection subscribes to `$gatewayState` at import time.
-vi.mock('@/store/gateway', async importOriginal => ({
+vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),
   requestGateway
 }))
 
 import { $connection } from '@/store/connection'
+import { $activeGatewayProfile } from '@/store/profile'
 
 import {
   $reposScanning,
@@ -42,6 +54,8 @@ import {
 const recordCalls = () => requestGateway.mock.calls.filter(([method]) => method === 'projects.record_repos')
 
 beforeEach(() => {
+  $activeGatewayProfile.set('default')
+  isDesktopFsRemoteMode.mockReturnValue(false)
   scanRepos.mockClear()
   requestGateway.mockClear()
   requestGateway.mockResolvedValue({ active_id: null, projects: [] })
@@ -97,6 +111,7 @@ describe('scanAndRecordRepos', () => {
         'projects.record_repos',
         {
           discovery_policy: { enabled: true, exclude_paths: [], roots: ['~/code'] },
+          profile: 'default',
           repos: [{ label: 'app', root: '/home/dev/app' }]
         }
       ]
@@ -177,6 +192,7 @@ describe('scanAndRecordRepos against a gateway that owns the disk', () => {
 
   beforeEach(() => {
     freshConnection()
+    isDesktopFsRemoteMode.mockReturnValue(true)
     localRepoScanSupported.mockReturnValue(false)
     requestGateway.mockImplementation(async (method: string) =>
       method === 'projects.discover_repos'
@@ -191,7 +207,7 @@ describe('scanAndRecordRepos against a gateway that owns the disk', () => {
   it('asks the gateway to scan its own roots instead of crawling or recording', async () => {
     await scanAndRecordRepos(true)
 
-    expect(discoverCalls()).toEqual([['projects.discover_repos', { scan: true }]])
+    expect(discoverCalls()).toEqual([['projects.discover_repos', { profile: 'default', scan: true }]])
     // Nothing local to crawl...
     expect(scanRepos).not.toHaveBeenCalled()
     // ...and nothing to record: the RPC wrote the gateway's own cache, so
@@ -229,24 +245,24 @@ describe('scanAndRecordRepos against a gateway that owns the disk', () => {
     expect(discoverCalls()).toHaveLength(2)
   })
 
-  it('scans once per connection unless forced, and again after a reconnect', async () => {
-    // The gateway reads its own policy and never tells us before scanning, so
-    // the memo is one sentinel per connection rather than a policy signature.
+  it('re-scans on every call — remote discovery has no client-side memo', async () => {
+    // The host walks its own disk; the client has no policy signature to key a
+    // memo on (unlike the local crawl path). force=true still exists for
+    // callers that want an explicit refresh, but an unforced second call is
+    // also a real RPC.
     await scanAndRecordRepos()
     await scanAndRecordRepos()
-
-    expect(discoverCalls()).toHaveLength(1)
-
-    await scanAndRecordRepos(true)
 
     expect(discoverCalls()).toHaveLength(2)
 
-    // A different gateway has a different disk and a different cache, so the
-    // memo must not carry across the reconnect.
+    await scanAndRecordRepos(true)
+
+    expect(discoverCalls()).toHaveLength(3)
+
     freshConnection()
 
     await scanAndRecordRepos()
 
-    expect(discoverCalls()).toHaveLength(3)
+    expect(discoverCalls()).toHaveLength(4)
   })
 })

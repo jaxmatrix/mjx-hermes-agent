@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -21,17 +21,9 @@ vi.mock('@/store/gateway', async () => {
 vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 
 import { routeGatewayEvent } from '@/store/event-router'
-import {
-  $changeEventsAvailable,
-  $cronChangeTick,
-  $pairingChangeTick,
-  $petChange,
-  $platformsChangeTick,
-  $pluginsChangeTick,
-  $sessionsChangeTick,
-  livePollIntervalMs,
-  resetLiveSync
-} from '@/store/live-sync'
+import { livePollIntervalMs } from '@/store/live-poll'
+import { $changeEventsAvailable, $cronChangeTick, $pairingChangeTick, $petChange, $platformsChangeTick, $sessionsChangeTick, resetLiveSync } from '@/store/live-sync'
+import { $pluginsChangeTick } from '@/store/live-sync-universal'
 
 const event = (type: string, payload?: unknown): GatewayEvent => ({ type, payload }) as GatewayEvent
 

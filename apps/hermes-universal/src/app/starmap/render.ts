@@ -293,7 +293,7 @@ export function drawScene(scene: Scene): DrawResult {
   // Per-ring "grow out" progress (advanced once per frame, reused by bands /
   // outlines / labels): a revealed ring eases its radius from its inner neighbor
   // outward to its resting radius, so it expands into place instead of popping.
-  const ringAppear = rings.map((_rg, i) =>
+  const ringAppear = rings.map((rg, i) =>
     ease(fadeAlpha(fades.appear, `ring:${i}`, ringSeen(i) ? 1 : 0, false, RING_BIRTH))
   )
 

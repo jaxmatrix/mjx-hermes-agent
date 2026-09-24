@@ -1,5 +1,4 @@
 import type { ChatMessage } from '@/lib/chat-messages'
-import { IS_MOBILE } from '@/lib/platform'
 import { messageStoreWeight } from '@/lib/render-weight'
 
 /**
@@ -23,31 +22,18 @@ import { messageStoreWeight } from '@/lib/render-weight'
  *
  * Two DOM pages (the `RENDER_BUDGET` of 600 in `thread/list.tsx`). "Show
  * earlier" spends the DOM budget first, so the user pages through the
- * already-materialized window before this asks the store for more — and a
- * transcript heavy enough to exhaust the heap is windowed rather than handed
- * to the repository whole.
- *
- * A THIRD of that on a phone, because the cost that matters there is not heap
- * but PAINT. Traced on an iPhone opening a long code-heavy chat: interactions
- * reported `presentationMs` of 230/225/224 against `processingMs` of 20 or
- * less — the main thread was barely working, the compositor was rasterising a
- * very large tree — and the transcript stalled for ~2.8s across 63 dropped
- * frames. Every later invalidation repaints whatever this materialised, so the
- * window size is the multiplier on all of them.
+ * already-materialized window once more before this asks the store for more
+ * — and the reported crash shape (~231K tokens ≈ 2,260 units) is windowed
+ * rather than handed to the repository whole.
  */
-export const TRANSCRIPT_WINDOW_BUDGET = IS_MOBILE ? 400 : 1200
+export const TRANSCRIPT_WINDOW_BUDGET = 1200
 
 /**
  * Floor on messages kept regardless of weight. A transcript of enormous turns
  * must still render the turn the user is having; without this a single
  * multi-megabyte tool result could window everything after it away.
- *
- * Lower on a phone for the same reason as the budget, and because ten messages
- * already fill a phone screen several times over — the floor is there to keep
- * the CURRENT turn renderable, not to fill scrollback. "Show earlier" is what
- * reaches the rest.
  */
-export const TRANSCRIPT_WINDOW_MIN_MESSAGES = IS_MOBILE ? 10 : 30
+export const TRANSCRIPT_WINDOW_MIN_MESSAGES = 30
 
 export interface TranscriptWindow {
   /** The tail assistant-ui is allowed to materialize. */
@@ -57,11 +43,39 @@ export interface TranscriptWindow {
 }
 
 /**
+ * Widen a cut backwards so it never lands inside an assistant branch group.
+ *
+ * `useRuntimeMessageRepository` records a group's fork point the first time it
+ * sees the group (`branchParentByGroup`). A cut through the middle of a group
+ * therefore anchors the surviving branches to whatever message happens to
+ * precede them in the window — silently re-parenting a branch. Include the
+ * whole group or none of it.
+ */
+export function alignToBranchGroup(messages: readonly ChatMessage[], start: number): number {
+  if (start <= 0 || start >= messages.length) {
+    return Math.max(0, Math.min(start, messages.length))
+  }
+
+  const group = messages[start].branchGroupId
+
+  if (!group) {
+    return start
+  }
+
+  let aligned = start
+
+  while (aligned > 0 && messages[aligned - 1].branchGroupId === group) {
+    aligned--
+  }
+
+  return aligned
+}
+
+/**
  * Select the tail of the transcript that fits one window, grown by `pages`.
  *
- * Walks newest-first accumulating weight until the budget is met, keeping at
- * least MIN messages. (Desktop additionally aligns the cut off a branch-group
- * boundary; universal's transcript has no branch groups to cut through.)
+ * Walks newest-first accumulating weight until the budget is met, keeps at
+ * least MIN messages, then aligns the cut off a branch-group boundary.
  */
 export function selectTranscriptWindow(messages: readonly ChatMessage[], pages = 1): TranscriptWindow {
   const budget = TRANSCRIPT_WINDOW_BUDGET * Math.max(1, Math.floor(pages))
@@ -81,6 +95,8 @@ export function selectTranscriptWindow(messages: readonly ChatMessage[], pages =
       break
     }
   }
+
+  start = alignToBranchGroup(messages, start)
 
   if (start <= 0) {
     // Preserve reference identity when the whole transcript fits: handing React
@@ -111,20 +127,16 @@ export interface TranscriptWindowState {
  * A fresh weight-walk per store flush moves the cut forward as the streaming
  * tail grows — one message at a time, ~30x/s. Every slide re-indexes the whole
  * windowed transcript: each row of the thread now renders a DIFFERENT message
- * (full markdown re-parse + re-highlight per row, a fresh `resetKey` for every
- * error boundary) and assistant-ui's message repository takes its O(window)
- * rebuild path instead of the one-message update. That — not the transcript's
- * size — is the long-session collapse: below the budget the window is
- * pass-through and streaming is O(1); the flush the transcript outgrew it,
- * every token cost a whole-window re-render. A budget meant to protect long
- * sessions made them slower at exactly the length it engaged.
+ * (full markdown re-parse + re-highlight per row) and the runtime repository
+ * takes its O(window) rebuild path instead of the one-message update. That —
+ * not the transcript's size — was the long-session collapse: below the budget
+ * the window is pass-through and streaming is O(1); the flush the transcript
+ * outgrew it, every token cost a whole-window re-render.
  *
  * So the cut is anchored to a message id and holds while the tail stays within
  * budget + slack. Streaming then costs a re-cut once per ~half page of content.
  * The anchor vanishing (session swap, compression rewrite) or a pages change
  * ("Show earlier") falls through to a fresh walk.
- *
- * Ported from desktop (upstream `920beecfa8`).
  */
 export function advanceTranscriptWindow(
   prev: null | TranscriptWindowState,
@@ -144,14 +156,9 @@ export function advanceTranscriptWindow(
       }
 
       if (weight <= budget + TRANSCRIPT_WINDOW_SLACK) {
-        // An anchored cut that has drifted back to index 0 means the messages
-        // before it are GONE (a compaction rewrote the history), so there is
-        // nothing earlier to page to and `windowed` is false — desktop reports
-        // true here and offers a "Show earlier" that resolves to the same
-        // transcript. Reference identity is preserved either way.
         const window: TranscriptWindow =
           start === 0
-            ? { messages: messages as ChatMessage[], windowed: false }
+            ? { messages: messages as ChatMessage[], windowed: prev.anchorId !== null }
             : { messages: messages.slice(start), windowed: true }
 
         return { anchorId: prev.anchorId, pages, window }
@@ -162,4 +169,78 @@ export function advanceTranscriptWindow(
   const window = selectTranscriptWindow(messages, pages)
 
   return { anchorId: window.windowed ? window.messages[0].id : null, pages, window }
+}
+
+/** How many sessions keep a sticky window before the oldest is evicted. */
+export const MAX_SESSION_WINDOWS = 12
+
+/**
+ * A window state plus a weak identity reference to the exact source array it
+ * was computed from. While the session store still owns that array, a warm
+ * switch can reuse the exact `window.messages` slice and avoid rebuilding the
+ * runtime. Once cold-session cleanup releases the store transcript, this memo
+ * must not become an independent strong owner of every old tool result; the
+ * bounded window slice in `state` is the only payload intentionally retained.
+ */
+export interface SessionWindowMemo {
+  messages: WeakRef<readonly ChatMessage[]>
+  state: TranscriptWindowState
+}
+
+/**
+ * `advanceTranscriptWindow` with a STICKY cut that survives session switches.
+ *
+ * The previous single-slot state was nulled on every switch, so a warm
+ * re-entry always re-ran the weight walk and rebuilt the windowed slice —
+ * which re-indexed the whole windowed transcript (markdown re-parse +
+ * re-highlight per row) even though nothing had changed. This keeps one memo
+ * per windowed session:
+ *
+ * - Re-entering a session with the same live transcript array returns the
+ *   cached windowed slice BY REFERENCE — the runtime repository and every
+ *   message row stay mounted, so the switch is O(1).
+ * - Re-entering with a changed transcript keeps the sticky cut (anchor still
+ *   present, tail within budget + slack) instead of re-walking from scratch.
+ * - The anchor vanishing (compression rewrite) or a pages change falls
+ *   through to `advanceTranscriptWindow`'s existing fresh-walk behaviour.
+ * - An unwindowed result is the source array itself, so caching it adds no
+ *   identity benefit and would make `state.window.messages` a second strong
+ *   owner of the complete transcript. Pass-through sessions are not memoized.
+ *
+ * The map is bounded (oldest session evicted) and source arrays are weakly held,
+ * so cold-session cleanup can release the full transcript independently.
+ */
+export function advanceSessionTranscriptWindow(
+  memos: Map<string, SessionWindowMemo>,
+  sessionKey: string,
+  messages: readonly ChatMessage[],
+  pages = 1
+): TranscriptWindowState {
+  const memo = memos.get(sessionKey)
+
+  // Warm re-visit with the identical live transcript and page count: reuse the
+  // cached state wholesale, preserving the windowed slice reference.
+  if (memo && memo.messages.deref() === messages && memo.state.pages === pages) {
+    return memo.state
+  }
+
+  const state = advanceTranscriptWindow(memo?.state ?? null, messages, pages)
+
+  if (!state.window.windowed) {
+    // The pass-through state already returns `messages` itself. Keeping it in
+    // the component-local map would pin the complete source array after the
+    // session store intentionally releases a cold transcript.
+    memos.delete(sessionKey)
+
+    return state
+  }
+
+  memos.set(sessionKey, { messages: new WeakRef(messages), state })
+
+  if (memos.size > MAX_SESSION_WINDOWS) {
+    const oldest = memos.keys().next().value as string
+    memos.delete(oldest)
+  }
+
+  return state
 }

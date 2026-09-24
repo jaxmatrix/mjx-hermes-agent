@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 
+import { useSessionSlice } from '@/lib/use-session-slice'
 import { setComposerActions } from '@/store/composer-actions'
+import { $todosBySession } from '@/store/todos'
 
 import { type ComposerMicroActionContext, useComposerMicroActionProviders } from '../contrib'
 
@@ -14,12 +16,9 @@ import { type ComposerMicroActionContext, useComposerMicroActionProviders } from
  * ordering games between registrars and a provider that stops returning a
  * badge withdraws it. One that throws is skipped, so a broken plugin loses
  * only its own badge.
- *
- * Desktop also feeds `todos` into the context from `$todosBySession`. Universal
- * has no todo feed, so the field is absent from the context type entirely (see
- * `contrib.ts`) — one line here and one there when the feed lands.
  */
 export function useComposerMicroActions(sessionId: null | string, busy: boolean) {
+  const todos = useSessionSlice($todosBySession, sessionId)
   const providers = useComposerMicroActionProviders()
 
   useEffect(() => {
@@ -27,7 +26,7 @@ export function useComposerMicroActions(sessionId: null | string, busy: boolean)
       return
     }
 
-    const ctx: ComposerMicroActionContext = { busy, sessionId }
+    const ctx: ComposerMicroActionContext = { busy, sessionId, todos }
 
     setComposerActions(
       sessionId,
@@ -39,7 +38,7 @@ export function useComposerMicroActions(sessionId: null | string, busy: boolean)
         }
       })
     )
-  }, [busy, providers, sessionId])
+  }, [busy, providers, sessionId, todos])
 
   // Withdraw on unmount / session switch ONLY. Clearing in the resolve effect's
   // cleanup would publish an empty set before every republish — two store

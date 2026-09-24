@@ -25,9 +25,10 @@ import { $activeTreeGroup, $layoutTree, noteActiveTreeGroup } from '@/components
 import { DRAFT_TILE_KEY, isChatPaneId, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
 import { navigateTo } from '@/lib/route-nav'
 import { $currentCwd } from '@/store/chat'
-import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
-import { $activeStoredSessionId } from '@/store/session'
-import { $sessionTiles } from '@/store/session-states'
+import { $projectScope, $projectTree } from '@/store/project-scope'
+import { ALL_PROJECTS } from '@/store/projects'
+import { $sessionKeyTabs } from '@/store/session-key-states'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 
 import { startNewSession, startNewSessionTab } from './new-session'
 
@@ -82,7 +83,7 @@ const chatZone = (): { active?: string; panes: string[] } => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  $sessionTiles.set([])
+  $sessionKeyTabs.set([])
   $activeStoredSessionId.set(null)
   $projectScope.set(ALL_PROJECTS)
   $projectTree.set([])
@@ -111,7 +112,7 @@ describe('startNewSession', () => {
   it('leaves the caret in main even with nothing to park', () => {
     startNewSession()
 
-    expect($sessionTiles.get()).toEqual([])
+    expect($sessionKeyTabs.get()).toEqual([])
     expect($activeStoredSessionId.get()).toBeNull()
     expect(requestComposerFocus).toHaveBeenCalledWith('main')
   })
@@ -140,7 +141,7 @@ describe('startNewSessionTab', () => {
   it('opens the new chat as a tile and leaves the open one alone', () => {
     startNewSessionTab()
 
-    expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual([DRAFT_TILE_KEY])
+    expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toEqual([DRAFT_TILE_KEY])
     expect($activeStoredSessionId.get()).toBeNull()
   })
 
@@ -178,7 +179,7 @@ describe('startNewSessionTab', () => {
     let tilesWhenFocused: string[] = []
 
     vi.mocked(requestComposerFocus).mockImplementation(() => {
-      tilesWhenFocused = $sessionTiles.get().map(t => t.storedSessionId ?? '')
+      tilesWhenFocused = $sessionKeyTabs.get().map(t => t.storedSessionId ?? '')
     })
 
     startNewSessionTab()

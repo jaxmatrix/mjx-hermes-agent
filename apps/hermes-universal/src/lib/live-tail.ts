@@ -21,8 +21,8 @@
  * than being re-derived at each call site.
  */
 
-import { type ChatMessage, chatMessageText } from '@/lib/chat-messages'
 import { embeddedImageUrls, textWithoutEmbeddedImages } from '@/lib/embedded-images'
+import { type ChatMessage, chatMessageText } from '@/lib/session-key-messages'
 
 /**
  * A row carrying content the gateway's flat snapshot CANNOT express.

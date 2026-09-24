@@ -1,18 +1,7 @@
-import type { LayoutNode, Orientation } from '../model'
+import type { LayoutNode } from '../model'
 
 import { TreeGroup } from './tree-group'
 import { TreeSplit } from './tree-split'
-
-/** Inside a CASCADING FOLD (a split whose every visible zone is minimized, so
- *  the split itself renders as one strip): the descendants must pick their
- *  strip form from the OUTER fold axis, not their literal parent orientation —
- *  a column folded inside a row is a vertical rail, however its own children
- *  are stacked. `railSide` is the folded stack's side of that row, inherited by
- *  every zone in it so their divider strokes agree. */
-export interface FoldContext {
-  axis: Orientation
-  railSide?: 'left' | 'right'
-}
 
 /** Dispatch a layout node to its renderer — the split/group recursion point.
  *  `root` marks the tree's top split (side collapse applies only there).
@@ -24,23 +13,34 @@ export interface FoldContext {
  *  column → horizontal header). `railSide` is which half of that row the
  *  child sits in — the rail's divider stroke faces the content side. */
 export function TreeNode({
-  folded,
   node,
   parentAxis,
   railSide,
   root,
-  rootRow
+  rootRow,
+  topEdge = false,
+  leftEdge = false,
+  rightEdge = false
 }: {
-  folded?: FoldContext
   node: LayoutNode
   parentAxis?: 'column' | 'row'
   railSide?: 'left' | 'right'
   root?: boolean
   rootRow?: boolean
+  topEdge?: boolean
+  leftEdge?: boolean
+  rightEdge?: boolean
 }) {
   return node.type === 'split' ? (
-    <TreeSplit folded={folded} node={node} root={root} rootRow={rootRow} />
+    <TreeSplit leftEdge={leftEdge} node={node} rightEdge={rightEdge} root={root} rootRow={rootRow} topEdge={topEdge} />
   ) : (
-    <TreeGroup foldAxis={folded?.axis} node={node} parentAxis={parentAxis} railSide={folded?.railSide ?? railSide} />
+    <TreeGroup
+      leftEdge={leftEdge}
+      node={node}
+      parentAxis={parentAxis}
+      railSide={railSide}
+      rightEdge={rightEdge}
+      topEdge={topEdge}
+    />
   )
 }

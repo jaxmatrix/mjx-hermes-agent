@@ -1,12 +1,29 @@
-import type { ComponentType, Dispatch, SetStateAction } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 
+import type { HermesGateway } from '@/hermes'
+import type { IconComponent } from '@/lib/icons'
 import type { EnvVarInfo } from '@/types/hermes'
 
-// Ported (trimmed) from apps/desktop/src/app/settings/types.ts. The desktop
-// overlay-only `SettingsPageProps`/`HermesGateway` bits are dropped; the icon is
-// typed structurally instead of via the desktop `IconComponent` alias.
-
+export type SettingsView =
+  | 'about'
+  | 'billing'
+  | 'connections'
+  | 'gateway'
+  | 'keybinds'
+  | 'keys'
+  | 'notifications'
+  | 'providers'
+  | 'sessions'
+  | 'vault'
+  | `config:${string}`
 export type EnvPatch = Partial<Pick<EnvVarInfo, 'is_set' | 'redacted_value'>>
+
+export interface SettingsPageProps {
+  gateway?: HermesGateway | null
+  onClose: () => void
+  onConfigSaved?: () => void
+  onMainModelChanged?: (provider: string, model: string) => void
+}
 
 export interface ProviderGroup {
   name: string
@@ -18,7 +35,7 @@ export interface ProviderGroup {
 export interface DesktopConfigSection {
   id: string
   label: string
-  icon: ComponentType<{ className?: string }>
+  icon: IconComponent
   keys: string[]
 }
 

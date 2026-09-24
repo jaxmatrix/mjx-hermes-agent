@@ -1,128 +1,129 @@
 import { computed, type ReadableAtom } from 'nanostores'
 import { createContext, useContext } from 'react'
 
+import { $primaryBusy } from '@/app/chat/primary-session-busy'
+import type { ClientSessionState } from '@/app/types'
+import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage as LegacyChatMessage } from '@/lib/session-key-messages'
+import { $statusLine } from '@/store/chat'
 import {
+  $activeSessionId,
   $awaitingResponse,
-  $busy,
   $currentCwd,
-  $lastVisibleMessageIsUser,
+  $currentFastMode,
+  $currentModel,
+  $currentProvider,
+  $currentReasoningEffort,
+  $currentReasoningEffortWire,
   $messages,
-  $messagesEmpty,
-  $paintedMessages,
-  $paintedMessagesEmpty,
-  $statusLine,
-  type ChatMessage
-} from '@/store/chat'
-import { $currentFastMode, $currentModel, $currentProvider, $currentReasoningEffort } from '@/store/model'
-import { $activeStoredSessionId, type BranchSource } from '@/store/session'
-import { $activeSessionKey, $sessionStates, type ClientSessionState, isDraftKey } from '@/store/session-state-types'
+  $selectedStoredSessionId,
+  $turnStartedAt
+} from '@/store/session'
+import type { BranchSource } from '@/store/session-lifecycle'
+import { $sessionStates } from '@/store/session-states'
+
+import { lastVisibleMessageIsUser } from './thread-loading'
 
 /**
- * The store-surface a `ChatScreen` renders from — every field is a
- * `ReadableAtom`, so subscription granularity survives (a tile's token stream
- * never re-renders another). Both views read the SAME map: the primary view is
- * the slice `$activeSessionKey` names, a TILE view (`buildTileView` in
- * session-tile.tsx) is the slice its stored id resolves to. ChatScreen reads
- * only from `useSessionView()`, so one component tree serves N sessions.
+ * SESSION VIEW — the store surface a ChatView renders from. Every session,
+ * including the one in the workspace pane, renders from ITS OWN slice of
+ * `$sessionStates`. The workspace pane is just the first tab: a session
+ * surface with no privileged state of its own.
  *
- * Ported from desktop `app/chat/session-view.tsx`.
+ * That symmetry is load-bearing. The pane used to render off the global
+ * `$messages`/`$busy` atoms — a mirror of whichever session was active — so
+ * with two turns in flight (⌘T tabs made that routine), navigating away from
+ * a still-streaming session left it painting into the surface now showing a
+ * different conversation. Reading the per-session slice makes that
+ * structurally impossible rather than merely guarded.
+ *
+ * The global atoms stay the DRAFT surface: a new chat has no runtime id, and
+ * therefore no slice, until its first turn creates one.
+ *
+ * Everything is atoms (not values) so subscription granularity survives:
+ * ChatView subscribes only to the coarse edges; `$messages` stays boundary-
+ * only exactly like the primary view's perf contract.
  */
 export interface SessionView {
   kind: 'primary' | 'tile'
   $runtimeId: ReadableAtom<string | null>
   $storedId: ReadableAtom<string | null>
   $messages: ReadableAtom<ChatMessage[]>
-  /**
-   * The transcript AS PIXELS — `$messages`, or the cached tail the paint lane is
-   * holding while the slice has none (MJXHRM-480). Read by ONE consumer,
-   * `app/chat/runtime.tsx`.
-   *
-   * `$messages` is knowledge, `$paintedMessages` is pixels: anything that
-   * reconciles, journals, narrates, branches or submits reads `$messages`.
-   */
+  /** Paint-lane transcript; equals `$messages` when no cached tail is active. */
   $paintedMessages: ReadableAtom<ChatMessage[]>
-  $paintedMessagesEmpty: ReadableAtom<boolean>
   $busy: ReadableAtom<boolean>
   $awaitingResponse: ReadableAtom<boolean>
   $messagesEmpty: ReadableAtom<boolean>
   $lastVisibleIsUser: ReadableAtom<boolean>
-  $statusLine: ReadableAtom<string>
+  /** Epoch ms this surface's current turn began, null when idle. Per-surface
+   *  for the same reason $busy is: a tile's activity timer must count its own
+   *  turn, not whichever session the global mirror last reflected. */
+  $turnStartedAt: ReadableAtom<number | null>
   $cwd: ReadableAtom<string>
   $model: ReadableAtom<string>
   $provider: ReadableAtom<string>
   $fast: ReadableAtom<boolean>
   $reasoningEffort: ReadableAtom<string>
+  /** Gateway-reported level the route sends for `$reasoningEffort` ('' = unknown). */
+  $reasoningEffortWire: ReadableAtom<string>
+  /** Mid-turn status text while busy (primary session state only). */
+  $statusLine?: ReadableAtom<string>
 }
 
-/**
- * The view for the session on screen.
- *
- * `$runtimeId` is the session KEY, not `$sessionId` (the wire-facing runtime id,
- * which is null on a draft). Everything keyed off this view — per-session
- * composer scope, blocking-prompt bars, awaiting-input state — needs a handle
- * that a brand-new chat also has, and the key is that handle.
- *
- * Model/provider/fast/effort come from the active session's OWN slice once it is
- * live — that is where `session.info` lands (store/session-reducer) — and from
- * the model store's sticky globals only while the chat is still a draft. Reading
- * the globals for a live chat is how the pill named the last pick (or a
- * localStorage leftover) instead of the model the session was running, and
- * disagreed with the dropdown's gateway-authoritative checkmark. Desktop's
- * `primaryField` draws the same line; universal gates on the draft KEY because a
- * draft has a slice here, just an empty one.
- */
-const $primaryLive = computed([$activeSessionKey, $sessionStates], (key, states) =>
-  key && !isDraftKey(key) ? states[key] : undefined
+/** The active session's own slice, or `undefined` while it's a draft. */
+const $primaryState = computed([$activeSessionId, $sessionStates], (runtimeId, states) =>
+  runtimeId ? states[runtimeId] : undefined
 )
 
+/**
+ * Read one field from the active session's slice, falling back to the global
+ * draft atom while no runtime exists yet. Once a session HAS a slice, that
+ * slice is authoritative — a background session publishing its own state can
+ * never reach this view.
+ */
 function primaryField<T>(select: (state: ClientSessionState) => T, $draft: ReadableAtom<T>): ReadableAtom<T> {
-  return computed([$primaryLive, $draft], (live, draft) => (live ? select(live) : draft))
+  const $field: ReadableAtom<T> = computed([$primaryState, $draft], (state, draft: T) =>
+    state ? select(state) : draft
+  )
+
+  return $field
 }
+
+const $primaryMessages = primaryField<ChatMessage[]>(state => state.messages, $messages)
 
 export const PRIMARY_SESSION_VIEW: SessionView = {
   kind: 'primary',
-  $runtimeId: $activeSessionKey,
-  $storedId: $activeStoredSessionId,
-  $messages,
-  $paintedMessages,
-  $paintedMessagesEmpty,
-  $busy,
-  $awaitingResponse,
-  $messagesEmpty,
-  $lastVisibleIsUser: $lastVisibleMessageIsUser,
-  $statusLine,
-  $cwd: $currentCwd,
-  $model: primaryField(state => state.model, $currentModel),
-  $provider: primaryField(state => state.provider, $currentProvider),
-  $fast: primaryField(state => state.fast, $currentFastMode),
-  $reasoningEffort: primaryField(state => state.reasoningEffort, $currentReasoningEffort)
-}
-
-/**
- * The view, as the branch path wants it — a snapshot read at action time.
- *
- * `$runtimeId` is the slice KEY; `session.create`'s parent link and the "is
- * there anything to branch" refusal both want the WIRE id, which a draft — and
- * a slice still hydrating under a placeholder key — does not have. Resolved
- * exactly as `use-slash-command`'s `targetSessionId` resolves it, so the two
- * agree about when a surface has a session at all.
- */
-export function branchSourceOf(view: SessionView): BranchSource {
-  const key = view.$runtimeId.get()
-
-  return {
-    busy: view.$busy.get(),
-    cwd: view.$cwd.get(),
-    messages: view.$messages.get(),
-    runtimeId: (key && $sessionStates.get()[key]?.runtimeSessionId) || null,
-    storedId: view.$storedId.get()
-  }
+  $awaitingResponse: primaryField<boolean>(state => state.awaitingResponse, $awaitingResponse),
+  $busy: $primaryBusy,
+  $cwd: primaryField<string>(state => state.cwd, $currentCwd),
+  $fast: primaryField<boolean>(state => state.fast, $currentFastMode),
+  $lastVisibleIsUser: computed($primaryMessages, lastVisibleMessageIsUser),
+  $messages: $primaryMessages,
+  $paintedMessages: $primaryMessages,
+  $messagesEmpty: computed($primaryMessages, messages => messages.length === 0),
+  $model: primaryField<string>(state => state.model, $currentModel),
+  $provider: primaryField<string>(state => state.provider, $currentProvider),
+  $reasoningEffort: primaryField<string>(state => state.reasoningEffort, $currentReasoningEffort),
+  $reasoningEffortWire: primaryField<string>(state => state.reasoningEffortWire ?? '', $currentReasoningEffortWire),
+  $runtimeId: $activeSessionId,
+  $storedId: $selectedStoredSessionId,
+  $statusLine: primaryField<string>(state => state.statusLine, $statusLine),
+  $turnStartedAt: primaryField<number | null>(state => state.turnStartedAt, $turnStartedAt)
 }
 
 const SessionViewContext = createContext<SessionView>(PRIMARY_SESSION_VIEW)
 
 export const SessionViewProvider = SessionViewContext.Provider
 
-export function useSessionView(): SessionView {
-  return useContext(SessionViewContext)
+export const useSessionView = (): SessionView => useContext(SessionViewContext)
+
+/** Branch source for a specific chat surface (tile/mobile bubble), not the foreground atoms. */
+export function branchSourceOf(view: SessionView): BranchSource {
+  return {
+    busy: view.$busy.get(),
+    cwd: view.$cwd.get(),
+    messages: view.$messages.get() as LegacyChatMessage[],
+    runtimeId: view.$runtimeId.get(),
+    storedId: view.$storedId.get()
+  }
 }

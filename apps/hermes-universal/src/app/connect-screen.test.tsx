@@ -45,7 +45,7 @@ async function renderAtPicker() {
 
   const view = renderScreen()
 
-  await screen.findByText('Choose a gateway')
+  await screen.findByText('Connect to Hermes')
 
   return view
 }
@@ -63,7 +63,7 @@ describe('the welcome step', () => {
     renderScreen()
 
     expect(await screen.findByText('Welcome to Hermes')).toBeInTheDocument()
-    expect(screen.queryByText('Choose a gateway')).not.toBeInTheDocument()
+    expect(screen.queryByText('Connect to Hermes')).not.toBeInTheDocument()
     expect(screen.queryByText('Hermes Cloud')).not.toBeInTheDocument()
   })
 
@@ -79,9 +79,9 @@ describe('the welcome step', () => {
     mockGet.mockResolvedValue(false)
     renderScreen()
 
-    fireEvent.click(await screen.findByRole('button', { name: "Let's get started" }))
+    fireEvent.click(await screen.findByRole('button', { name: "Get started" }))
 
-    expect(await screen.findByText('Choose a gateway')).toBeInTheDocument()
+    expect(await screen.findByText('Connect to Hermes')).toBeInTheDocument()
     expect(mockSet).toHaveBeenCalledWith('connectWelcomed', true)
   })
 
@@ -90,10 +90,10 @@ describe('the welcome step', () => {
     mockSet.mockRejectedValue(new Error('disk full'))
     renderScreen()
 
-    fireEvent.click(await screen.findByRole('button', { name: "Let's get started" }))
+    fireEvent.click(await screen.findByRole('button', { name: "Get started" }))
 
     // Showing the welcome twice is a cheaper failure than a dead button.
-    expect(await screen.findByText('Choose a gateway')).toBeInTheDocument()
+    expect(await screen.findByText('Connect to Hermes')).toBeInTheDocument()
   })
 
   it('is skipped for a returning user — with no flash while the flag resolves', async () => {
@@ -111,11 +111,11 @@ describe('the welcome step', () => {
     // yanked away. Defaulting the state to 'welcome' would pass every other test
     // in this file and still flash the screen at every returning user.
     expect(screen.queryByText('Welcome to Hermes')).not.toBeInTheDocument()
-    expect(screen.queryByText('Choose a gateway')).not.toBeInTheDocument()
+    expect(screen.queryByText('Connect to Hermes')).not.toBeInTheDocument()
 
     resolveFlag(true)
 
-    expect(await screen.findByText('Choose a gateway')).toBeInTheDocument()
+    expect(await screen.findByText('Connect to Hermes')).toBeInTheDocument()
     expect(screen.queryByText('Welcome to Hermes')).not.toBeInTheDocument()
   })
 })
@@ -126,7 +126,7 @@ describe('the gateway picker step', () => {
 
     expect(screen.getByText('Hermes Cloud')).toBeInTheDocument()
     expect(screen.getByText('Remote gateway')).toBeInTheDocument()
-    expect(screen.getByText('SSH')).toBeInTheDocument()
+    expect(screen.getByText('Connect via SSH')).toBeInTheDocument()
     // Nothing is configured until a gateway is picked.
     expect(screen.queryByRole('button', { name: 'Save and reconnect' })).not.toBeInTheDocument()
   })
@@ -157,7 +157,7 @@ describe('the configure step', () => {
     fireEvent.click(pickGateway('Remote gateway'))
 
     // The picker is gone and the remote surface is up.
-    expect(screen.queryByText('Choose a gateway')).not.toBeInTheDocument()
+    expect(screen.queryByText('Connect to Hermes')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save and reconnect' })).toBeInTheDocument()
     // SSH's fields belong to a gateway that was not picked.
     expect(screen.queryByText('Private key file')).not.toBeInTheDocument()
@@ -166,14 +166,14 @@ describe('the configure step', () => {
   it('goes back to the picker with the selection intact', async () => {
     await renderAtPicker()
 
-    fireEvent.click(pickGateway('SSH'))
+    fireEvent.click(pickGateway('Connect via SSH'))
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
 
-    expect(await screen.findByText('Choose a gateway')).toBeInTheDocument()
+    expect(await screen.findByText('Connect to Hermes')).toBeInTheDocument()
 
     // Back rewinds the wizard only — the pending selection survives, so
     // returning lands on SSH rather than resetting to the persisted default.
-    fireEvent.click(pickGateway('SSH'))
+    fireEvent.click(pickGateway('Connect via SSH'))
     expect(screen.getByText('Host')).toBeInTheDocument()
   })
 })
@@ -188,21 +188,21 @@ describe('the local gateway sub-flow', () => {
 
     // No Tauri runtime here, so detection rejects and resolves to "missing" —
     // the same screen a machine without Hermes shows.
-    expect(await screen.findByText('No local installation found')).toBeInTheDocument()
+    expect(await screen.findByText('No local install')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Back' })).toHaveLength(1)
 
-    fireEvent.click(screen.getByText('MJX Fork of Hermes Agent'))
+    fireEvent.click(screen.getByText('My fork'))
     await screen.findByRole('button', { name: 'Install' })
 
     // Still one — this is the regression.
     expect(screen.getAllByRole('button', { name: 'Back' })).toHaveLength(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-    expect(await screen.findByText('No local installation found')).toBeInTheDocument()
+    expect(await screen.findByText('No local install')).toBeInTheDocument()
 
     // And once the sub-flow is exhausted it rewinds the wizard itself.
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-    expect(await screen.findByText('Choose a gateway')).toBeInTheDocument()
+    expect(await screen.findByText('Connect to Hermes')).toBeInTheDocument()
   })
 })
 
@@ -217,7 +217,7 @@ describe('connection errors', () => {
     await screen.findByText('Welcome to Hermes')
     expect(screen.queryByText('gateway unreachable')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: "Let's get started" }))
+    fireEvent.click(screen.getByRole('button', { name: "Get started" }))
     await waitFor(() => expect(screen.getByText('gateway unreachable')).toBeInTheDocument())
 
     $connectionError.set(null)

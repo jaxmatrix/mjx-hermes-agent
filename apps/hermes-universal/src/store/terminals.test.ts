@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/layout', () => ({ setTerminalOpen: vi.fn() }))
+vi.mock('@/store/terminal-open', () => ({ setTerminalOpen: vi.fn() }))
 
-import { setTerminalOpen } from '@/store/layout'
+import { setTerminalOpen } from '@/store/terminal-open'
 
 import {
   $activeTerminalId,

@@ -1,3 +1,4 @@
+import { stripAnsi } from '@hermes/shared/ansi'
 import { useStore } from '@nanostores/react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo, useState } from 'react'
@@ -26,7 +27,6 @@ import {
   type SkillHubScanResult
 } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { stripAnsi } from '@/lib/ansi'
 import { Loader2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import {

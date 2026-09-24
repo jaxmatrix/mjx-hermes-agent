@@ -53,23 +53,23 @@ describe('delegateRowsFromCall', () => {
     expect(rows[0]).toMatchObject({ activity: ['found it'], durationSeconds: 12, model: 'anthropic/claude-opus-5' })
   })
 
-  // The delegate tool writes five terminal values into a result row, and only
-  // `failed` used to be recognised — so a child that timed out, crashed or was
-  // interrupted rendered as a green tick and the delegation read as a success.
-  it('does not read a timeout, an error or an interrupt as a success', () => {
+  // #73728 / #85492: the delegate tool settles rows with 'ok', 'error' or
+  // 'timeout' — anything that is not a success must render as failed instead
+  // of hiding behind a green 'completed' check.
+  it('renders timeout/error settled results as failed, ok as completed', () => {
     const rows = delegateRowsFromCall(
       { tasks: [{ goal: 'A' }, { goal: 'B' }, { goal: 'C' }, { goal: 'D' }] },
       {
         results: [
-          { status: 'timeout', summary: '' },
+          { status: 'ok', summary: 'done' },
+          { status: 'timeout', error: 'Timed out after 600s' },
           { status: 'error', error: 'boom' },
-          { status: 'interrupted', summary: 'stopped' },
-          { summary: 'no status field at all' }
+          { status: 'failure' }
         ]
       }
     )
 
-    expect(rows.map(r => r.status)).toEqual(['failed', 'failed', 'interrupted', 'completed'])
+    expect(rows.map(r => r.status)).toEqual(['completed', 'failed', 'failed', 'failed'])
   })
 
   it('still lists a background dispatch whose goals only survive in the result', () => {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -19,9 +19,15 @@ vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 
 import { $approvalModes, approvalModeForProfile } from '@/store/approval-mode'
 import { routeGatewayEvent } from '@/store/event-router'
-import { requestGateway } from '@/store/gateway'
-import { $activeProfile } from '@/store/profiles'
-import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
+import { requestGateway } from '@/store/gateway-client'
+import { $activeGatewayProfile } from '@/store/profile'
+import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
+
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
 
 const event = (type: string, payload: Record<string, unknown>, sessionId = 's1'): GatewayEvent =>
   ({ type, session_id: sessionId, payload }) as GatewayEvent
@@ -37,21 +43,19 @@ const event = (type: string, payload: Record<string, unknown>, sessionId = 's1')
  */
 describe('event-router → unsolicited session pushes', () => {
   beforeEach(() => {
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
-    ensureSessionSlice('s1')
+    ensureSessionSlice(localSite('s1'))
     $approvalModes.set({})
-    // `$activeGatewayProfile` is COMPUTED over this one, so this is the only
-    // way to move it — setting the computed is a silent no-op.
-    $activeProfile.set('work')
+    $activeGatewayProfile.set('work')
   })
 
-  const slice = (key = 's1') => $sessionStates.get()[key]
+  const slice = (key = 's1') => $sessionKeyStates.get()[key]
 
   describe('session.usage', () => {
     it('adopts a live tick mid-turn instead of dropping it', () => {
       // Turn-start values the client already has. The tick must replace them.
-      $sessionStates.set({
+      $sessionKeyStates.set({
         s1: { ...slice(), usage: { calls: 1, context_percent: 12, input: 100, output: 20, total: 120 } }
       })
 
@@ -75,7 +79,7 @@ describe('event-router → unsolicited session pushes', () => {
       // `_get_usage` populates context_* only from a REAL current-window
       // occupancy (#50421), so a tick during an external-context turn carries
       // counters and nothing else. Assigning would erase the meter.
-      $sessionStates.set({
+      $sessionKeyStates.set({
         s1: {
           ...slice(),
           usage: {
@@ -98,7 +102,7 @@ describe('event-router → unsolicited session pushes', () => {
     it('ignores a frame whose usage is missing or not an object', () => {
       const before = { calls: 3, input: 1, output: 2, total: 3 }
 
-      $sessionStates.set({ s1: { ...slice(), usage: before } })
+      $sessionKeyStates.set({ s1: { ...slice(), usage: before } })
 
       routeGatewayEvent(event('session.usage', {}))
       routeGatewayEvent(event('session.usage', { usage: 'nope' }))
@@ -108,8 +112,8 @@ describe('event-router → unsolicited session pushes', () => {
     })
 
     it('folds a background tick into THAT session, not the visible one', () => {
-      ensureSessionSlice('s2')
-      $sessionStates.set({
+      ensureSessionSlice(localSite('s2'))
+      $sessionKeyStates.set({
         s1: { ...slice(), usage: { calls: 1, input: 0, output: 0, total: 0 } },
         s2: { ...slice('s2'), usage: null }
       })
@@ -130,7 +134,7 @@ describe('event-router → unsolicited session pushes', () => {
       context_percent: 55,
       context_used: 110_000
     })
-    $sessionStates.set({
+    $sessionKeyStates.set({
       s1: { ...slice(), runtimeSessionId: 's1', usage: { calls: 9, input: 4200, output: 700, total: 4900 } }
     })
 
@@ -154,7 +158,7 @@ describe('event-router → unsolicited session pushes', () => {
     it('leaves the cache alone for a background session', () => {
       // s2 needs a SLICE, or the router fails closed on an unknown session and
       // the test passes without the active-session gate ever running.
-      ensureSessionSlice('s2')
+      ensureSessionSlice(localSite('s2'))
       $approvalModes.set({ work: 'smart' })
 
       routeGatewayEvent(event('session.info', { approval_mode: 'off' }, 's2'))
@@ -165,7 +169,7 @@ describe('event-router → unsolicited session pushes', () => {
     })
 
     it('adopts the effective yolo flag onto the session slice', () => {
-      $sessionStates.set({ s1: { ...slice(), yolo: false } })
+      $sessionKeyStates.set({ s1: { ...slice(), yolo: false } })
 
       routeGatewayEvent(event('session.info', { yolo: true }))
 
@@ -173,7 +177,7 @@ describe('event-router → unsolicited session pushes', () => {
     })
 
     it('adopts yolo:false back off again — false is a real state, not "unset"', () => {
-      $sessionStates.set({ s1: { ...slice(), yolo: true } })
+      $sessionKeyStates.set({ s1: { ...slice(), yolo: true } })
 
       routeGatewayEvent(event('session.info', { yolo: false }))
 

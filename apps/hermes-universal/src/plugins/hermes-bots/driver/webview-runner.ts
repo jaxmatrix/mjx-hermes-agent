@@ -2,7 +2,7 @@
  * The v1 runner: submit the prompt, then WAIT ON THE SLICE.
  *
  * Desktop polled `session.resume` every two seconds per member. It does not
- * have to: MJXHRM-445's member sessions are real `$sessionStates` slices, so the
+ * have to: MJXHRM-445's member sessions are real `$sessionKeyStates` slices, so the
  * event router already writes each member's deltas, its `busy` flag and its
  * blocking prompts. The wait below is a nanostores subscription with a timer as
  * the DEADLINE — not a poll with a subscription bolted on.

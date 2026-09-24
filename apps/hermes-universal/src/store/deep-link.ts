@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-import { isKnownRoutePath, routeHead } from '@/app/routes'
+import { APP_ROUTES, contributedRoutes } from '@/app/routes'
 import { translateNow } from '@/i18n'
 import { type DeepLinkPayload, HERMES_URL_PREFIX, parseHermesDeepLink, resolveDeepLinkAction } from '@/lib/deep-link-routes'
 import { normalizeHermesOpenString } from '@/lib/hermes-open-target'
@@ -102,6 +102,22 @@ function claim(payload: DeepLinkPayload): boolean {
   }
 
   return false
+}
+
+/** `/settings/providers?x#y` → `/settings`. */
+function routeHead(pathname: string): string {
+  const bare = pathname.split(/[?#]/)[0] ?? pathname
+
+  return `/${bare.replace(/^\/+/, '').split('/')[0] ?? ''}`
+}
+
+/** Does this path lead to a page that EXISTS — one of the app's own routes, or
+ *  a plugin's contributed page? Lives here rather than in `app/routes.ts`, which
+ *  is desktop's file: desktop never turns untrusted text into a navigation. */
+function isKnownRoutePath(pathname: string): boolean {
+  const head = routeHead(pathname)
+
+  return APP_ROUTES.some(route => route.path === head) || contributedRoutes().some(route => route.path === head)
 }
 
 /**

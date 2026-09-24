@@ -1,297 +1,364 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { $sessionStates, dropSessionState, ensureSessionSlice, rekeySession } from './session-state-types'
 import {
   $subagentsBySession,
   activeSubagentCount,
   allSubagents,
   buildSubagentTree,
-  clearAllSubagents,
   clearSessionSubagents,
   failedSubagentCount,
+  pruneDelegateFallbackSubagents,
   pruneFinishedSessionSubagents,
+  reconcileSubagentSnapshot,
   upsertSubagent
 } from './subagents'
 
-const SID = 's1'
+const listFor = (sid: string) => $subagentsBySession.get()[sid] ?? []
 
-describe('subagents reducer', () => {
-  beforeEach(() => {
-    $subagentsBySession.set({})
-    $sessionStates.set({})
+describe('subagent store', () => {
+  beforeEach(() => $subagentsBySession.set({}))
+
+  it('upserts subagent progress and keeps terminal status stable', () => {
+    upsertSubagent('s1', { goal: 'scan files', status: 'running', subagent_id: 'a1', task_index: 0 })
+    upsertSubagent('s1', { goal: 'scan files', status: 'completed', subagent_id: 'a1', summary: 'done', task_index: 0 })
+    upsertSubagent('s1', { goal: 'scan files', status: 'running', subagent_id: 'a1', task_index: 0, text: 'late' })
+
+    const item = listFor('s1')[0]
+    expect(item?.status).toBe('completed')
+    expect(item?.summary).toBe('done')
   })
-  afterEach(() => {
-    $subagentsBySession.set({})
-    $sessionStates.set({})
+
+  it('keeps completed children retired across turn pruning, late frames, and roster refreshes', () => {
+    const finished = { subagent_id: 'finished', goal: 'Finished task', status: 'running' }
+    const live = { subagent_id: 'live', goal: 'Background task', status: 'queued' }
+    upsertSubagent('owner', finished, true, 'subagent.start')
+    upsertSubagent('owner', live, true, 'subagent.spawn_requested')
+    upsertSubagent('owner', { ...finished, status: 'completed', summary: 'Done' }, false, 'subagent.complete')
+    upsertSubagent('owner', { ...finished, text: '(°□°) pondering...' }, false, 'subagent.thinking')
+    expect(listFor('owner')[0]?.status).toBe('completed')
+
+    // A completion starts a new parent turn before every delayed child frame
+    // or roster read has drained. Pruning is presentation, not a new child run.
+    pruneFinishedSessionSubagents('owner')
+    const pruned = listFor('owner')
+    reconcileSubagentSnapshot('owner', [finished, live])
+    upsertSubagent('owner', finished, true, 'subagent.start')
+    upsertSubagent('owner', { ...finished, text: '(°□°) pondering...' }, false, 'subagent.thinking')
+    expect(listFor('owner')).toBe(pruned)
+    expect(listFor('owner').map(item => item.id)).toEqual(['live'])
+
+    // Roster-discovered terminal state has the same authority as an event.
+    reconcileSubagentSnapshot('owner', [{ ...live, status: 'interrupted' }])
+    pruneFinishedSessionSubagents('owner')
+    reconcileSubagentSnapshot('owner', [finished, live])
+    expect(activeSubagentCount(listFor('owner'))).toBe(0)
+
+    // Retirement is scoped to this runtime session, not an ID-global ban.
+    upsertSubagent('other', finished, true, 'subagent.start')
+    expect(activeSubagentCount(listFor('other'))).toBe(1)
+    clearSessionSubagents('owner')
+    upsertSubagent('owner', finished, true, 'subagent.start')
+    expect(activeSubagentCount(listFor('owner'))).toBe(1)
   })
 
-  it('builds a parent/child tree from spawn events', () => {
-    upsertSubagent(SID, { subagent_id: 'a', parent_id: null, goal: 'root', status: 'running' }, true, 'subagent.start')
-    upsertSubagent(SID, { subagent_id: 'b', parent_id: 'a', goal: 'child', status: 'running' }, true, 'subagent.start')
+  it('builds parent/child trees', () => {
+    upsertSubagent('s1', { goal: 'parent', status: 'running', subagent_id: 'p', task_index: 0 })
+    upsertSubagent('s1', { goal: 'child', parent_id: 'p', status: 'queued', subagent_id: 'c', task_index: 1 })
 
-    const tree = buildSubagentTree(allSubagents($subagentsBySession.get()))
+    const tree = buildSubagentTree(listFor('s1'))
     expect(tree).toHaveLength(1)
-    expect(tree[0].goal).toBe('root')
-    expect(tree[0].children.map(c => c.goal)).toEqual(['child'])
+    expect(tree[0]?.children[0]?.goal).toBe('child')
+    expect(activeSubagentCount(listFor('s1'))).toBe(2)
   })
 
-  it('does not create an entry for a progress event with an unknown id', () => {
-    upsertSubagent(SID, { subagent_id: 'ghost', status: 'running' }, false, 'subagent.progress')
-    expect(allSubagents($subagentsBySession.get())).toHaveLength(0)
+  it('keeps root nodes in spawn order, not task index order', () => {
+    const nowSpy = vi.spyOn(Date, 'now')
+    nowSpy.mockReturnValueOnce(1_000)
+    upsertSubagent('s1', { goal: 'first spawn', status: 'running', subagent_id: 'a', task_index: 2 })
+    nowSpy.mockReturnValueOnce(2_000)
+    upsertSubagent('s1', { goal: 'second spawn', status: 'running', subagent_id: 'b', task_index: 0 })
+    nowSpy.mockRestore()
+
+    expect(buildSubagentTree(listFor('s1')).map(n => n.id)).toEqual(['a', 'b'])
   })
 
-  it('freezes a subagent once it reaches a terminal status', () => {
-    upsertSubagent(SID, { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
-    upsertSubagent(SID, { subagent_id: 'a', status: 'completed', summary: 'done' }, false, 'subagent.complete')
-    // A late progress event must not revive it.
-    upsertSubagent(SID, { subagent_id: 'a', status: 'running' }, false, 'subagent.progress')
-
-    const [only] = allSubagents($subagentsBySession.get())
-    expect(only.status).toBe('completed')
-  })
-
-  it('accumulates the stream tail from progress/tool events', () => {
-    upsertSubagent(SID, { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
-    upsertSubagent(SID, { subagent_id: 'a', text: 'reading files', status: 'running' }, false, 'subagent.progress')
-    const [node] = allSubagents($subagentsBySession.get())
-    expect(node.stream.at(-1)?.text).toBe('reading files')
-  })
-
-  // "Queued" was never a delivery receipt. The gateway only learns the steer
-  // missed its window at completion, so `subagent.complete` is the one and only
-  // frame that can retract the promise the Agents overlay already made.
-  it('keeps the steer a finished child never delivered', () => {
-    upsertSubagent(SID, { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
+  it('captures live thinking/progress/tool stream lines', () => {
     upsertSubagent(
-      SID,
-      { subagent_id: 'a', status: 'completed', summary: 'done', missed_steer: 'focus on pricing' },
+      's1',
+      { goal: 'scan files', status: 'queued', subagent_id: 'a1', task_index: 0 },
+      true,
+      'subagent.spawn_requested'
+    )
+    upsertSubagent(
+      's1',
+      {
+        status: 'running',
+        subagent_id: 'a1',
+        task_index: 0,
+        tool_name: 'search_files',
+        tool_preview: 'pattern=hermes'
+      },
+      false,
+      'subagent.tool'
+    )
+    upsertSubagent(
+      's1',
+      { status: 'running', subagent_id: 'a1', task_index: 0, text: 'plan the search order' },
+      false,
+      'subagent.thinking'
+    )
+    upsertSubagent(
+      's1',
+      { status: 'running', subagent_id: 'a1', task_index: 0, text: 'found candidate matches' },
+      false,
+      'subagent.progress'
+    )
+    upsertSubagent(
+      's1',
+      { status: 'completed', subagent_id: 'a1', summary: 'search complete', task_index: 0 },
       false,
       'subagent.complete'
     )
 
-    expect(allSubagents($subagentsBySession.get())[0].missedSteer).toBe('focus on pricing')
+    const item = listFor('s1')[0]
+    expect(item?.stream.map(e => e.kind)).toEqual(['tool', 'thinking', 'progress', 'summary'])
+    expect(item?.stream.find(e => e.kind === 'tool')?.text).toContain('Search Files')
+    expect(item?.stream.find(e => e.kind === 'thinking')?.text).toBe('plan the search order')
+    expect(item?.stream.find(e => e.kind === 'summary')?.text).toBe('search complete')
   })
 
-  it('leaves missedSteer unset for a child that delivered everything', () => {
-    upsertSubagent(SID, { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
-    upsertSubagent(SID, { subagent_id: 'a', status: 'completed', summary: 'done' }, false, 'subagent.complete')
+  it('prunes delegate fallback rows once native events arrive', () => {
+    upsertSubagent('s1', { goal: 'fallback', status: 'running', subagent_id: 'delegate-tool:abc:0', task_index: 0 })
+    upsertSubagent('s1', { goal: 'native', status: 'running', subagent_id: 'sa-0-xyz', task_index: 0 })
 
-    expect(allSubagents($subagentsBySession.get())[0].missedSteer).toBeUndefined()
+    pruneDelegateFallbackSubagents('s1')
+
+    expect(listFor('s1').map(item => item.id)).toEqual(['sa-0-xyz'])
   })
 
-  it('clears one session', () => {
-    upsertSubagent(SID, { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
-    clearSessionSubagents(SID)
-    expect(allSubagents($subagentsBySession.get())).toHaveLength(0)
+  // Contract: the status-bar "Agents" indicator and the Spawn-tree panel read
+  // the same scope — every session's subagents — so a count can never point at
+  // an empty tree (the desync behind "Agents (N)" vs "No live subagents").
+  it('counts running/failed across every session, matching the aggregated tree', () => {
+    upsertSubagent('s1', { goal: 'a', status: 'running', subagent_id: 'a', task_index: 0 })
+    upsertSubagent('s1', { goal: 'b', status: 'failed', subagent_id: 'b', task_index: 1 })
+    upsertSubagent('s2', { goal: 'c', status: 'running', subagent_id: 'c', task_index: 0 })
+    upsertSubagent('s2', { goal: 'd', status: 'failed', subagent_id: 'd', task_index: 1 })
+
+    const flat = allSubagents($subagentsBySession.get())
+    const indicatorRunning = Object.values($subagentsBySession.get()).reduce((n, l) => n + activeSubagentCount(l), 0)
+    const indicatorFailed = Object.values($subagentsBySession.get()).reduce((n, l) => n + failedSubagentCount(l), 0)
+    const tree = buildSubagentTree(flat)
+
+    // The active-session-only filter would have reported 1/1 here, not 2/2.
+    expect(indicatorRunning).toBe(2)
+    expect(indicatorFailed).toBe(2)
+    expect(tree).toHaveLength(4)
+    expect(indicatorRunning + indicatorFailed).toBe(tree.length)
   })
 
-  describe('pruneFinishedSessionSubagents', () => {
-    it('retires settled rows but keeps work still in flight', () => {
-      upsertSubagent(SID, { subagent_id: 'done', goal: 'a', status: 'running' }, true, 'subagent.start')
-      upsertSubagent(SID, { subagent_id: 'done', status: 'completed' }, false, 'subagent.complete')
-      upsertSubagent(SID, { subagent_id: 'failed', goal: 'b', status: 'running' }, true, 'subagent.start')
-      upsertSubagent(SID, { subagent_id: 'failed', status: 'failed' }, false, 'subagent.complete')
-      upsertSubagent(SID, { subagent_id: 'live', goal: 'c', status: 'running' }, true, 'subagent.start')
-      upsertSubagent(SID, { subagent_id: 'queued', goal: 'd', status: 'queued' }, true, 'subagent.spawn_requested')
+  it('clears one session without touching another', () => {
+    upsertSubagent('s1', { goal: 'one', status: 'running', subagent_id: 'a1', task_index: 0 })
+    upsertSubagent('s2', { goal: 'two', status: 'running', subagent_id: 'a2', task_index: 0 })
 
-      pruneFinishedSessionSubagents(SID)
+    clearSessionSubagents('s1')
 
-      expect(
-        allSubagents($subagentsBySession.get())
-          .map(item => item.id)
-          .sort()
-      ).toEqual(['live', 'queued'])
-    })
+    expect($subagentsBySession.get().s1).toBeUndefined()
+    expect($subagentsBySession.get().s2).toHaveLength(1)
+  })
 
-    // A background subagent outlives the turn that spawned it, and the prune
-    // runs on every `message.start` — so it must keep receiving its events.
-    it('leaves a surviving row able to complete on a later turn', () => {
-      upsertSubagent(SID, { subagent_id: 'bg', goal: 'long', status: 'running' }, true, 'subagent.start')
-      pruneFinishedSessionSubagents(SID)
-      upsertSubagent(SID, { subagent_id: 'bg', status: 'completed', summary: 'done' }, false, 'subagent.complete')
+  // Regression test for #64015: still-RUNNING background subagents must survive
+  // the per-turn wipe that previously dropped them at message.start. The fix
+  // replaces clearSessionSubagents() with pruneFinishedSessionSubagents() at
+  // the use-message-stream message.start handler, so only terminal-status rows
+  // get filtered out.
+  it('pruneFinishedSessionSubagents keeps running/queued and drops terminal rows', () => {
+    upsertSubagent('s1', { goal: 'live-a', status: 'running', subagent_id: 'live-a', task_index: 0 })
+    upsertSubagent('s1', { goal: 'live-b', status: 'queued', subagent_id: 'live-b', task_index: 1 })
+    upsertSubagent('s1', { goal: 'done', status: 'completed', subagent_id: 'done', task_index: 2 })
+    upsertSubagent('s1', { goal: 'broken', status: 'failed', subagent_id: 'broken', task_index: 3 })
+    upsertSubagent('s1', { goal: 'cancelled', status: 'interrupted', subagent_id: 'cancelled', task_index: 4 })
 
-      const [only] = allSubagents($subagentsBySession.get())
-      expect(only.status).toBe('completed')
-      expect(only.summary).toBe('done')
-    })
+    pruneFinishedSessionSubagents('s1')
 
-    it('is a no-op for a session with nothing to prune', () => {
-      upsertSubagent(SID, { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
-      const before = $subagentsBySession.get()
+    const ids = listFor('s1')
+      .map(item => item.id)
+      .sort()
 
-      pruneFinishedSessionSubagents(SID)
-      pruneFinishedSessionSubagents('never-seen')
+    expect(ids).toEqual(['live-a', 'live-b'])
+    expect(activeSubagentCount(listFor('s1'))).toBe(2)
+  })
 
-      expect($subagentsBySession.get()).toBe(before)
-    })
+  // Companion test: after prune, a late `subagent.complete` event for a
+  // surviving live row must still be accepted by upsertSubagent (the wipe
+  // path previously silently dropped these).
+  it('surviving live subagents still accept createIfMissing=false completion', () => {
+    upsertSubagent('s1', { goal: 'live', status: 'running', subagent_id: 'live', task_index: 0 })
 
-    // THE defect the prune was shipped to fix but did not: the gateway's
-    // timeout/exception exits relay `status: "timeout"` / `"error"`
-    // (tools/delegate_tool.py:2402), which the reducer read as an unknown value
-    // and settled on `running` — so the prune kept them, forever.
-    it.each(['timeout', 'error'])('retires a child the gateway ended with status %s', status => {
-      upsertSubagent(SID, { subagent_id: 'x', goal: 'slow', status: 'running' }, true, 'subagent.start')
-      upsertSubagent(SID, { subagent_id: 'x', status, summary: '' }, false, 'subagent.complete')
+    pruneFinishedSessionSubagents('s1')
 
-      const [row] = allSubagents($subagentsBySession.get())
-      expect(row.status).toBe('failed')
-      expect(activeSubagentCount([row])).toBe(0)
-      expect(failedSubagentCount([row])).toBe(1)
+    upsertSubagent(
+      's1',
+      { status: 'completed', subagent_id: 'live', task_index: 0, summary: 'finished later' },
+      false,
+      'subagent.complete'
+    )
 
-      pruneFinishedSessionSubagents(SID)
-      expect(allSubagents($subagentsBySession.get())).toHaveLength(0)
-    })
+    const item = listFor('s1')[0]
+    expect(item?.status).toBe('completed')
+    expect(item?.summary).toBe('finished later')
+  })
 
-    // A timed-out child stops being live, which is what clears its spinner and
-    // freezes its elapsed timer — but the reason must survive as the summary
-    // line, since the status itself no longer says "timeout".
-    it('keeps the timeout reason on the stream once the status collapses to failed', () => {
-      upsertSubagent(SID, { subagent_id: 'x', goal: 'slow', status: 'running' }, true, 'subagent.start')
+  it('pruneFinishedSessionSubagents leaves other sessions untouched', () => {
+    upsertSubagent('s1', { goal: 'live', status: 'running', subagent_id: 'a', task_index: 0 })
+    upsertSubagent('s1', { goal: 'done', status: 'completed', subagent_id: 'b', task_index: 1 })
+    upsertSubagent('s2', { goal: 'live', status: 'running', subagent_id: 'c', task_index: 0 })
+    upsertSubagent('s2', { goal: 'done', status: 'completed', subagent_id: 'd', task_index: 1 })
+
+    pruneFinishedSessionSubagents('s1')
+
+    expect(listFor('s1').map(item => item.id)).toEqual(['a'])
+    expect(
+      listFor('s2')
+        .map(item => item.id)
+        .sort()
+    ).toEqual(['c', 'd'])
+  })
+
+  // Regression test for #73728: backend terminal statuses like `timeout` and
+  // `error` were normalised to `running`, making timed-out subagents immortal
+  // in the active status stack. `cancelled`/`canceled` must also map to
+  // `interrupted`.
+  it('normalises backend terminal statuses to recognised SubagentStatus values', () => {
+    upsertSubagent('s1', { goal: 'a', status: 'running', subagent_id: 'a', task_index: 0 })
+    upsertSubagent('s1', { goal: 'b', status: 'running', subagent_id: 'b', task_index: 1 })
+    upsertSubagent('s1', { goal: 'c', status: 'running', subagent_id: 'c', task_index: 2 })
+    upsertSubagent('s1', { goal: 'd', status: 'running', subagent_id: 'd', task_index: 3 })
+
+    // Emit terminal events with backend-native status strings
+    upsertSubagent(
+      's1',
+      { status: 'timeout', subagent_id: 'a', task_index: 0, summary: 'timed out' },
+      false,
+      'subagent.complete'
+    )
+    upsertSubagent(
+      's1',
+      { status: 'error', subagent_id: 'b', task_index: 1, summary: 'errored' },
+      false,
+      'subagent.complete'
+    )
+    upsertSubagent('s1', { status: 'cancelled', subagent_id: 'c', task_index: 2 }, false, 'subagent.complete')
+    upsertSubagent('s1', { status: 'canceled', subagent_id: 'd', task_index: 3 }, false, 'subagent.complete')
+
+    const items = listFor('s1')
+    const byId = Object.fromEntries(items.map(i => [i.id, i]))
+
+    // timeout → failed
+    expect(byId['a']?.status).toBe('failed')
+    expect(byId['a']?.currentTool).toBeUndefined()
+
+    // error → failed
+    expect(byId['b']?.status).toBe('failed')
+
+    // cancelled → interrupted
+    expect(byId['c']?.status).toBe('interrupted')
+
+    // canceled → interrupted
+    expect(byId['d']?.status).toBe('interrupted')
+
+    // All four are terminal — prune should remove them all
+    pruneFinishedSessionSubagents('s1')
+    expect(listFor('s1')).toHaveLength(0)
+  })
+
+  // The backend completes subagents with status "timeout" (hard child timeout,
+  // delegation.child_timeout_seconds) and no summary — synthesize the reason
+  // so the failed row explains itself instead of rendering as a bare failure.
+  it('maps backend timeout status to a terminal failure with a synthesized reason', () => {
+    upsertSubagent('s1', { goal: 'scan files', status: 'running', subagent_id: 't1', task_index: 0 })
+    upsertSubagent(
+      's1',
+      { status: 'timeout', subagent_id: 't1', task_index: 0, duration_seconds: 612.3 },
+      false,
+      'subagent.complete'
+    )
+
+    const item = listFor('s1')[0]
+    expect(item?.status).toBe('failed')
+    expect(item?.durationSeconds).toBe(612.3)
+    expect(item?.summary).toContain('612.3')
+
+    // A timed-out row must be pruned at the next message.start boundary like
+    // any other finished row — it must not linger as a live spinner.
+    pruneFinishedSessionSubagents('s1')
+    expect(listFor('s1')).toHaveLength(0)
+  })
+
+  // Fail-closed guard: subagent.complete is terminal by definition, so an
+  // unrecognized status on it must not resurrect a row as 'running'. Live
+  // events keep the lenient fallback (a status we don't know is still active).
+  it('fails closed on unrecognized completion statuses but stays lenient for live events', () => {
+    upsertSubagent('s1', { goal: 'scan files', status: 'running', subagent_id: 'u1', task_index: 0 })
+    upsertSubagent(
+      's1',
+      { status: 'some_future_terminal_status', subagent_id: 'u1', task_index: 0 },
+      false,
+      'subagent.complete'
+    )
+    expect(listFor('s1')[0]?.status).toBe('failed')
+    expect(activeSubagentCount(listFor('s1'))).toBe(0)
+
+    upsertSubagent('s1', { goal: 'scan files', status: 'running', subagent_id: 'u2', task_index: 1 })
+    upsertSubagent(
+      's1',
+      { status: 'some_future_live_status', subagent_id: 'u2', task_index: 1, text: 'still working' },
+      false,
+      'subagent.progress'
+    )
+    expect(listFor('s1')[1]?.status).toBe('running')
+    expect(activeSubagentCount(listFor('s1'))).toBe(1)
+  })
+
+  // Folded in from PR #85995: a subagent.complete carrying a still-active
+  // payload status ('running'/'queued') must also settle as failed — the
+  // event itself is the source of truth that the child is done.
+  it.each(['running', 'queued'] as const)(
+    'treats a completion event with %s payload status as terminal failure',
+    status => {
       upsertSubagent(
-        SID,
-        { subagent_id: 'x', status: 'timeout', text: 'Timed out after 300s', summary: '' },
-        false,
-        'subagent.complete'
-      )
-
-      const [row] = allSubagents($subagentsBySession.get())
-      expect(row.currentTool).toBeUndefined()
-      expect(row.stream.at(-1)).toMatchObject({ isError: true, kind: 'summary', text: 'Timed out after 300s' })
-    })
-  })
-
-  /**
-   * Scope: the map is keyed by session key and flattened across every session by
-   * `allSubagents`, so anything left under a dead key is not inert — the Agents
-   * overlay renders it and the status bar counts it.
-   */
-  describe('session scope', () => {
-    it('drops a session’s rows when its slice is evicted', () => {
-      ensureSessionSlice('runtime-1')
-      upsertSubagent('runtime-1', { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
-
-      dropSessionState('runtime-1')
-
-      expect(allSubagents($subagentsBySession.get())).toHaveLength(0)
-    })
-
-    it('follows the slice across a rekey', () => {
-      ensureSessionSlice('draft:1')
-      upsertSubagent('draft:1', { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
-
-      rekeySession('draft:1', 'runtime-1')
-
-      expect($subagentsBySession.get()['draft:1']).toBeUndefined()
-      expect($subagentsBySession.get()['runtime-1']?.map(item => item.id)).toEqual(['a'])
-    })
-
-    it('merges into rows the destination key already had, without duplicating', () => {
-      ensureSessionSlice('draft:1')
-      upsertSubagent('draft:1', { subagent_id: 'a', goal: 'moved', status: 'running' }, true, 'subagent.start')
-      upsertSubagent('draft:1', { subagent_id: 'c', goal: 'also moved', status: 'running' }, true, 'subagent.start')
-      upsertSubagent(
-        'runtime-1',
-        { subagent_id: 'a', goal: 'already there', status: 'running' },
+        's1',
+        {
+          goal: 'inconsistent completion',
+          status: 'running',
+          subagent_id: 'ic1',
+          task_index: 0,
+          tool_name: 'search_files'
+        },
         true,
         'subagent.start'
       )
-      upsertSubagent('runtime-1', { subagent_id: 'b', goal: 'kept', status: 'running' }, true, 'subagent.start')
+      upsertSubagent('s1', { status, subagent_id: 'ic1', task_index: 0 }, false, 'subagent.complete')
 
-      rekeySession('draft:1', 'runtime-1')
+      const items = listFor('s1')
+      expect(items[0]?.status).toBe('failed')
+      expect(items[0]?.currentTool).toBeUndefined()
+      expect(activeSubagentCount(items)).toBe(0)
+    }
+  )
 
-      expect($subagentsBySession.get()['runtime-1']?.map(item => item.id)).toEqual(['a', 'b', 'c'])
-      expect($subagentsBySession.get()['runtime-1']?.find(item => item.id === 'a')?.goal).toBe('already there')
-    })
+  // Folded in from PR #80045 (#80018): a late progress event must not revive
+  // the spinner after a terminal completion — the row stays settled.
+  it('does not regress to running when a late running event arrives after timeout', () => {
+    upsertSubagent('s1', { goal: 'task', status: 'running', subagent_id: 'late1', task_index: 0 })
+    upsertSubagent(
+      's1',
+      { goal: 'task', status: 'timeout', subagent_id: 'late1', summary: 'Timed out', task_index: 0 },
+      true,
+      'subagent.complete'
+    )
+    upsertSubagent('s1', { goal: 'task', status: 'running', subagent_id: 'late1', task_index: 0, text: 'late' })
 
-    it('drops every session at once for a profile / gateway switch', () => {
-      upsertSubagent('runtime-1', { subagent_id: 'a', goal: 'one', status: 'running' }, true, 'subagent.start')
-      upsertSubagent('runtime-2', { subagent_id: 'b', goal: 'two', status: 'running' }, true, 'subagent.start')
-
-      clearAllSubagents()
-
-      expect($subagentsBySession.get()).toEqual({})
-    })
-  })
-})
-
-/**
- * Truncation + worktree state off `subagent.complete` (MJXHRM-459).
- *
- * Both were on the parent MODEL's tool-result entry long before they were on
- * the event, and the event stream is all a client gets.
- */
-describe('subagents truncation + worktree', () => {
-  const SESSION = 'runtime-1'
-
-  beforeEach(() => {
-    $subagentsBySession.set({})
-  })
-
-  const complete = (payload: Record<string, unknown>) => {
-    upsertSubagent(SESSION, { subagent_id: 'a', goal: 'work', status: 'running' }, true, 'subagent.start')
-    upsertSubagent(SESSION, { subagent_id: 'a', status: 'completed', ...payload }, false, 'subagent.complete')
-
-    return $subagentsBySession.get()[SESSION]![0]!
-  }
-
-  it('keeps the truncation flag off a completed child', () => {
-    expect(complete({ truncated: true }).truncated).toBe(true)
-  })
-
-  it('records an explicit false rather than leaving it unknown', () => {
-    expect(complete({ truncated: false }).truncated).toBe(false)
-  })
-
-  it('leaves it undefined when the gateway is too old to say', () => {
-    expect(complete({}).truncated).toBeUndefined()
-  })
-
-  it('carries the run-budget wrap-up latch', () => {
-    expect(complete({ budget_wrapup: true }).budgetWrapup).toBe(true)
-  })
-
-  // Dormant unless a run budget is configured, which is the default — so an
-  // absent key must stay absent rather than becoming a `false` the row draws.
-  it('leaves the wrap-up latch unset when no budget was in play', () => {
-    expect(complete({}).budgetWrapup).toBeUndefined()
-  })
-
-  it('normalises the worktree finalize report', () => {
-    expect(
-      complete({
-        worktree: {
-          branch: 'hermes/a',
-          commits: 2,
-          dirty: true,
-          inspection_failed: false,
-          path: '/tmp/wt/a',
-          pruned: false
-        }
-      }).worktree
-    ).toEqual({
-      branch: 'hermes/a',
-      commits: 2,
-      dirty: true,
-      inspectionFailed: undefined,
-      note: undefined,
-      path: '/tmp/wt/a',
-      pruned: false
-    })
-  })
-
-  it('carries the unproven-inspection flag rather than flattening it to a clean tree', () => {
-    const worktree = complete({
-      worktree: { branch: 'hermes/a', inspection_failed: true, note: 'rev-list exit 128', path: '/tmp/wt/a' }
-    }).worktree
-
-    expect(worktree?.inspectionFailed).toBe(true)
-    expect(worktree?.note).toBe('rev-list exit 128')
-    // Defaults, NOT measurements — the flag above is what says so.
-    expect(worktree?.commits).toBe(0)
-  })
-
-  it('ignores a worktree that names neither a path nor a branch', () => {
-    expect(complete({ worktree: { commits: 0, dirty: false, pruned: true } }).worktree).toBeUndefined()
-    expect(complete({ worktree: 'not-a-report' }).worktree).toBeUndefined()
+    expect(listFor('s1')[0]?.status).toBe('failed')
   })
 })

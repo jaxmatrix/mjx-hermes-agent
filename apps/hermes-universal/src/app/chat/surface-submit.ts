@@ -22,7 +22,7 @@
 
 import { sendPrompt } from '@/store/chat'
 import { notify } from '@/store/notifications'
-import { sessionTileDelegate } from '@/store/session-states'
+import { sessionTileDelegate } from '@/store/session-key-states'
 
 import type { SessionView } from './session-view'
 

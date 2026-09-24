@@ -1,9 +1,8 @@
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
+
 import type { SessionInfo } from '@/types/hermes'
 
-// Ported verbatim from desktop `store/session-switcher.ts`. Only seam: universal
-// names the selected-session atom `$activeStoredSessionId`.
-import { $activeStoredSessionId, $sessions } from './session'
+import { $selectedStoredSessionId, $sessions } from './session'
 
 // Mac-style session switcher (^Tab). Quick tap jumps on keydown; the HUD opens
 // only when Tab is held past REVEAL_MS or tapped again while Ctrl is down.
@@ -75,7 +74,7 @@ export function openOrAdvanceSwitcher(direction: 1 | -1): string | null {
     return null
   }
 
-  const current = sessions.findIndex(session => session.id === $activeStoredSessionId.get())
+  const current = sessions.findIndex(session => session.id === $selectedStoredSessionId.get())
   const start = current === -1 ? (direction === 1 ? -1 : 0) : current
   const nextIndex = wrap(start + direction, sessions.length)
 

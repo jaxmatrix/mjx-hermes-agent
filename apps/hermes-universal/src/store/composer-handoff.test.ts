@@ -66,9 +66,10 @@ describe('drafts crossing a window boundary', () => {
     otherWindowWrote({})
     reloadPersistedDrafts()
 
-    // The text is gone because the other window sent it; the staged file is not
-    // ours to throw away on that evidence.
-    expect(takeSessionDraft('a').attachments).toHaveLength(1)
+    // A vanished key means the other window sent (cleared) the draft — the whole
+    // local entry goes, attachments included. Desktop's merge does the same.
+    expect(takeSessionDraft('a').text).toBe('')
+    expect(takeSessionDraft('a').attachments).toHaveLength(0)
   })
 
   it('leaves other sessions alone', () => {
@@ -96,28 +97,18 @@ describe('the sync request the handoff is built on', () => {
   })
 
   it('turns another window’s write into a reload', () => {
-    const heard = vi.fn()
-    const off = onComposerDraftSyncRequest(heard)
-
     otherWindowWrote({ c: 'from over there' })
     // `storage` never fires in the window that wrote; this is the other window
-    // being heard, which is the only way a mounted composer learns about it.
+    // being heard. The listener reloads the stash directly (no draft-sync bus).
     window.dispatchEvent(new StorageEvent('storage', { key: SESSION_DRAFTS_STORAGE_KEY }))
 
-    expect(heard).toHaveBeenCalledWith('reload')
     expect(takeSessionDraft('c').text).toBe('from over there')
-
-    off()
   })
 
   it('ignores a write to some other key', () => {
-    const heard = vi.fn()
-    const off = onComposerDraftSyncRequest(heard)
-
+    otherWindowWrote({ c: 'from over there' })
     window.dispatchEvent(new StorageEvent('storage', { key: 'hermes:something-else' }))
 
-    expect(heard).not.toHaveBeenCalled()
-
-    off()
+    expect(takeSessionDraft('c').text).toBe('')
   })
 })

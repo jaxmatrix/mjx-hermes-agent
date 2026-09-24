@@ -24,7 +24,7 @@ import {
   generateDrafts,
   hatchSelected,
   resetPetGen
-} from '@/store/pet-generate'
+} from '@/store/pet-generate-universal'
 
 import { PetSprite } from './pet-sprite'
 

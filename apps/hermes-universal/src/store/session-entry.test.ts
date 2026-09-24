@@ -20,7 +20,8 @@ import { describe, expect, it } from 'vitest'
 
 // `vitest` above is inert; `@/store/session` must stay the first APP module
 // this file loads, or the property under test is not exercised at all.
-import { $activeStoredSessionId, $sessions } from '@/store/session'
+import { $sessions } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 
 describe('store/session as a module-graph entry', () => {
   it('initializes its atoms even when nothing else is loaded first', () => {

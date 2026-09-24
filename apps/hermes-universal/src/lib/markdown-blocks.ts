@@ -1,18 +1,8 @@
 import { parseMarkdownIntoBlocks } from '@assistant-ui/react-streamdown'
 
-import { span } from '@/observability'
-
 /**
  * Block splitting for the streaming markdown pipeline, without re-lexing the
  * whole message on every token flush.
- *
- * PORTED VERBATIM from `apps/desktop/src/lib/markdown-blocks.ts` (MJXHRM-45),
- * plus universal's `markdown.block-lex` span so the miss stays traceable — the
- * one thing universal's own inline cache did that desktop's module did not.
- * Universal previously had HALF of this: an exact-string LRU built inline in
- * `markdown-text.tsx`, which only ever helps on a remount. The streaming case,
- * where every flush is a new string and the cache misses by construction, is the
- * one that actually costs, and that is what the append cache below fixes.
  *
  * `parseMarkdownIntoBlocks` is a full `marked` lex of the entire text —
  * measured 3.4–9.6ms per call at 64–192KB. During streaming every flush is a
@@ -135,14 +125,7 @@ export function parseMarkdownIntoBlocksCached(markdown: string): string[] {
     return hit
   }
 
-  const incremental = lexIncrementally(markdown)
-
-  // Spanned only on the FULL lex — the cost this module exists to remove. The
-  // incremental path lexes a small suffix instead and is deliberately NOT
-  // charged to the same span, so the trace shows the improvement rather than
-  // averaging it away.
-  const blocks =
-    incremental ?? span('markdown.block-lex', () => parseMarkdownIntoBlocks(markdown), { chars: markdown.length })
+  const blocks = lexIncrementally(markdown) ?? parseMarkdownIntoBlocks(markdown)
 
   rememberAppend(markdown, blocks)
   exactCache.set(markdown, blocks)

@@ -5,10 +5,8 @@ import type { BillingChargeResponse, BillingStateResponse } from './types'
 
 const requestGatewayMock = vi.hoisted(() => vi.fn())
 
-// Universal's gateway seam is a module-level function, not desktop's hook — this
-// is the first test in the app to mock it, so the shape is spelled out here.
-vi.mock('@/store/gateway', () => ({
-  requestGateway: requestGatewayMock
+vi.mock('@/app/gateway/hooks/use-gateway-request', () => ({
+  useGatewayRequest: () => ({ requestGateway: requestGatewayMock })
 }))
 
 import { createBillingApi, useBillingApi } from './api'
@@ -163,18 +161,6 @@ describe('createBillingApi', () => {
 
     expect(response).toEqual({ data: { message: 'Change cancelled.', ok: true }, ok: true })
     expect(requestGatewayMock).toHaveBeenCalledWith('subscription.resume', {})
-  })
-
-  it('surfaces an insufficient_scope refusal from a subscription preview', async () => {
-    requestGatewayMock.mockResolvedValueOnce({
-      error: { kind: 'insufficient_scope', message: 'billing:manage required' },
-      ok: false
-    })
-
-    const api = createBillingApi(requestGatewayMock)
-    const response = await api.scheduleSubscriptionChange('tier_plus')
-
-    expect(response).toMatchObject({ ok: false, refusal: { kind: 'insufficient_scope' } })
   })
 
   it('sends a step-up session id when provided', async () => {

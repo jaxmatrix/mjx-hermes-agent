@@ -12,10 +12,9 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { saveMemoryProviderConfig } from '@/hermes'
-import { openExternalLink } from '@/lib/external-link'
 import { ExternalLink, Loader2, Save, SlidersHorizontal } from '@/lib/icons'
 import { notify, notifyError } from '@/store/notifications'
-import { $settingsScopeOverride, $settingsScopeProfile } from '@/store/settings-scope'
+import { $activeGatewayProfile } from '@/store/profile'
 import type { MemoryProviderConfig, MemoryProviderField } from '@/types/hermes'
 
 import { ListRow } from '../primitives'
@@ -47,24 +46,20 @@ function groupFields(fields: MemoryProviderField[]): [string, MemoryProviderFiel
 
 export function ProviderConfigModal({
   config,
+  profile = null,
   provider,
   open,
   onOpenChange,
   onSaved
 }: {
   config: MemoryProviderConfig
+  profile?: null | string
   provider: string
   open: boolean
   onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void> | void
 }) {
-  // The profile this page is EDITING — which is the app's active profile until
-  // the "Applies to" selector points somewhere else. Naming the wrong one here
-  // told the user their keys were going to a profile they were not editing.
-  const scopeProfile = useStore($settingsScopeProfile)
-  // ...and the OVERRIDE is what rides the request: `null` means "follow the
-  // app", which the REST layer turns into no `?profile=` at all.
-  const scopeOverride = useStore($settingsScopeOverride)
+  const activeProfile = useStore($activeGatewayProfile)
   const [values, setValues] = useState<Record<string, string>>({})
   const [seeded, setSeeded] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -85,7 +80,7 @@ export function ProviderConfigModal({
     setSaving(true)
 
     try {
-      await saveMemoryProviderConfig(provider, edited, scopeOverride ?? undefined)
+      await saveMemoryProviderConfig(provider, edited, profile)
       notify({ kind: 'success', title: `${config.label} saved`, message: 'Memory provider configuration updated.' })
       await onSaved()
       onOpenChange(false)
@@ -98,12 +93,12 @@ export function ProviderConfigModal({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-2xl dt-portal-scrollbar">
+      <DialogContent bodyClassName="dt-portal-scrollbar" className="max-w-2xl">
         <DialogHeader>
           <DialogTitle icon={SlidersHorizontal}>{config.label} — full configuration</DialogTitle>
           <DialogDescription>
-            Every {config.label} option for the <span className="font-medium">{scopeProfile}</span> profile. Blank
-            fields fall back to the resolved host or built-in default.
+            Every {config.label} option for the <span className="font-medium">{profile ?? activeProfile}</span> profile.
+            Blank fields fall back to the resolved host or built-in default.
           </DialogDescription>
           {config.docs_url && (
             <a
@@ -111,7 +106,7 @@ export function ProviderConfigModal({
               href={config.docs_url}
               onClick={event => {
                 event.preventDefault()
-                void openExternalLink(config.docs_url)
+                void window.hermesDesktop?.openExternal?.(config.docs_url)
               }}
               rel="noreferrer"
               target="_blank"

@@ -3,7 +3,6 @@ import { atom, computed, type ReadableAtom } from 'nanostores'
 import type { HermesGitWorktree, HermesRepoStatus } from '@/global'
 import { desktopGit } from '@/lib/desktop-git'
 
-import { $busy, $currentCwd } from './chat'
 import {
   $projectScope,
   $projectTree,
@@ -12,50 +11,62 @@ import {
   ALL_PROJECTS,
   projectRootCwd
 } from './projects'
-import { $effectiveCwd, $workspaceChangeTick } from './workspace-events'
+import {
+  $busy,
+  $currentCwd,
+  $selectedStoredSessionId,
+  $workspaceCwdOwner,
+  workspaceCwdBelongsToSelectedSession
+} from './session'
+import { $focusedRuntimeId, $sessionStates } from './session-states'
+import { $workspaceChangeTick } from './workspace-events'
 
 // Live working-tree status for every git surface on screen — the data backbone
-// of the composer coding rail. Keyed PER CWD: the composer mounts once per tile
-// and each tile can sit in a different worktree, so a single global status
-// painted the primary repo's branch and ± onto every rail (the "tile shows
-// main's diff" bug). It's the same "cheaply re-read git truth at the right
-// moments" model as the sidebar worktree probe: a single bounded
-// `git status --porcelain=v2` per on-screen worktree per refresh, driven by
-// structural edges (cwd change, turn settle, window focus, worktree mutation),
-// never per-token and never touching the conversation/system-prompt cache.
+// of the composer coding rail. Keyed PER CWD: the main pane and each session
+// tile can sit in different worktrees, so a single global status would paint
+// the primary repo's branch/± onto every rail (the "tile shows main's diff"
+// bug). It's the same "cheaply re-read git truth at the right moments" model
+// as the sidebar worktree probe: a single bounded `git status --porcelain=v2`
+// per on-screen worktree per refresh, driven by structural edges (cwd change,
+// turn settle, window focus, worktree mutation), never per-token and never
+// touching the conversation/system-prompt cache.
 
 const REPO_STATUS_REFRESH_DEBOUNCE_MS = 100
 
-const EMPTY_WORKTREES: HermesGitWorktree[] = []
-
 const normalizeCwd = (cwd?: null | string): null | string => cwd?.trim() || null
 
-// Status + worktrees per normalized cwd. Entries outlive their surface (the map
-// stays bounded by the worktrees touched this run) so re-opening a tile paints
-// its last-known status instantly while the fresh probe runs.
+const EMPTY_WORKTREES: HermesGitWorktree[] = []
+
+// Status + worktrees per normalized cwd. Entries outlive their surface (the
+// map stays bounded by the worktrees touched this run) so re-opening a tile
+// paints its last-known status instantly while the fresh probe runs.
 export const $repoStatusByCwd = atom<Record<string, HermesRepoStatus | null>>({})
 export const $repoWorktreesByCwd = atom<Record<string, HermesGitWorktree[]>>({})
 
-export const $repoStatusLoading = atom(false)
-
-// The PRIMARY view — the sidebar's selected cwd sliced out of the per-cwd truth.
-// Only surfaces that are genuine singletons (the command palette's jump-to-a-
-// worktree list) read this; anything that can live in ANOTHER worktree reads the
-// per-cwd accessors below.
+// The PRIMARY (main pane) view — the active session's slice of the per-cwd
+// truth. Existing consumers (keybind gate, base-branch picker, file tree) keep
+// reading these; only surfaces that can live in ANOTHER worktree (tile rails)
+// need the per-cwd accessors below. During a conversation switch `$currentCwd`
+// can still name the previous conversation's path, so ownership hides only this
+// primary slice; the per-cwd cache stays available to any tile that genuinely
+// owns that worktree (#71254).
 export const $repoStatus: ReadableAtom<HermesRepoStatus | null> = computed(
-  [$repoStatusByCwd, $currentCwd],
-  (byCwd, cwd) => byCwd[normalizeCwd(cwd) ?? ''] ?? null
+  [$repoStatusByCwd, $currentCwd, $selectedStoredSessionId, $workspaceCwdOwner],
+  (byCwd, cwd) => (workspaceCwdBelongsToSelectedSession() ? (byCwd[normalizeCwd(cwd) ?? ''] ?? null) : null)
 )
+
+export const $repoStatusLoading = atom(false)
 
 // The repo's real worktrees (for the coding rail's "jump to a worktree" menu).
 // Refreshed on the same edges as the status probe; empty off a repo.
 export const $repoWorktrees: ReadableAtom<HermesGitWorktree[]> = computed(
-  [$repoWorktreesByCwd, $currentCwd],
-  (byCwd, cwd) => byCwd[normalizeCwd(cwd) ?? ''] ?? EMPTY_WORKTREES
+  [$repoWorktreesByCwd, $currentCwd, $selectedStoredSessionId, $workspaceCwdOwner],
+  (byCwd, cwd) =>
+    workspaceCwdBelongsToSelectedSession() ? (byCwd[normalizeCwd(cwd) ?? ''] ?? EMPTY_WORKTREES) : EMPTY_WORKTREES
 )
 
-// Reference-stable per-cwd slices, so any number of rails can each subscribe to
-// their own worktree's status without re-deriving an atom per render.
+// Reference-stable per-cwd slices, so any number of rails can each subscribe
+// to their own worktree's status without re-deriving atoms per render.
 const statusAtomByCwd = new Map<string, ReadableAtom<HermesRepoStatus | null>>()
 const worktreesAtomByCwd = new Map<string, ReadableAtom<HermesGitWorktree[]>>()
 const $noRepoStatus = atom<HermesRepoStatus | null>(null)
@@ -79,6 +90,34 @@ export function repoStatusForCwd(cwd?: null | string): ReadableAtom<HermesRepoSt
   return $slice
 }
 
+/**
+ * Is this path a git repo? This function reads the probe cache, and probes on
+ * demand when the cache has no entry for the path. Use it to validate any repo
+ * that was picked out of candidate FOLDERS: a path in a project row is not
+ * evidence that git can branch from it. On a remote gateway the probe is
+ * backend-routed (`desktopGit()` returns the REST mirror), so a VPS path is
+ * judged by the VPS's git — not by this machine's filesystem (#81724).
+ */
+export async function isGitRepoPath(cwd: string): Promise<boolean> {
+  const key = normalizeCwd(cwd)
+
+  if (!key) {
+    return false
+  }
+
+  if (key in $repoStatusByCwd.get()) {
+    return $repoStatusByCwd.get()[key] !== null
+  }
+
+  if (!desktopGit()?.repoStatus) {
+    return false
+  }
+
+  await refreshRepoStatus(key)
+
+  return ($repoStatusByCwd.get()[key] ?? null) !== null
+}
+
 /** Reactive worktree list for one repo cwd. Stable per cwd. */
 export function repoWorktreesForCwd(cwd?: null | string): ReadableAtom<HermesGitWorktree[]> {
   const key = normalizeCwd(cwd)
@@ -100,16 +139,12 @@ export function repoWorktreesForCwd(cwd?: null | string): ReadableAtom<HermesGit
 export type RepoChangeKind = 'added' | 'conflicted' | 'modified'
 
 // Absolute file path → its git change kind, for VS Code-style file-tree tinting.
-// Reuses the same bounded status probe (capped file list); git reports repo-root-
-// relative paths, so we join them onto the cwd. Keyed to $effectiveCwd, not the
-// sidebar's cwd: the file tree is a singleton decorating the review pane, and
-// that pane already follows the FOCUSED chat. Deletions never appear — the file
-// is gone from disk, so there's no tree row to tint.
-export const $repoChangeByPath = computed([$repoStatusByCwd, $effectiveCwd], (byCwd, cwd) => {
+// Reuses the same bounded $repoStatus probe (capped file list); git reports
+// repo-root-relative paths, so we join them onto the active cwd. Deletions never
+// appear — the file is gone from disk, so there's no tree row to tint.
+export const $repoChangeByPath = computed([$repoStatus, $currentCwd], (status, cwd) => {
   const map = new Map<string, RepoChangeKind>()
-  const key = normalizeCwd(cwd)
-  const status = key ? (byCwd[key] ?? null) : null
-  const root = (key || '').replace(/[/\\]+$/, '')
+  const root = (cwd || '').replace(/[/\\]+$/, '')
 
   if (!status || !root) {
     return map
@@ -123,16 +158,22 @@ export const $repoChangeByPath = computed([$repoStatusByCwd, $effectiveCwd], (by
   return map
 })
 
+/**
+ * Per-row Git decoration subscription. A visible file row reads one scalar, so
+ * a fresh repo-status map only re-renders that row when its own kind changed.
+ */
+export function repoChangeKindForPath(path: string): ReadableAtom<RepoChangeKind | undefined> {
+  return computed($repoChangeByPath, changes => changes.get(path))
+}
+
 // Cwds whose rails are on screen right now (refcounted — two tiles in one
-// worktree register it twice). Every unscoped refresh re-probes each registered
-// cwd plus the sidebar's, so a tile's rail moves when ITS agent touches the
-// tree, not only when the primary's does.
+// worktree register it twice). Every refresh edge re-probes each registered
+// cwd plus the primary workspace, so a tile's rail moves when ITS agent
+// touches the tree — not only when main's does.
 const registeredCwds = new Map<string, number>()
 
-/**
- * Keep `cwd` in the refresh set while its rail is mounted. Returns a release
- * (undefined for a blank cwd), kicking off an immediate probe on register.
- */
+/** Keep `cwd` in the refresh set while its rail is mounted. Returns a release
+ *  (undefined for a blank cwd), kicking off an immediate probe on register. */
 export function registerRepoStatusCwd(cwd?: null | string): (() => void) | undefined {
   const key = normalizeCwd(cwd)
 
@@ -196,15 +237,15 @@ interface RepoStatusRefreshRequest {
 // pile-up.
 const seqByCwd = new Map<string, number>()
 const pendingByCwd = new Map<string, RepoStatusRefreshRequest>()
-const scheduledCwds = new Set<string>()
 let repoStatusRefreshInFlight: Promise<void> | null = null
 let repoStatusRefreshTimer: ReturnType<typeof setTimeout> | null = null
+const scheduledCwds = new Set<string>()
 let scheduledAllTargets = false
 
 // A result only lands while it is still the newest request for ITS cwd. The
-// debounce below deliberately delays the next probe; without this live check an
-// old probe can land in that gap and briefly make a rail look like it is on a
-// stale branch.
+// debounce below deliberately delays the next probe; without this live check,
+// an old probe can land during that gap and briefly make a session look like
+// it is on a stale branch.
 const isCurrentSeq = (target: string, seq: number): boolean => seqByCwd.get(target) === seq
 
 async function loadWorktrees(target: string, seq: number): Promise<void> {
@@ -231,8 +272,8 @@ async function loadWorktrees(target: string, seq: number): Promise<void> {
 
 /**
  * Re-probe the working tree for one cwd. Best-effort: a non-repo, a remote
- * backend, or a missing probe clears that cwd's entry so its rail hides rather
- * than showing stale data.
+ * backend, or a missing probe clears that cwd's entry so its rail hides
+ * rather than showing stale data.
  */
 async function runRepoStatusRefresh({ probe, seq, target }: RepoStatusRefreshRequest): Promise<void> {
   try {
@@ -275,18 +316,14 @@ async function drainRepoStatusRefreshes(): Promise<void> {
   $repoStatusLoading.set(false)
 }
 
-/**
- * Re-probe the working tree for `cwd` (defaults to the sidebar's cwd). Only
- * that one cwd's entry moves — every other on-screen worktree keeps its own
- * cached truth.
- */
 export function refreshRepoStatus(cwd?: null | string): Promise<void> {
   const target = normalizeCwd(cwd ?? $currentCwd.get())
   const probe = desktopGit()?.repoStatus
 
   if (!probe) {
-    // No git bridge at all: there is no local git truth — wipe every entry so
-    // no rail shows stale status, and invalidate any in-flight probe results.
+    // Remote backend / no bridge: there is no local git truth at all — wipe
+    // every entry so no rail shows stale local status, and invalidate any
+    // in-flight probe results.
     pendingByCwd.clear()
     seqByCwd.clear()
     $repoStatusByCwd.set({})
@@ -297,8 +334,8 @@ export function refreshRepoStatus(cwd?: null | string): Promise<void> {
   }
 
   if (!target) {
-    // No cwd (a detached fresh chat). The computed views already read empty for
-    // a blank cwd, and other worktrees' entries stay valid.
+    // No cwd (a detached fresh chat). The primary computed already reads null
+    // for a blank cwd, and other worktrees' entries stay valid.
     return repoStatusRefreshInFlight || Promise.resolve()
   }
 
@@ -315,32 +352,39 @@ export function refreshRepoStatus(cwd?: null | string): Promise<void> {
   return repoStatusRefreshInFlight
 }
 
-/** Registered (on-screen) worktrees + the sidebar's cwd + the FOCUSED cwd. */
+/** Registered (on-screen) worktrees + the primary workspace. */
 function refreshTargets(): Set<string> {
   const targets = new Set(registeredCwds.keys())
+  const primary = normalizeCwd($currentCwd.get())
 
-  // Two cwds no rail necessarily registers. `$currentCwd` backs the primary
-  // views ($repoStatus / $repoWorktrees, read by the command palette).
-  // `$effectiveCwd` backs $repoChangeByPath, which the file tree tints from —
-  // and it is NOT always one of the mounted rails': it falls back to the
-  // workspace root when the focused chat is detached, and the workspace pane can
-  // be on screen (full-width, or on a narrow viewport) with no composer mounted
-  // at all. Leaving it out meant the tree sat on a cwd nothing ever probed while
-  // the review pane beside it — same cwd — listed changes.
-  for (const cwd of [$currentCwd.get(), $effectiveCwd.get()]) {
-    const key = normalizeCwd(cwd)
-
-    if (key) {
-      targets.add(key)
-    }
+  if (primary) {
+    targets.add(primary)
   }
 
   return targets
 }
 
-// `cwd` scopes the refresh to one worktree; omit it to re-probe every on-screen
-// worktree (turn settle, window focus — the tree may have changed under any of
-// them).
+/** Re-probe every on-screen worktree (and the primary). Awaits the drain. */
+export async function refreshAllRepoStatuses(): Promise<void> {
+  const targets = refreshTargets()
+
+  if (targets.size === 0) {
+    return
+  }
+
+  // Queue every target, then await the single in-flight drain once.
+  let last: Promise<void> = Promise.resolve()
+
+  for (const target of targets) {
+    last = refreshRepoStatus(target)
+  }
+
+  await last
+}
+
+// `cwd` scopes the refresh to one worktree; omit it to re-probe every
+// on-screen worktree (turn settle, window focus — the tree may have changed
+// under any of them).
 function scheduleRepoStatusRefresh(cwd?: null | string): void {
   if (cwd === undefined) {
     scheduledAllTargets = true
@@ -379,18 +423,21 @@ function scheduleRepoStatusRefresh(cwd?: null | string): void {
 // Wired once at module load (mirrors projects.ts's module-scope subscriptions).
 // Each is a structural edge where a working tree may have changed under us.
 
-// The sidebar's cwd changed (session switch / new chat) → re-probe that repo.
+// The active session's cwd changed (session switch / new chat) → the primary
+// computed re-keys instantly (a keyboard action in the switch-to-probe gap can
+// only ever see the NEW repo's last-known facts, never the previous
+// worktree's), then the debounced probe refreshes that repo's truth.
 $currentCwd.subscribe(cwd => scheduleRepoStatusRefresh(cwd))
 
-// The FOCUSED surface's cwd changed (a tile took focus, the focused chat moved,
-// or the workspace root landed) → re-probe THAT repo. The file tree's change
-// tint reads this cwd, and it is not always a mounted rail's: a detached chat
-// falls back to the workspace root, which no rail ever registers.
-$effectiveCwd.subscribe(cwd => scheduleRepoStatusRefresh(cwd))
+// Switching sessions can land on the same cwd but a different checked-out
+// branch (the agent ran `git checkout` in another session's terminal). The cwd
+// subscription above won't fire when the path is identical, so the branch label
+// would stay stale until a window focus or turn-settle triggers a refresh.
+// Treat the stored-session id as a structural edge in its own right.
+$selectedStoredSessionId.subscribe(() => scheduleRepoStatusRefresh())
 
-// A worktree was added/removed or a branch switched through store/projects.ts →
-// re-probe, so the coding rows' branch labels and counts repaint immediately
-// instead of waiting for the next workspace tick.
+// A worktree add/remove (desktop op, or the agent's out-of-band git in a settled
+// turn / a window refocus — both already bump this token) → re-probe.
 $worktreeRefreshToken.subscribe(() => scheduleRepoStatusRefresh())
 
 // A file-mutating tool finished (event-driven, not polled) → re-probe so the
@@ -411,119 +458,18 @@ $busy.subscribe(busy => {
   prevBusy = busy
 })
 
-// External changes while the window was away (an outside terminal) — refresh on
-// refocus, the git-GUI standard.
+// Window focus: external changes while we were away (an outside terminal).
 if (typeof window !== 'undefined') {
   window.addEventListener('focus', () => scheduleRepoStatusRefresh())
 }
 
-// ── New-worktree target resolution ───────────────────────────────────────────
-// This code lives here and not in projects.ts. To pick the target it must read
-// both the project state and the git truth, and coding-status already depends
-// on projects — a dependency the other way is a cycle.
-
-// `git status` answers "is this a repo?" for free, so remember the verdict per
-// path. Bounded by the folders a user actually points at in one run.
-const gitRepoByPath = new Map<string, boolean>()
-
-/**
- * Is this path a git repo? A path sitting in a project row is not evidence that
- * git can branch from it, so any candidate picked out of FOLDERS is validated
- * here. False when there's no git bridge at all (nothing to probe).
- */
-export async function isGitRepoPath(cwd: string): Promise<boolean> {
-  const key = normalizeCwd(cwd)
-  const probe = desktopGit()?.repoStatus
-
-  if (!key || !probe) {
-    return false
-  }
-
-  const cached = gitRepoByPath.get(key)
-
-  if (cached !== undefined) {
-    return cached
-  }
-
-  let isRepo = false
-
-  try {
-    isRepo = (await probe(key)) !== null
-  } catch {
-    isRepo = false
-  }
-
-  gitRepoByPath.set(key, isRepo)
-
-  return isRepo
-}
-
-// The repo a new worktree is cut from: the cwd of the FOCUSED surface, or the
-// root of the project the user entered. Both are things the user points at —
-// there is no "use some other project's repo" step, because that would branch
-// somewhere the user never selected. '' means no repo is in reach; that's a
-// no-op rather than an error, since a worktree only exists inside a repo.
-export async function resolveWorktreeRepoPath(): Promise<string> {
-  const scope = $projectScope.get()
-  const scopedProject = scope === ALL_PROJECTS ? undefined : $projectTree.get().find(node => node.id === scope)
-
-  const candidates = [$effectiveCwd.get(), projectRootCwd(scopedProject)]
-
-  for (const candidate of candidates) {
-    const path = (candidate ?? '').trim()
-
-    if (path && (await isGitRepoPath(path))) {
-      return path
-    }
-  }
-
-  return ''
-}
-
-/** Publish the "new worktree" intent. The ONE mounted WorktreeDialog renders it. */
-export async function openWorktreeDialog(options?: { base?: string; repoPath?: string }): Promise<void> {
-  const repoPath = options?.repoPath?.trim() || (await resolveWorktreeRepoPath())
-
-  if (repoPath) {
-    $worktreeDialog.set({ base: options?.base, repoPath })
-  }
-}
-
-/**
- * Drop every cached git truth because the BACKEND changed underneath us.
- *
- * Every key here is an absolute path, and a path is not gateway-scoped:
- * `/home/me/work` exists on the laptop AND on the box just switched to, and they
- * are different repos on different branches. Without this the rails paint the
- * previous gateway's branch and ± under the new one's paths — and worse,
- * {@link isGitRepoPath}'s memo has no TTL, so a path that was a repo over there
- * keeps answering "yes" here and ⌘⇧B opens the worktree dialog on a directory
- * git cannot branch from.
- *
- * In-flight probes are invalidated along with the sequence numbers, so an answer
- * from the old backend cannot land afterwards. Registrations are deliberately
- * KEPT — those rails are still mounted and still want their cwd probed, against
- * the new backend, which the scheduled refresh does.
- */
-export function resetRepoStatusForBackendSwitch(): void {
-  pendingByCwd.clear()
-  seqByCwd.clear()
-  gitRepoByPath.clear()
-  $repoStatusByCwd.set({})
-  $repoWorktreesByCwd.set({})
-  $repoStatusLoading.set(false)
-  scheduleRepoStatusRefresh()
-}
-
-/** Test-only: drop the probe memo + in-flight / pending / registered state so
- *  cases don't leak into each other. */
+/** Test-only: drop in-flight / pending / registered state so cases don't leak. */
 export function _resetCodingStatusForTests(): void {
   if (repoStatusRefreshTimer) {
     clearTimeout(repoStatusRefreshTimer)
     repoStatusRefreshTimer = null
   }
 
-  gitRepoByPath.clear()
   scheduledCwds.clear()
   scheduledAllTargets = false
   pendingByCwd.clear()
@@ -533,4 +479,48 @@ export function _resetCodingStatusForTests(): void {
   $repoStatusByCwd.set({})
   $repoWorktreesByCwd.set({})
   $repoStatusLoading.set(false)
+}
+
+// ── New-worktree target resolution ───────────────────────────────────────────
+// This code lives here and not in projects.ts. To pick the target, it must read
+// both the project state and the git truth, and coding-status already depends
+// on projects. A dependency in the other direction is a cycle.
+
+// The repo that a new worktree is cut from: the cwd of the focused surface, or
+// the root of the project the user entered. Both are things the user points at.
+// There is no "use some other project's repo" step, because that branches
+// somewhere the user never selected.
+//
+// A project root is not always a repo, so existence alone is not proof. Each
+// candidate is validated against the probe cache. This function is the only
+// authority on the target, so the hotkey no longer tests `$repoStatus` first,
+// and ⌘⇧B now works from a detached session inside a project. '' means that no
+// repo is in reach. That is a no-op and not an error, because a worktree only
+// exists inside a repo.
+export async function resolveWorktreeRepoPath(): Promise<string> {
+  const runtimeId = $focusedRuntimeId.get()
+  const scope = $projectScope.get()
+
+  const candidates = [
+    runtimeId ? ($sessionStates.get()[runtimeId]?.cwd ?? '') : '',
+    scope === ALL_PROJECTS ? '' : projectRootCwd($projectTree.get().find(node => node.id === scope))
+  ]
+
+  for (const candidate of candidates) {
+    const path = candidate.trim()
+
+    if (path && (await isGitRepoPath(path))) {
+      return path
+    }
+  }
+
+  return ''
+}
+
+export async function openWorktreeDialog(options?: { base?: string; repoPath?: string }): Promise<void> {
+  const repoPath = options?.repoPath?.trim() || (await resolveWorktreeRepoPath())
+
+  if (repoPath) {
+    $worktreeDialog.set({ base: options?.base, repoPath })
+  }
 }

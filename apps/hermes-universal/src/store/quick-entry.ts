@@ -1,34 +1,103 @@
 /**
- * Quick Entry — the state behind the global-chord mini composer (MJXHRM-384).
+ * Quick Entry (renderer side) — the mini composer's own state, and the
+ * primary window's bridge back into the real prompt-submit path.
  *
- * Quick Entry is the HUD's opposite. The HUD is the whole conversation, moved
- * somewhere else; Quick Entry is a single line of text and nothing else — a
- * capture surface you summon from inside another application, type one sentence
- * into, and never see again.
+ * The quick window carries NO gateway connection: it hands its text to the main
+ * process, which forwards it to the primary renderer, which sends it through the
+ * SAME `submitText` the normal composer uses (see
+ * app/contrib/hooks/use-quick-entry-bridge). There is no second submit path and
+ * no new gateway RPC.
  *
- * The window it lives in carries NO gateway connection of its own. It hands the
- * typed text to the PRIMARY window, which submits it through the same prompt
- * path the real composer uses (`app/quick-entry/bridge.ts`). There is no second
- * submit path and no new gateway RPC — a capture surface that dialled the
- * backend itself would be a second client for one user's one prompt.
- *
- * Ported from desktop `store/quick-entry.ts`. The reducer below is the verbatim
- * half: it is pure, it is unit-tested, and every behaviour in it is one a user
- * would actually notice. Desktop's other half — the `window.hermesDesktop`
- * settings bridge, which existed because Electron's MAIN process owned the OS
- * accelerator — has no counterpart here: universal registers global chords from
- * the rebindable keybind registry (`lib/keybinds/global-shortcut.ts`), so the
- * only device-local preference left is the on/off switch at the bottom of this
- * file.
+ * The device-local preference (enabled + shortcut) is authoritative in the MAIN
+ * process — it owns the OS registration and must restore it on a cold launch
+ * without the renderer ever visiting Settings. This module treats what the
+ * bridge returns as the truth and caches it for the settings UI, same authority
+ * split as keep-awake.
  */
 
-import { Codecs, persistentAtom } from '@/lib/persisted'
-import type { SessionInfo } from '@/types/hermes'
+import { atom } from 'nanostores'
 
-/** Send into whatever chat the primary window currently has in front. */
-export const QUICK_TARGET_CURRENT = 'current'
-/** Start a brand-new session for this prompt. */
-export const QUICK_TARGET_NEW = 'new'
+export interface QuickEntryState {
+  enabled: boolean
+  /** null before the first read; the settings row shows a skeleton until then. */
+  registered: boolean | null
+  /** Why the OS shortcut isn't live: taken by another app, or unusable. */
+  error: null | QuickEntryRegistrationError
+  shortcut: string
+}
+
+export type QuickEntryRegistrationError = 'invalid' | 'taken'
+
+export interface QuickEntryStatus {
+  enabled: boolean
+  error: null | QuickEntryRegistrationError
+  registered: boolean
+  shortcut: string
+}
+
+export const QUICK_ENTRY_DEFAULT_SHORTCUT = 'CommandOrControl+Shift+Space'
+
+export const $quickEntry = atom<QuickEntryState>({
+  enabled: true,
+  error: null,
+  registered: null,
+  shortcut: QUICK_ENTRY_DEFAULT_SHORTCUT
+})
+
+function applyStatus(status: QuickEntryStatus | undefined): void {
+  if (!status) {
+    return
+  }
+
+  $quickEntry.set({
+    enabled: status.enabled === true,
+    error: status.error ?? null,
+    registered: status.registered === true,
+    shortcut: typeof status.shortcut === 'string' && status.shortcut ? status.shortcut : QUICK_ENTRY_DEFAULT_SHORTCUT
+  })
+}
+
+/** True when the shell exposes the Quick Entry capability (desktop only). */
+export function canUseQuickEntry(): boolean {
+  return typeof window !== 'undefined' && typeof window.hermesDesktop?.quickEntry?.getSettings === 'function'
+}
+
+/** Read the live registration state into the store (Settings mount). */
+export async function loadQuickEntrySettings(): Promise<void> {
+  if (!canUseQuickEntry()) {
+    return
+  }
+
+  try {
+    applyStatus(await window.hermesDesktop.quickEntry.getSettings())
+  } catch {
+    // A failed read leaves the store as-is; the row keeps its last known copy.
+  }
+}
+
+/**
+ * Write a preference and adopt whatever the main process reports back — a
+ * rejected shortcut or an already-taken chord comes back as an error state
+ * instead of a silently-lost setting.
+ */
+export async function saveQuickEntrySettings(patch: { enabled?: boolean; shortcut?: string }): Promise<void> {
+  if (!canUseQuickEntry()) {
+    return
+  }
+
+  // Optimistic: paint the intent immediately, then let the authoritative reply
+  // (which knows whether the OS accepted it) get the last word.
+  const previous = $quickEntry.get()
+  $quickEntry.set({ ...previous, ...patch, registered: previous.registered })
+
+  try {
+    applyStatus(await window.hermesDesktop.quickEntry.setSettings(patch))
+  } catch {
+    $quickEntry.set(previous)
+  }
+}
+
+// ── Quick window submit state machine ───────────────────────────────────────
 
 /** A recent session the quick window can target (pushed by the primary). */
 export interface QuickEntrySessionOption {
@@ -36,8 +105,28 @@ export interface QuickEntrySessionOption {
   title: string
 }
 
+const QUICK_ENTRY_SESSION_OPTIONS = 5
+
+/** Recent non-archived sessions for the quick-window picker (desktop parity). */
+export function quickEntrySessionOptions(
+  sessions: ReadonlyArray<{ archived?: boolean | null; id: string; preview?: string | null; title?: string | null }>
+): QuickEntrySessionOption[] {
+  return sessions
+    .filter(session => !session.archived)
+    .slice(0, QUICK_ENTRY_SESSION_OPTIONS)
+    .map(session => ({
+      id: session.id,
+      title: session.title?.trim() || session.preview?.trim() || session.id
+    }))
+}
+
+/** Send into whatever chat the main window currently has in front. */
+export const QUICK_TARGET_CURRENT = 'current'
+/** Start a brand-new session for this prompt. */
+export const QUICK_TARGET_NEW = 'new'
+
 /**
- * The primary window's push into the quick window: is the gateway usable, and
+ * The primary renderer's push into the quick window: is the gateway usable, and
  * which recent sessions can be targeted. The quick window has NO gateway of its
  * own, so this pushed copy is its only view of backend truth — it starts
  * disconnected (input disabled) until the first push proves otherwise.
@@ -47,7 +136,7 @@ export interface QuickEntryStatePush {
   sessions: QuickEntrySessionOption[]
 }
 
-/** What a quick-window submit carries back to the primary window. */
+/** What a quick-window submit carries back to the primary renderer. */
 export interface QuickEntrySubmitPayload {
   /** QUICK_TARGET_CURRENT, QUICK_TARGET_NEW, or a stored session id. */
   target: string
@@ -60,19 +149,19 @@ export interface QuickEntrySubmitPayload {
  * must still not hide the window, a real submit clears the draft AND hides, a
  * double-fire while already submitting must not send twice, and a dead gateway
  * must disable sending entirely — is the part worth proving, and none of it
- * needs React or a window system.
+ * needs React or Electron.
  */
 export interface QuickComposerState {
   /** Last pushed gateway truth. False (the initial value) disables submit. */
   connected: boolean
   draft: string
-  /** Recent sessions the picker offers, pushed by the primary window. */
+  /** Recent sessions the picker offers, pushed by the primary renderer. */
   sessions: QuickEntrySessionOption[]
   /** True between a send and the window actually hiding. Blocks a double-send. */
   submitting: boolean
   /** Where a submit lands: current / new / a stored session id. */
   target: string
-  /** Whether the window should be visible. False asks the shell to dismiss. */
+  /** Whether the window should be visible. False asks the shell to hide. */
   visible: boolean
 }
 
@@ -86,13 +175,13 @@ export type QuickComposerEvent =
   | { type: 'target'; target: string }
 
 export interface QuickComposerTransition {
-  /** Payload to hand the primary window, or null for none. */
+  /** Payload to send through the real prompt-submit path, or null for none. */
   send: null | QuickEntrySubmitPayload
   state: QuickComposerState
 }
 
 export const initialQuickComposerState: QuickComposerState = {
-  // Disconnected until the primary window's first push proves otherwise — a
+  // Disconnected until the primary renderer's first push proves otherwise — a
   // capture window that accepts text it can never deliver is a lie.
   connected: false,
   draft: '',
@@ -107,7 +196,7 @@ export function quickComposerReducer(state: QuickComposerState, event: QuickComp
     case 'blur':
     case 'dismiss': {
       // Escape / focus loss discards without sending. A dismiss mid-submit still
-      // hides — the send already left for the primary window.
+      // hides — the send already left for the main process.
       return {
         send: null,
         state: { ...state, draft: '', submitting: false, target: QUICK_TARGET_CURRENT, visible: false }
@@ -172,41 +261,27 @@ export function quickComposerReducer(state: QuickComposerState, event: QuickComp
   }
 }
 
-// ── The picker's options ────────────────────────────────────────────────────
+// ── Primary-renderer bridge ────────────────────────────────────────────────
 
-/** The picker is a capture aid, not a session browser — a handful of recent
- *  rows is the whole point. */
-export const QUICK_ENTRY_SESSION_OPTIONS = 5
+let submitHandler: ((payload: QuickEntrySubmitPayload) => void) | null = null
+let unsubscribeSubmit: (() => void) | null = null
 
 /**
- * The recent sessions the picker offers, from the primary window's session list.
- *
- * Pure and taking the list as an argument rather than reading `$sessions`
- * itself, so the mapping that decides what a row is CALLED — and the archived
- * filter, which is the difference between offering a live conversation and
- * offering a dead one — is testable without a store.
+ * Register the handler that turns a quick-window submit into a real send. The
+ * primary window routes it by target: current chat → `submitText`, a stored
+ * session id → resume + submit, new → fresh draft + submit.
  */
-export function quickEntrySessionOptions(sessions: readonly SessionInfo[]): QuickEntrySessionOption[] {
-  return sessions
-    .filter(session => !session.archived)
-    .slice(0, QUICK_ENTRY_SESSION_OPTIONS)
-    .map(session => ({
-      id: session.id,
-      // The id is the last resort, not a nice label — but a row with no text at
-      // all is a row the user cannot aim at.
-      title: session.title?.trim() || session.preview?.trim() || session.id
-    }))
+export function setQuickEntrySubmitHandler(fn: ((payload: QuickEntrySubmitPayload) => void) | null): void {
+  submitHandler = fn
 }
 
-/**
- * Validate a submit that arrived over the window event bus.
- *
- * Any window of this app can emit on the channel, so the primary window treats
- * the payload as data rather than as a promise. Desktop additionally tolerated a
- * bare string (a v1 quick window left behind by a partial update); universal has
- * never shipped that wire shape, so this only accepts the object.
- */
 export function normalizeQuickEntrySubmit(raw: unknown): null | QuickEntrySubmitPayload {
+  // Tolerate the v1 bare-string wire shape (an older quick window after a
+  // partial update) by treating it as "send to the current chat".
+  if (typeof raw === 'string') {
+    return raw.trim() ? { target: QUICK_TARGET_CURRENT, text: raw } : null
+  }
+
   if (!raw || typeof raw !== 'object') {
     return null
   }
@@ -224,22 +299,27 @@ export function normalizeQuickEntrySubmit(raw: unknown): null | QuickEntrySubmit
   }
 }
 
-// ── Device-local preference ─────────────────────────────────────────────────
-
 /**
- * Whether the chord summons Quick Entry at all.
- *
- * A device-local preference (`lib/persisted`, like keep-awake and the terminal
- * host override) rather than a file in userData: universal keeps this class of
- * "this computer only, nothing to send the gateway" knob in the webview, and
- * there is no main process here to be authoritative instead.
- *
- * Default ON, matching desktop — the feature is inert until its chord is
- * pressed, and on universal that chord ships unbound (see
- * `lib/keybinds/actions.ts`), so a default-on switch costs a user nothing.
+ * Wire the quick-window → primary-renderer submit channel once. Returns a
+ * disposer. Idempotent — a second call while wired is a no-op.
  */
-export const $quickEntryEnabled = persistentAtom<boolean>('hermes.quickEntry', true, Codecs.bool)
+export function initQuickEntryBridge(): () => void {
+  const api = typeof window === 'undefined' ? undefined : window.hermesDesktop?.quickEntry
 
-export function setQuickEntryEnabled(on: boolean): void {
-  $quickEntryEnabled.set(on)
+  if (!api?.onSubmit || unsubscribeSubmit) {
+    return () => {}
+  }
+
+  unsubscribeSubmit = api.onSubmit(raw => {
+    const payload = normalizeQuickEntrySubmit(raw)
+
+    if (payload) {
+      submitHandler?.(payload)
+    }
+  })
+
+  return () => {
+    unsubscribeSubmit?.()
+    unsubscribeSubmit = null
+  }
 }

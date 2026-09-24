@@ -22,7 +22,6 @@ const created = (name: string, secret = `secret-${name}`): WebhookCreateResponse
     events: [],
     name,
     prompt: '',
-    script: '',
     secret,
     secret_set: true,
     skills: [],

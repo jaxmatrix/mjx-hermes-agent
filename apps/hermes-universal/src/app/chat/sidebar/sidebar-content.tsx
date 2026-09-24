@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
+import { refreshCronJobs, triggerAndRefreshCronJobs } from '@/app/cron/cron-actions'
 import { PlatformAvatar } from '@/app/messaging/platform-icon'
 import { cronJobRoute, sessionRoute } from '@/app/routes'
 import { Codicon } from '@/components/ui/codicon'
@@ -16,38 +17,14 @@ import { reuseUnchanged } from '@/lib/structural-share'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { useStore } from '@/store/atom'
 import { $busy, $sessionId } from '@/store/chat'
-import { $cronJobs, refreshCronJobs, triggerCron } from '@/store/cron'
-import {
-  $dismissedAutoProjectIds,
-  $pinnedSessionIds,
-  $sidebarAgentsGrouped,
-  $sidebarMessagingOpenIds,
-  $sidebarOrdering,
-  $sidebarPinsOpen,
-  $sidebarPrFilter,
-  $sidebarProjectFilter,
-  $sidebarProjectOrderIds,
-  $sidebarRecentsOpen,
-  $sidebarSessionOrderIds,
-  $sidebarSessionOrderManual,
-  $sidebarShowArchived,
-  $sidebarStatusFilter,
-  pinSession,
-  SESSION_SEARCH_FOCUS_EVENT,
-  setPinnedSessionOrder,
-  setSidebarAgentsGrouped,
-  setSidebarPinsOpen,
-  setSidebarProjectOrderIds,
-  setSidebarRecentsOpen,
-  setSidebarSessionOrderIds,
-  setSidebarSessionOrderManual,
-  type SidebarOrdering,
-  toggleSidebarMessagingOpen,
-  unpinSession
-} from '@/store/layout'
+import { $cronJobs } from '@/store/cron'
+import { $dismissedAutoProjectIds, $pinnedSessionIds, $sidebarAgentsGrouped, $sidebarMessagingOpenIds, $sidebarOrdering, $sidebarPinsOpen, $sidebarPrFilter, $sidebarProjectFilter, $sidebarProjectOrderIds, $sidebarRecentsOpen, $sidebarSessionOrderIds, $sidebarSessionOrderManual, $sidebarShowArchived, $sidebarStatusFilter, pinSession, setPinnedSessionOrder, setSidebarAgentsGrouped, setSidebarPinsOpen, setSidebarProjectOrderIds, setSidebarRecentsOpen, setSidebarSessionOrderIds, setSidebarSessionOrderManual, type SidebarOrdering, toggleSidebarMessagingOpen, unpinSession } from '@/store/layout'
 import { $sidebarCronOpen, setSidebarCronOpen } from '@/store/layout'
-import { $changeEventsAvailable, $cronChangeTick, livePollIntervalMs } from '@/store/live-sync'
-import { newSessionInProfile, startNewSession } from '@/store/new-session'
+import { livePollIntervalMs } from '@/store/live-poll'
+import { $changeEventsAvailable, $cronChangeTick } from '@/store/live-sync'
+import { startNewSession } from '@/store/new-session'
+import { notifyError } from '@/store/notifications'
+import { SESSION_SEARCH_FOCUS_EVENT } from '@/store/pane-geometry'
 import { $profileScope, ALL_PROFILES, normalizeProfileKey } from '@/store/profile'
 import { $profiles } from '@/store/profiles'
 import {
@@ -75,14 +52,13 @@ import {
   refreshPullRequests,
   sessionPrKey
 } from '@/store/pull-requests'
+import { $messagingSessions, $sessions, $sessionsLoading, sessionPinId } from '@/store/session'
+import { $sessionDotStateById, sessionStatusBucket, sessionStatusRank } from '@/store/session-dot-state'
 import {
   $activeStoredSessionId,
-  $messagingSessions,
   $pinnedSessionCache,
   $searchLoading,
-  $sessions,
   $sessionSearch,
-  $sessionsLoading,
   $sessionsTotal,
   $workingSessionIds,
   archiveSessionLocal,
@@ -95,26 +71,20 @@ import {
   refreshMessagingSessions,
   refreshSessions,
   resetSessionsPaging,
-  searchSessionsQuery,
-  sessionPinId
-} from '@/store/session'
-import { $sessionDotStateById, sessionStatusBucket, sessionStatusRank } from '@/store/session-dot-state'
+  searchSessionsQuery
+} from '@/store/session-lifecycle'
+import { markSessionUnread } from '@/store/session-unread-remote'
 import { $archivedSessions, loadArchivedSessions, sessionCostUsd } from '@/store/sidebar-archive'
 import { openAppRoute } from '@/store/windows'
 import type { SessionInfo, SessionSearchResult } from '@/types/hermes'
 
-import { countLabel } from './chrome'
 import { SidebarCronJobsSection } from './cron-jobs-section'
 import { SidebarFilterMenu } from './filter-menu'
-import { SidebarLoadMoreButton, SidebarLoadMoreRow } from './load-more-row'
+import { SidebarLoadMoreRow } from './load-more-row'
 import { ProjectDialog } from './project-dialog'
-import {
-  type SidebarProjectTree,
-  type SidebarSessionGroup,
-  sortProjectsForOverview,
-  useRepoWorktreeMap
-} from './projects/model'
+import { type SidebarProjectTree, sortProjectsForOverview, useRepoWorktreeMap } from './projects/model'
 import { ProjectBackRow } from './projects/overview-row'
+import { type SidebarSessionGroup } from './projects/workspace-groups'
 import { StartWorkButton } from './projects/workspace-header'
 import { WorktreeDialog } from './projects/worktree-dialog'
 import { SidebarPinnedEmptyState } from './section-states'
@@ -144,6 +114,14 @@ function searchResultToSession(r: SessionSearchResult): SessionInfo {
     title: snippet,
     tool_call_count: 0
   }
+}
+
+function sessionListMeta(shown: number, total: number): string | undefined {
+  if (total <= shown) {
+    return shown > 0 ? String(shown) : undefined
+  }
+
+  return `${shown} / ${total}`
 }
 
 function togglePin(pinId: string): void {
@@ -509,9 +487,27 @@ export function SidebarScrollBody({
   // the prop referentially constant for every user who never opens the menu, so
   // `renderProjectRows` downstream keeps the memoized identity MJXHRM-219 paid
   // for. A `() => true` would be a fresh function every render instead.
-  const sessionFilter = filtersNarrow ? sessionMatchesFilters : undefined
-
   const trimmed = query.trim()
+
+  const toggleUnread = useCallback(
+    (storedId: string) => {
+      const row = $sessions.get().find(r => r.id === storedId)
+
+      if (!row) {
+        return
+      }
+
+      markSessionUnread(storedId, row.unread !== true).catch(err => notifyError(err, s.row.unreadFailed))
+    },
+    [s.row.unreadFailed]
+  )
+
+  const cronScope = profileScope === ALL_PROFILES ? 'all' : profileScope
+
+  const onTriggerCronJob = useCallback(
+    (jobId: string) => triggerAndRefreshCronJobs(jobId, cronScope).then(() => undefined),
+    [cronScope]
+  )
 
   const results = useMemo(() => {
     if (!trimmed) {
@@ -560,7 +556,7 @@ export function SidebarScrollBody({
       base = base.filter(sessionMatchesFilters)
     }
 
-    base.sort(compareSessions(ordering, dotStates))
+    base.sort(compareSessions(ordering, dotStates as Record<string, SessionDotState | undefined>))
 
     return orderManual && orderIds.length ? applyManualOrder(base, orderIds) : base
   }, [pool, pinnedIds, orderManual, orderIds, ordering, dotStates, filtersNarrow, sessionMatchesFilters])
@@ -783,9 +779,10 @@ export function SidebarScrollBody({
       onDeleteSession,
       onResumeSession,
       onTogglePin: togglePin,
+      onToggleUnread: toggleUnread,
       workingSessionIdSet: working
     }),
-    [activeId, onArchiveSession, onDeleteSession, onResumeSession, working]
+    [activeId, onArchiveSession, onDeleteSession, onResumeSession, toggleUnread, working]
   )
 
   const hasMore = sessions.length < total
@@ -853,7 +850,7 @@ export function SidebarScrollBody({
             footer={
               !grouped && hasMore ? (
                 <div className="pt-1">
-                  <SidebarLoadMoreButton loading={sessionsLoading} onClick={() => void loadMoreSessions()} step={0} />
+                  <SidebarLoadMoreRow loading={sessionsLoading} onClick={() => void loadMoreSessions()} step={0} />
                 </div>
               ) : null
             }
@@ -918,11 +915,10 @@ export function SidebarScrollBody({
                   <GlyphSpinner ariaLabel={s.loading} className="text-[0.6875rem] text-(--ui-text-quaternary)" />
                 ) : undefined
               ) : (
-                countLabel(recents.length, total)
+                sessionListMeta(recents.length, total)
               )
             }
             onEnterProject={enterProject}
-            onNewSessionInProfile={newSessionInProfile}
             onNewSessionInWorkspace={newSessionInWorkspace}
             onReorderProjects={showAllProfiles ? undefined : ids => setSidebarProjectOrderIds(ids)}
             onReorderSessions={
@@ -937,14 +933,13 @@ export function SidebarScrollBody({
             open={recentsOpen}
             pinned={false}
             projectBackRow={
-              inProject ? <ProjectBackRow label={s.projects.back} onExit={exitProjectScope} /> : undefined
+              inProject ? <ProjectBackRow label={s.projects.back} onClick={exitProjectScope} /> : undefined
             }
-            projectContent={inProject ? enteredProject : undefined}
+            projectContent={inProject ? (enteredProject ?? undefined) : undefined}
             projectOverview={grouped && !inProject ? overview : undefined}
             projectRepoWorktrees={scopedRepoWorktrees}
             projectsLoading={grouped ? projectsLoading : false}
             rootClassName={SESSIONS_ROOT_CLASS}
-            sessionFilter={sessionFilter}
             sessions={grouped || showAllProfiles ? [] : recents}
             showProfileTags={showAllProfiles}
             sortable={!grouped && !showAllProfiles}
@@ -980,7 +975,7 @@ export function SidebarScrollBody({
                       platformName={group.label}
                     />
                   }
-                  labelMeta={countLabel(Math.min(shown, group.sessions.length), group.sessions.length)}
+                  labelMeta={sessionListMeta(Math.min(shown, group.sessions.length), group.sessions.length)}
                   onToggle={() => toggleSidebarMessagingOpen(group.sourceId)}
                   open={messagingOpenIds.includes(group.sourceId)}
                   pinned={false}
@@ -1005,7 +1000,7 @@ export function SidebarScrollBody({
                 onNavigate?.()
               }}
               onToggle={() => setSidebarCronOpen(!cronOpen)}
-              onTriggerJob={(id, profile) => void triggerCron(id, profile)}
+              onTriggerJob={onTriggerCronJob}
               open={cronOpen}
             />
           )}

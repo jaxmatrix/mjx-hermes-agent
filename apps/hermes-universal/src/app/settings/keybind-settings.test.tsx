@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { I18nProvider } from '@/i18n'
+import { globalKeybindActions } from '@/lib/keybinds/actions'
 import { $capture, bindingsFor, resetAllBindings } from '@/store/keybinds'
 
 import { KeybindSettings } from './keybind-settings'
@@ -48,18 +49,13 @@ describe('KeybindSettings', () => {
     expect(screen.getByText('Press a key…')).toBeInTheDocument()
   })
 
-  // The only rows whose effect leaves this app: the OS is asked to reserve them
-  // machine-wide at startup. The first-run notice says so once; this panel is
-  // where a user who dismissed it can still find out which rows do it.
-  it('marks the shortcuts claimed from the whole operating system', () => {
+  // OS-global chords are declared in lib/keybinds/actions (not painted as a
+  // "System-wide" badge in the panel anymore). The HUD toggle is the only one.
+  it('keeps the OS-global HUD shortcut in the map, and only that one', () => {
     renderPanel()
 
-    const hudRow = screen.getByText('Toggle HUD window').closest('div')
-    const sidebarRow = screen.getByText('Toggle sessions sidebar').closest('div')
-
-    expect(hudRow?.textContent).toContain('System-wide')
-    // And ONLY those — an in-app shortcut takes nothing from anyone.
-    expect(sidebarRow?.textContent).not.toContain('System-wide')
+    expect(screen.getByText('Toggle HUD mode')).toBeInTheDocument()
+    expect(globalKeybindActions().map(a => a.id)).toEqual(['view.toggleHud'])
   })
 
   it('resets every binding back to its shipped default', () => {

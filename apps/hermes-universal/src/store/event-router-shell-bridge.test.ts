@@ -17,7 +17,7 @@ const bridge = vi.hoisted(() => ({
   revealBridgePane: vi.fn()
 }))
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -27,27 +27,33 @@ vi.mock('@/store/gateway', async () => {
   }
 })
 
-vi.mock('@/store/pane-focus', () => bridge)
+vi.mock('@/store/pane-focus-universal', () => bridge)
 vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 vi.mock('@/store/native-notifications', () => ({ dispatchNativeNotification: vi.fn() }))
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 
 import { routeGatewayEvent } from '@/store/event-router'
-import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
+
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
 
 const event = (type: string, payload: Record<string, unknown>, sessionId: string): GatewayEvent =>
   ({ payload, session_id: sessionId, type }) as GatewayEvent
 
 describe('event-router → shell bridge', () => {
   beforeEach(() => {
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     // The chat the user is looking at, and one running in the background. Both
     // are known sessions: the router fails closed on an unknown one, which
     // would make the gate below pass for the wrong reason.
     $activeSessionKey.set('visible')
-    ensureSessionSlice('visible')
-    ensureSessionSlice('background')
+    ensureSessionSlice(localSite('visible'))
+    ensureSessionSlice(localSite('background'))
     bridge.revealBridgePane.mockClear()
     bridge.applyBridgeLayoutPreset.mockClear()
   })

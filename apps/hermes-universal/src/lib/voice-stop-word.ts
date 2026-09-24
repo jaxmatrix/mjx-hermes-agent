@@ -11,12 +11,6 @@
 // phrase (optionally addressed to Hermes), so a real turn that merely contains
 // the word "stop" — e.g. "stop the docker container" or "how do I stop a
 // running process" — is never swallowed.
-//
-// Ported verbatim from apps/desktop/src/lib/voice-stop-word.ts. Note: this
-// matcher is hardcoded and does NOT read the `voice.stop_phrases` config —
-// that config value only feeds the displayed hint text in the UI, not this
-// matching logic. That's a real latent inconsistency in desktop, preserved
-// here rather than "fixed" out of scope for a faithful port.
 
 // Canonical stop commands. Kept short and unambiguous; each must be the entire
 // spoken utterance to match.

@@ -25,16 +25,19 @@
 // module guaranteed to be loaded whenever a turn can run.
 import '@/store/turn-hydration'
 
+import type { BillingBlock } from '@hermes/shared'
+
 import { burstVibeHearts } from '@/components/chat/vibe-hearts'
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
-import { coerceText } from '@/lib/chat-messages'
+import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { coerceThinkingText } from '@/lib/chat-runtime'
 import { type GatewayToolPayload, toolIdFromPayload } from '@/lib/chat-tool-parts'
 import { playCompletionSound } from '@/lib/completion-sound'
 import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
 import { triggerHaptic } from '@/lib/haptics'
 import { queryClient } from '@/lib/query-client'
+import { coerceText } from '@/lib/session-key-messages'
 import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { type DeltaChannel, flushDeltas, queueDelta, setStreamBatchSink } from '@/lib/stream-batch'
 import { prettyName } from '@/lib/text'
@@ -43,50 +46,50 @@ import { $activeConnectionId } from '@/store/active-connection'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
-import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
+import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block-universal'
 import { noteMissedSteer } from '@/store/chat'
-import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
-import { routeCompactionEvent } from '@/store/compaction'
-import { addGatewayEventListener, requestGateway } from '@/store/gateway'
+import { normalizeQuestions } from '@/store/clarify'
+import { setConnectionEventSink, setConnectionStreamReset } from '@/store/connection-clients'
+import { addGatewayEventListener, requestGateway } from '@/store/gateway-client'
 import {
   notifyCronChanged,
   notifyPairingChanged,
   notifyPetChanged,
   notifyPlatformsChanged,
-  notifyPluginsChanged,
   notifySessionsChanged,
   type PetChangeMeta,
   setChangeEventsAvailable
 } from '@/store/live-sync'
-import { readMcpSetupRequest } from '@/store/mcp-setup'
+import { notifyPluginsChanged } from '@/store/live-sync-universal'
+import { sessionMcpSetupRequest } from '@/store/mcp-setup'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
-import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus'
+import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus-universal'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
-  clearAllPrompts,
   clearSessionClarify,
   clearSessionMcpSetup,
   clearSessionSecret,
   clearSessionSudo,
-  sessionAwaitingInput,
-  sessionMcpSetupRequest,
-  sessionSecretRequest,
-  sessionSudoRequest,
   setSessionApproval,
   setSessionClarify,
   setSessionMcpSetup,
   setSessionSecret,
   setSessionSudo
-} from '@/store/prompts'
-import { applyReactionEvent } from '@/store/reactions'
+} from '@/store/prompt-session-bridge'
+import { clearAllPrompts, sessionAwaitingInput, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
+import { applyReactionEvent } from '@/store/reactions-universal'
+import { readChoices, readLockedAnswers, readMcpSetupRequest } from '@/store/resume-prompts'
 import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
+import { connectionEpoch, noteConnectionEpoch, noteReplaySeq } from '@/store/session-replay'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
+  runtimeKeyFor,
   runtimeKeyForStoredSession,
+  siteOfKey,
   updateSession
 } from '@/store/session-state-types'
 import { pruneFinishedSessionSubagents, upsertSubagent } from '@/store/subagents'
@@ -105,16 +108,30 @@ import type { ContextBreakdown, MessageReaction } from '@/types/hermes'
 // there reorders module init and trips the `@/hermes` `_apiProfile` TDZ cycle in
 // tests), which is why registration is pushed rather than pulled.
 addGatewayEventListener(event => routeGatewayEvent(event))
+// …and the same router for every connection that owns a client (MJXHRM-591).
+// `deliver()` offers a background connection's frames to whoever claims them and
+// drops the rest (rule 7); this is that claim, made once, for the one consumer
+// that knows how to place a frame in its own connection's slice.
+setConnectionEventSink(event => routeGatewayEvent(event))
+// …and the pin a connection's stream held is pruned by the same release that
+// gives its client back (Design v1.3, N10): a connection nothing holds has no
+// stream to pin, and a map that only grows is a map that outlives its entries.
+setConnectionStreamReset(connectionId => unscopedStreamByConnection.delete(connectionId))
 
 // The session that owns the current unscoped stream — pinned on message.start,
 // released on message.complete/error (see lib/gateway-events).
-let unscopedStreamSessionId: null | string = null
+//
+// PER CONNECTION (MJXHRM-591): two sockets stream at once now, and one pin
+// shared between them is a cross-connection collision — connection B's
+// `message.start` would claim the stream connection A is mid-way through, and
+// A's next unscoped delta would land in B's transcript.
+const unscopedStreamByConnection = new Map<string, null | string>()
 
 /** Forget the unscoped-stream pin. Called on chat reset, session promote,
  *  gateway reconnect and profile switch — anywhere the stream's owner is no
  *  longer meaningful. */
 export function resetUnscopedStreamPin(): void {
-  unscopedStreamSessionId = null
+  unscopedStreamByConnection.clear()
 }
 
 /** Events that are about the app, not about one conversation — they are handled
@@ -189,7 +206,7 @@ setStreamBatchSink((key, channel, text) => {
  * label. Best-effort — keep the prior value on failure.
  */
 async function refreshSessionUsage(key: string): Promise<void> {
-  const sessionId = $sessionStates.get()[key]?.runtimeSessionId
+  const sessionId = $sessionKeyStates.get()[key]?.runtimeSessionId
 
   if (!sessionId) {
     return
@@ -258,14 +275,30 @@ function applySessionTitle(payload: Record<string, unknown>): void {
 
 /** Fold one gateway event into the session that owns it. */
 export function routeGatewayEvent(event: GatewayEvent): void {
-  // A frame stamped with a connection id that is not the ACTIVE one belongs to a
-  // secondary socket (MJXHRM-446), and its consumers were already offered it by
-  // `addConnectionEventListener`. Dropping it here is rule 7: another machine's
-  // session id must not reach `$sessionStates`, where ids can collide across
-  // backends. An unstamped frame is the ambient socket's and routes as always.
-  const stamped = (event as { connectionId?: string }).connectionId
+  // WHICH SOCKET delivered this frame. An unstamped one is the ambient client's,
+  // which is by definition the active connection; a stamped one came from a
+  // connection's own owning client, through `addConnectionEventListener`.
+  //
+  // It used to be dropped here — rule 7, "another machine's session id must not
+  // reach `$sessionKeyStates`, where ids can collide across backends". The ids no
+  // longer collide: a session key carries its connection (MJXHRM-591), so the
+  // frame can be routed instead of discarded, which is the whole point of a tab
+  // bound to a background connection.
+  const stamped = event.connectionId
+  const connectionId = stamped ?? $activeConnectionId.get() ?? LOCAL_CONNECTION_ID
+  const ambient = !stamped || stamped === $activeConnectionId.get()
 
-  if (stamped && stamped !== $activeConnectionId.get()) {
+  // The replay epoch is read from EVERY socket's `gateway.ready`, ambient or
+  // not, and before the guard below: it is what tells a reconnect whether the
+  // watermark it holds still addresses anything (invariant 35).
+  if (event.type === 'gateway.ready') {
+    noteConnectionEpoch(connectionId, (event.payload as { replay_epoch?: string } | undefined)?.replay_epoch)
+  }
+
+  if (!ambient && GLOBAL_EVENT_TYPES.has(event.type)) {
+    // App-level frames — a pet, a toast, a watched-file tick, the session list's
+    // own change events — describe the backend the app is pointed at. A
+    // background connection's copy must not act on the app around it.
     return
   }
 
@@ -342,31 +375,54 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
   // Resolve the owning session. `activeSessionId` is the never-null map KEY, so
   // the fallback for an unscoped stream event can never resolve to nothing.
+  //
+  // The explicit id is SCOPED before anything else sees it, so every value
+  // downstream — the pin, the fallback, the map key — is already a session key
+  // rather than a bare id two backends could both mint. A frame from a
+  // background connection has no "active session" to fall back to: an unscoped
+  // one that its own pin cannot claim belongs to no tab, and is dropped.
   const route = resolveGatewayEventSessionId({
-    activeSessionId: $activeSessionKey.get(),
+    activeSessionId: ambient ? $activeSessionKey.get() : null,
     eventType: event.type,
-    explicitSessionId: event.session_id || '',
-    unscopedStreamSessionId
+    explicitSessionId: event.session_id ? runtimeKeyFor(connectionId, event.session_id) : '',
+    unscopedStreamSessionId: unscopedStreamByConnection.get(connectionId) ?? null
   })
 
-  unscopedStreamSessionId = route.nextUnscopedStreamSessionId
+  unscopedStreamByConnection.set(connectionId, route.nextUnscopedStreamSessionId)
 
   if (route.drop || !route.sessionId) {
     return
   }
 
   const key = route.sessionId
+
+  // A background connection has no "focused chat" of its own, so its socket's
+  // unscoped frames can only belong to the stream that last started on it. The
+  // pin is therefore taken from an EXPLICIT `message.start` too — but only
+  // there: doing it on the ambient socket would let a background session's start
+  // capture the pin and drag the focused chat's unscoped deltas into it, which
+  // is the bug `UNSCOPED_STREAM_EVENT_TYPES` exists to prevent (#47709).
+  if (!ambient && event.type === 'message.start') {
+    unscopedStreamByConnection.set(connectionId, key)
+  }
+
   const isBlockingPrompt = BLOCKING_PROMPT_TYPES.has(event.type)
 
-  if (!(key in $sessionStates.get())) {
+  if (!(key in $sessionKeyStates.get())) {
     // Fail closed — except for a blocking prompt, whose agent is parked in
     // `_block` and would hang until timeout if we ignored it.
     if (!isBlockingPrompt) {
       return
     }
 
-    ensureSessionSlice(key)
+    // The key was built from this frame's connection a few lines up, so the
+    // seeded slice carries that scope rather than inventing one (invariant 45).
+    ensureSessionSlice(siteOfKey(key))
   }
+
+  // The watermark this client can honestly resume from: the highest `seq` it has
+  // actually folded, under the epoch that stamped it.
+  noteReplaySeq(key, event.seq, connectionEpoch(connectionId))
 
   const isActive = key === $activeSessionKey.get()
 
@@ -376,11 +432,6 @@ export function routeGatewayEvent(event: GatewayEvent): void {
   // reacting to, not the one from the frame before. Cheap: the fold returns the
   // same record unless something actually changed (store/turn-lifecycle.ts).
   routeTurnEvent(key, event)
-  // Compaction is silent on the wire — no `message.start`, no visible output —
-  // so its start/end is inferred from `status.update` kinds plus the first real
-  // output that follows (store/compaction.ts). Folded here, before the delta
-  // short-circuit, because that first output is usually a delta.
-  routeCompactionEvent(key, event.type, payload)
 
   // Streaming text is BATCHED (lib/stream-batch) — one React commit per flush
   // window instead of one per token, which matters most when several sessions
@@ -409,7 +460,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       // (`_approval_request_payload`), and a client that parsed them
       // differently would answer a replayed approval with a different
       // request_id than the live one.
-      const approval = readApprovalPayload(payload)
+      const approval = readApprovalPayload(payload, key)
 
       setSessionApproval(key, approval)
       // Session-scoped: `approval.received` resolves through `_sess()`, so it
@@ -450,7 +501,8 @@ export function routeGatewayEvent(event: GatewayEvent): void {
             ? {
                 requestId,
                 question: '',
-                choices: null,
+                choices: [],
+                multiSelect: false,
                 questions,
                 // Present only on a resume replay of a partly-answered batch
                 // (`_pending_clarify_request_payload`), never on a live event.
@@ -460,7 +512,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
                 requestId,
                 question,
                 choices: readChoices('gateway', question, payload.choices),
-                ...(payload.multi_select === true ? { multiSelect: true } : {})
+                multiSelect: payload.multi_select === true
               }
         )
         dispatchNativeNotification({
@@ -499,7 +551,8 @@ export function routeGatewayEvent(event: GatewayEvent): void {
     case 'sudo.request':
       setSessionSudo(key, {
         requestId: coerceText(payload.request_id),
-        prompt: coerceText(payload.prompt) || coerceText(payload.command) || 'Enter your sudo password'
+        command: coerceText(payload.command) || coerceText(payload.prompt),
+        description: coerceText(payload.prompt) || coerceText(payload.message) || 'Enter your sudo password'
       })
 
       break
@@ -597,8 +650,8 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       // payment required) — `tui_gateway/server.py` attaches the descriptor built
       // by `agent/billing_links.py` as `payload.billing`. Cached + toasted by the
       // store; detection stays backend-only, we never re-classify error prose.
-      if (payload.billing) {
-        surfaceBillingBlock(key, payload.billing)
+      if (payload.billing && typeof payload.billing === 'object') {
+        surfaceBillingBlock(key, payload.billing as BillingBlock)
       }
 
       dispatchNativeNotification({

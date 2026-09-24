@@ -1,27 +1,58 @@
 import { normalizeMathDelimiters } from '@assistant-ui/react-streamdown'
 
-import { renderFileRefs } from '@/lib/chat-media'
 import { isLikelyProseFence, sanitizeLanguageTag } from '@/lib/markdown-code'
+import { clampHtmlNestingDepth } from '@/lib/markdown-html-depth'
+import { mediaKind, mediaMarkdownHref } from '@/lib/media'
+import { previewMarkdownHref } from '@/lib/preview-targets'
 import { stripPreviewTargets } from '@/lib/preview-targets'
 import { linkifySessionRefs } from '@/lib/session-refs'
 
-const REASONING_BLOCK_RE = /<(think|thinking|reasoning|scratchpad|analysis)>[\s\S]*?<\/\1>\s*/gi
+// Same tag set as agent/think_scrubber.py THINK_TAG_NAMES, plus desktop-only
+// `scratchpad`/`analysis`.
+const REASONING_TAGS = 'think|thinking|reasoning|thought|reasoning_scratchpad|scratchpad|analysis'
+// A run of adjacent closed blocks is one match, so the seam check below sees the
+// prose on either side of the whole run rather than the previous block's `>`.
+const REASONING_BLOCK_RE = new RegExp(`(?:<(${REASONING_TAGS})>[\\s\\S]*?<\\/\\1>\\s*)+`, 'gi')
+// An open tag that starts its own block with no close tag yet. The block-boundary
+// requirement is what lets a real reasoning preamble (always its own block) vanish
+// while prose that merely mentions `<thinking>` mid-sentence survives — the same
+// line agent/think_scrubber.py draws.
+const OPEN_REASONING_BLOCK_RE = new RegExp(`(^|\\n)[ \\t]*<(${REASONING_TAGS})>[\\s\\S]*$`, 'i')
+
+// A half-arrived open tag (`<thin`) at a block boundary is not a tag yet, so the
+// pass above lets it paint as prose for one frame and then erase it — the same
+// paint/un-paint class as #62774, one frame long. Hold it back the way
+// agent/think_scrubber.py `_hold_partial`/`_max_partial_suffix` does, but only
+// for prefixes of the known tag names so `<div` at a line start still renders.
+const REASONING_TAG_PREFIXES = Array.from(
+  new Set(REASONING_TAGS.split('|').flatMap(tag => Array.from({ length: tag.length }, (_, i) => tag.slice(0, i + 1))))
+).join('|')
+
+const PARTIAL_OPEN_REASONING_TAG_RE = new RegExp(`(^|\\n)[ \\t]*<(?:${REASONING_TAG_PREFIXES})?$`, 'i')
 const PREVIEW_MARKER_RE = /\[Preview:[^\]]+\]\(#preview[:/][^)]+\)/gi
 
 const FENCE_LINE_RE = /^([ \t]*)(`{3,}|~{3,})([^\n]*)$/
 const EMPTY_FENCE_BLOCK_RE = /(^|\n)[ \t]*(?:`{3,}|~{3,})[^\n]*\n[ \t]*(?:`{3,}|~{3,})[ \t]*(?=\n|$)/g
-const CODE_FENCE_SPLIT_RE = /((?:```|~~~)[\s\S]*?(?:```|~~~))/g
+const CODE_FENCE_SPLIT_RE = /((?:```|~~~)[\s\S]*?(?:```|~~~|$))/g
 const INLINE_CODE_SPLIT_RE = /(`[^`\n]+`)/g
 // Math spans as remark-math will see them: a `$$…$$` block, which may span
 // lines, or a same-line `$…$`. A delimiter escaped as `\$` is prose — that is
-// exactly how escapeCurrencyDollars marks a price, so the lookbehinds keep
-// `\$5 and \$10` out of the math branch.
+// exactly how escapeCurrencyDollarsPreservingMath marks a price, so the
+// lookbehinds keep `\$5 and \$10` out of the math branch.
 //
 // The inline body steps over escape pairs (`\\[^\n]`) rather than excluding
 // `$` outright, because `\$` is a literal dollar INSIDE math (`$x + \$5$`) and
-// must not end the span. The two alternatives are disjoint on their first
-// character, so the body cannot backtrack ambiguously.
+// must not end the span — the same distinction findClosingSingleDollar draws
+// via isEscapedAt. The two alternatives are disjoint on their first character,
+// so the body cannot backtrack ambiguously.
 const MATH_SPAN_SPLIT_RE = /((?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$(?:[^\n$\\]|\\[^\n])+?(?<!\\)\$)/g
+// A whole-paragraph single-line `$$x$$`. remark-math classes that as math-inline;
+// only the multi-line form gets math-display. Promote an isolated line so a
+// standalone equation renders as display math.
+const STANDALONE_DISPLAY_MATH_RE = /^[ \t]{0,3}\$\$(.+)\$\$[ \t]*$/
+const LATEX_DISPLAY_OPEN_LINE_RE = /^([ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)\\{1,2}\[[ \t]*\r?$/
+const LATEX_DISPLAY_CLOSE_LINE_RE = /^([ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)\\{1,2}\][ \t]*\r?$/
+const CUSTOM_DISPLAY_MATH_LINE_RE = /^([ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)\[\/math\][ \t]*\r?$/
 
 // A `$$` that opens a block and is immediately followed by the first line of the
 // equation, e.g. `$$\begin{aligned}`. Both patterns anchor the `$$` to the start
@@ -43,6 +74,21 @@ const LOCAL_PREVIEW_URL_RE = /(^|\s)https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0
 const LOCAL_PREVIEW_ONLY_RE = /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?\/?$/i
 const URL_ONLY_LINE_RE = /^\s*https?:\/\/\S+\s*$/i
 const CITATION_MARKER_RE = /(?<=[\p{L}\p{N})\].,!?:;"'”’])\[(?:\d+(?:\s*,\s*\d+)*)\](?!\()/gu
+// Markdown links whose target is a filesystem path on the agent's machine:
+// `[report](/home/user/report.md)`, `[notes](file:///srv/notes.txt)`,
+// `[todo](~/todo.md)`, `[log](C:\logs\run.txt)`. Negative lookbehind keeps
+// image syntax (`![alt](path)`) on its existing inline pipeline. The target
+// char class excludes `)`/whitespace, matching how LLMs actually emit these.
+const FILE_LINK_RE = /(?<!!)\[(?<label>[^\]\n]+)\]\((?<target><?(?:file:\/\/|\/|~\/|[a-z]:[\\/])[^)\s]*>?)\)/gi
+
+// A transcript directive on its own line: `::name{...}`. Attribute values are
+// prose the model wrote (a task brief, a question) and read as markdown to the
+// parser — `*by week*` becomes <em>, `a_b c_d` becomes <em>, `~/x` opens
+// strikethrough. Any of those splits the paragraph into element children, the
+// directive stops being text-only, and the raw line paints as the user's
+// message. Same shape as lib/transcript-directives.ts DIRECTIVE_RE.
+const DIRECTIVE_LINE_RE = /^([ \t]*)(::[a-z][a-z0-9-]{0,63}\{[^{}\n]{0,1024}\})[ \t]*$/gm
+const MARKDOWN_INLINE_META_RE = /[\\`*_~[\]<>]/g
 
 /**
  * Returns true when `body` contains a line that's exactly `marker` (modulo
@@ -50,7 +96,11 @@ const CITATION_MARKER_RE = /(?<=[\p{L}\p{N})\].,!?:;"'”’])\[(?:\d+(?:\s*,\s*
  * for an opening fence with the same marker.
  *
  * Implemented with string comparisons (not RegExp) so that input-derived
- * `marker` values can never bleed into a regex pattern.
+ * `marker` values can never bleed into a regex pattern. This matters for
+ * CodeQL's `js/incomplete-hostname-regexp` dataflow, which would otherwise
+ * trace test-fixture URLs from the input through `marker` into the regex
+ * source, even though `marker` is captured by `(`{3,}|~{3,})` and can only
+ * ever be backticks or tildes.
  */
 function hasCloseFenceLine(body: string, marker: string): boolean {
   const lines = body.split('\n')
@@ -121,11 +171,35 @@ function scrubBacktickNoise(text: string): string {
 
   for (let pass = 0; pass < 2; pass += 1) {
     // Match EXACTLY 2 backticks (not part of a longer run) on each side.
+    // Without the lookbehind/lookahead, two adjacent triple-backtick
+    // fences with only whitespace between them get spliced together —
+    // e.g. ```bash\n...\n```\n\n```latex matches the regex's
+    // last-2-of-bash-close + \n\n + first-2-of-latex-open and the
+    // surrounding fence markers collapse into a single longer block,
+    // which the markdown parser then treats as ONE giant code block.
     out = out.replace(/(?<!`)``(?!`)\s*(?<!`)``(?!`)/g, '')
-    out = out.replace(/(^|[^`])``(?=\s|[.,;:!?)\]'"—–-]|$)/g, '$1')
+    out = out.replace(/(^|[^`])``(?=\s|[.,;:!?)\]'"\u2014\u2013-]|$)/g, '$1')
   }
 
   return out
+}
+
+// Runs on the ACCUMULATED text every streaming flush, so an unterminated block
+// must already be hidden here: otherwise the chain of thought paints as prose
+// until the close tag lands and then the whole span vanishes in one frame
+// (#62774). Removing a closed block between two words keeps one space so `no` +
+// `Hermes` does not fuse into `noHermes`. The seam check reads the two chars at
+// the match edges rather than slicing the accumulated text, which would copy
+// O(n) per closed block on every flush.
+function stripReasoningBlocks(text: string): string {
+  const closed = text.replace(REASONING_BLOCK_RE, (match: string, _tag: string, offset: number, whole: string) => {
+    const prev = whole[offset - 1]
+    const next = whole[offset + match.length]
+
+    return prev && next && !/\s/.test(prev) && !/\s/.test(next) ? ' ' : ''
+  })
+
+  return closed.replace(OPEN_REASONING_BLOCK_RE, '$1').replace(PARTIAL_OPEN_REASONING_TAG_RE, '$1')
 }
 
 function stripEmptyFenceBlocks(text: string): string {
@@ -151,21 +225,94 @@ function autoLinkRawUrls(text: string): string {
   })
 }
 
-// `linkifySessionRefs` LAST: an `@session:` ref the agent wrote is prose, not a
-// URL, so it is rewritten after the autolinker has had its pass — and only
-// OUTSIDE code spans, because a ref quoted in backticks is being talked about
-// rather than linked to.
-//
-// `renderFileRefs` FIRST: it consumes both `MEDIA:` markers and
-// `[label](target)` syntax, so it has to see them before the autolinker
-// rewrites any target, and the `#media:` href it emits is inert to both passes
-// that follow.
+// Rewrite filesystem-path links to the renderer's hash-href door (#82140).
+// A plain path/file: href names a file on the AGENT's machine: Streamdown's
+// URL hardening blocks `file:`/`~/` outright, and an absolute path renders
+// as a dead anchor (file:// is blocked in the renderer; on a remote gateway
+// the file isn't on this disk at all). `#preview/…` / `#media:…` hrefs pass
+// hardening by design and route through PreviewAttachment/MediaAttachment,
+// which resolve the path at VIEW time against the session's backend — local
+// reads the file directly, remote fetches it over the authenticated /api/fs
+// bridge — so the same transcript works from every machine that opens it.
+function routeFileLinksToPreview(text: string): string {
+  return text.replace(FILE_LINK_RE, (match: string, ...args: unknown[]) => {
+    const groups = args.at(-1) as { label: string; target: string }
+    const target = groups.target.replace(/^<|>$/g, '')
+
+    const href = mediaKind(target) === 'file' ? previewMarkdownHref(target) : mediaMarkdownHref(target)
+
+    return `[${groups.label}](${href})`
+  })
+}
+
 function rewriteProseSegment(segment: string): string {
   return linkifySessionRefs(
     autoLinkRawUrls(
-      renderFileRefs(segment.replace(/`{3,}/g, '').replace(LOCAL_PREVIEW_URL_RE, '$1').replace(CITATION_MARKER_RE, ''))
+      routeFileLinksToPreview(
+        segment.replace(/`{3,}/g, '').replace(LOCAL_PREVIEW_URL_RE, '$1').replace(CITATION_MARKER_RE, '')
+      )
     )
   )
+}
+
+/**
+ * Backslash-escape markdown inline syntax inside directive lines so the parser
+ * yields one text node. The escapes are consumed by the parser, so the
+ * directive the renderer sees is byte-for-byte what the model wrote.
+ */
+export function shieldDirectiveLines(text: string): string {
+  if (!text.includes('::')) {
+    return text
+  }
+
+  return text.replace(
+    DIRECTIVE_LINE_RE,
+    (_match, indent: string, directive: string) => indent + directive.replace(MARKDOWN_INLINE_META_RE, '\\$&')
+  )
+}
+
+/**
+ * remark-math classes a single-line `$$x$$` as math-inline — only the multi-line
+ * form gets math-display. Rewrite a whole-paragraph `$$x$$` to the multi-line
+ * form so a standalone equation renders as display math. Mid-sentence `$$x$$`
+ * stays inline (adjacent non-blank lines refuse the rewrite).
+ */
+export function promoteStandaloneDisplayMath(text: string): string {
+  if (!text.includes('$$')) {
+    return text
+  }
+
+  const lines = text.split('\n')
+  let changed = false
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(STANDALONE_DISPLAY_MATH_RE)
+
+    if (!match) {
+      continue
+    }
+
+    const body = match[1].trim()
+
+    // A body containing `$$` means the line holds more than one expression (or
+    // an empty `$$$$`), which this rewrite has no safe reading of.
+    if (!body || body.includes('$$')) {
+      continue
+    }
+
+    // Its own paragraph: nothing but blank lines adjacent. A segment edge counts
+    // as blank — segments are split at fence boundaries, so the edge is a break.
+    const isolated = (i === 0 || !lines[i - 1].trim()) && (i === lines.length - 1 || !lines[i + 1].trim())
+
+    if (!isolated) {
+      continue
+    }
+
+    lines[i] = `$$\n${body}\n$$`
+    changed = true
+  }
+
+  return changed ? lines.join('\n') : text
 }
 
 /**
@@ -195,99 +342,142 @@ function normalizeVisibleProse(text: string): string {
     .join('')
 }
 
-function extend(out: string[], lines: string[]) {
-  for (const line of lines) {
-    out.push(line)
-  }
-}
+function isEscapedAt(text: string, index: number): boolean {
+  let slashCount = 0
 
-function pushProseFence(out: string[], indent: string, info: string, lines: string[]) {
-  if (info) {
-    out.push(`${indent}${info}`.trimEnd())
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
+    slashCount += 1
   }
 
-  extend(out, lines)
+  return slashCount % 2 === 1
 }
 
-function findClosingFence(lines: string[], start: number, marker: string): number {
-  for (let cursor = start + 1; cursor < lines.length; cursor += 1) {
-    const closeMatch = (lines[cursor] || '').match(FENCE_LINE_RE)
+/**
+ * True when the `$` at `index` opens a currency amount rather than math.
+ *
+ * Two shapes, and the second is why this helper exists. The US shape `$5`
+ * hugs its digits, so "followed by a digit" identifies it. Most of the rest
+ * of the world writes a currency PREFIX plus a space — `R$ 12.345` (BRL),
+ * `US$ 1,200`, `AU$ 40`. Treating only the hugging shape as currency left
+ * `R$ 12.345 … R$ 98.765` with two bare dollars on one line, so remark-math
+ * (`singleDollarTextMath: true`) paired them and painted the whole sentence
+ * between two prices as an equation.
+ *
+ * The spaced shape additionally requires a letter immediately before the `$`
+ * — that prefix is what makes it a currency symbol. A bare `$ 5` keeps its
+ * old behavior, so spaced inline math like `$ x^2 $` is untouched.
+ */
+function isCurrencyOpenerAt(text: string, index: number): boolean {
+  if (text[index] !== '$' || isEscapedAt(text, index) || text[index - 1] === '$' || text[index + 1] === '$') {
+    return false
+  }
 
-    if (!closeMatch) {
+  if (/\d/u.test(text[index + 1] || '')) {
+    return true
+  }
+
+  return /^[ \u00a0]\d/u.test(text.slice(index + 1, index + 3)) && /^[A-Za-z]$/u.test(text[index - 1] || '')
+}
+
+function findClosingSingleDollar(text: string, openingIndex: number): number {
+  for (let cursor = openingIndex + 1; cursor < text.length && text[cursor] !== '\n'; cursor += 1) {
+    if (text[cursor] !== '$' || isEscapedAt(text, cursor)) {
       continue
     }
 
-    const closeMarker = closeMatch[2] || ''
-    const closeInfo = (closeMatch[3] || '').trim()
-
-    if (!closeInfo && closeMarker[0] === marker[0] && closeMarker.length >= marker.length) {
-      return cursor
+    // A `$$` run belongs to display math, not to this inline candidate.
+    if (text[cursor - 1] === '$' || text[cursor + 1] === '$') {
+      continue
     }
+
+    return cursor
   }
 
   return -1
 }
 
-// Languages that should be routed to the math (KaTeX) renderer instead of
-// being shown as a syntax-highlighted code block. Only `math` (not `latex`/
-// `tex`) — GitHub markup uses ```math for "render" and ```latex for "source".
-const MATH_FENCE_LANGUAGES = new Set(['math'])
+function isLikelyNumericInlineMath(body: string, followingCharacter: string): boolean {
+  const value = body.trim()
 
-// A `$` that opens a currency amount (`$5`, `$19.99`, `$1,299`). Same shape as
-// streamdown's `escapeCurrencyDollars`: an even run of backslashes before it
-// (so an already-escaped `\$` is left alone), and a digit after.
-const CURRENCY_DOLLAR_RE = /(^|[^\\$])((?:\\\\)*)\$(?=\d)/g
+  if (!/^\d/u.test(value)) {
+    return false
+  }
 
-// Characters that only appear in TeX, never in prose arithmetic. Used to tell
-// `$10^2$` (math) from `$5 + $10` (two prices). Deliberately EXCLUDES `+`, `-`
-// and `=`, which show up constantly in sentences about money.
-const TEX_ONLY_RE = /[\\^_{}]/
+  // Currency ranges and prose fragments can sit between two price openers,
+  // e.g. `$5-$10` or `$5, then $10`. They are not balanced math spans.
+  if (/[+\-*/=<>^_,;:(]$/u.test(value)) {
+    return false
+  }
 
-// How far ahead to look for a closing `$`. Long enough for a real inline
-// equation, short enough that two prices in one sentence don't pair up.
-const INLINE_MATH_LOOKAHEAD = 60
+  if (/https?:\/\//iu.test(value)) {
+    return false
+  }
+
+  // A dollar immediately followed by a letter/number is more likely the next
+  // opener in prose such as `$5 and $10` or `$5 and $x$`. Preserve it only
+  // when the candidate body itself carries an unambiguous math signal.
+  if (/^\p{N}/u.test(followingCharacter)) {
+    return false
+  }
+
+  if (/^[\p{L}\\]/u.test(followingCharacter)) {
+    return /\\[A-Za-z]+|[+*/=<>^_{}]/u.test(value)
+  }
+
+  return true
+}
+
+function opensCompleteInlineMath(text: string, openingIndex: number): boolean {
+  const closingIndex = findClosingSingleDollar(text, openingIndex)
+
+  if (closingIndex === -1) {
+    return false
+  }
+
+  const body = text.slice(openingIndex + 1, closingIndex)
+
+  return /^[\p{L}\p{N}\\{([|+\-=_^]/u.test(body)
+}
 
 /**
- * Escapes a `$` that opens a currency amount, so remark-math's single-dollar
- * mode doesn't eat prices as math delimiters.
+ * Escape price openers without corrupting balanced numeric inline math.
  *
- * Replaces streamdown's `escapeCurrencyDollars`, which escapes EVERY `$` before
- * a digit and so mangles perfectly good math that happens to start with one.
- * That is not hypothetical: a table row of `$5$–$50\,\Omega$` rendered as
- * literal text, because the leading `$5` looked like a price.
- *
- * The extra signal used here is the closing delimiter. A `$` before a digit is
- * treated as MATH (left unescaped) when a closing `$` follows on the same line
- * within a short window AND the enclosed body looks like TeX rather than prose:
- *
- *   - no whitespace at all (`$5$`, `$0.8$`, `$10^2$`), or
- *   - a character that only occurs in TeX (`$50\,\Omega$`, `$10^3\,\mu F$`)
- *
- * Everything else is currency and gets escaped. So `$5 + $10 = $15` still
- * escapes (the body `5 + ` has whitespace and no TeX character), and so does
- * `costs $5 to $10`. The residual false-negative is an expression that both
- * opens with a digit and contains spaces but no TeX, e.g. `$5x = 10$` — that
- * was already broken by the upstream version, so this is strictly an
- * improvement, not a new trade-off.
+ * The upstream helper deliberately treats every `$` followed by a digit as
+ * currency. That turns `$4\in A$` into `\$4\in A$`; remark-math then pairs
+ * the orphan closing dollar with a later formula and renders the intervening
+ * prose as math. We retain the price behavior for `$5 and $10` and `$5-$10`,
+ * but preserve balanced, same-line numeric math spans.
  */
-export function escapeCurrencyDollars(text: string): string {
-  return text.replace(CURRENCY_DOLLAR_RE, (match, before: string, slashes: string, offset: number) => {
-    // Index of the `$` itself: after the leading context and backslash run.
-    const dollar = offset + before.length + slashes.length
-    const lineEnd = text.indexOf('\n', dollar)
-    const limit = Math.min(lineEnd === -1 ? text.length : lineEnd, dollar + 1 + INLINE_MATH_LOOKAHEAD)
-    const close = text.indexOf('$', dollar + 1)
+function escapeCurrencyDollarsPreservingMath(text: string): string {
+  let out = ''
+  let copiedThrough = 0
 
-    if (close !== -1 && close < limit) {
-      const body = text.slice(dollar + 1, close)
-
-      if (!/\s/.test(body) || TEX_ONLY_RE.test(body)) {
-        return match
-      }
+  for (let cursor = 0; cursor < text.length; cursor += 1) {
+    if (!isCurrencyOpenerAt(text, cursor)) {
+      continue
     }
 
-    return `${before}${slashes}\\$`
-  })
+    const closingIndex = findClosingSingleDollar(text, cursor)
+
+    if (
+      closingIndex !== -1 &&
+      // A second amount on the same line is the NEXT opener, never this
+      // span's closer: `R$ 12.345 … R$ 98.765` is two prices, not one
+      // equation wrapping the prose between them.
+      !isCurrencyOpenerAt(text, closingIndex) &&
+      !opensCompleteInlineMath(text, closingIndex) &&
+      isLikelyNumericInlineMath(text.slice(cursor + 1, closingIndex), text[closingIndex + 1] || '')
+    ) {
+      cursor = closingIndex
+
+      continue
+    }
+
+    out += `${text.slice(copiedThrough, cursor)}\\$`
+    copiedThrough = cursor + 1
+  }
+
+  return out + text.slice(copiedThrough)
 }
 
 /**
@@ -301,10 +491,10 @@ export function escapeCurrencyDollars(text: string): string {
  * loses its first line, never closes, and KaTeX paints the remains as raw source
  * text. Models emit this form constantly.
  *
- * Single-line `$$…$$` is left alone — `promoteStandaloneDisplayMath` below owns
- * that case.
+ * Single-line `$$…$$` is left alone — it routes through the inline math-text
+ * construct and already renders.
  */
-export function splitHuggingDisplayMath(text: string): string {
+function splitHuggingDisplayMath(text: string): string {
   const lines = text.split('\n')
   const out: string[] = []
 
@@ -360,65 +550,107 @@ export function splitHuggingDisplayMath(text: string): string {
   return out.join('\n')
 }
 
-// A line that is nothing but `$$…$$`. Up to three leading spaces is markdown's
-// paragraph indent allowance; four or more would be an indented code block, and
-// a list/quote marker (`-`, `>`) means the line isn't a bare paragraph, so
-// neither can match here.
-const STANDALONE_DISPLAY_MATH_RE = /^[ \t]{0,3}\$\$(.+)\$\$[ \t]*$/
-
-/**
- * Rewrites a paragraph consisting solely of `$$…$$` into the multi-line form.
- *
- * remark-math only emits `math-display` when the `$$` delimiters sit on their
- * OWN lines; a single-line `$$x$$` is classed `math-inline` and renders as small
- * in-flow math instead of a centred block. (Stock rehype-katex branches on the
- * same classes, so this isn't specific to our renderer.) Models emit the
- * single-line form constantly — it's what a standalone equation almost always
- * looks like in an LLM answer — so without this, most display math in a chat
- * didn't render as display math.
- *
- * Conservative on purpose. The line must be its own paragraph: blank (or
- * absent) lines on both sides, and no other `$$` inside the body. That leaves
- * mid-sentence `$$x$$` inline, where promoting it would wrongly split the
- * paragraph.
- */
-export function promoteStandaloneDisplayMath(text: string): string {
-  if (!text.includes('$$')) {
-    return text
-  }
-
+function normalizeDisplayMathForMarkdown(text: string): string {
   const lines = text.split('\n')
-  let changed = false
 
-  for (let i = 0; i < lines.length; i += 1) {
-    const match = lines[i].match(STANDALONE_DISPLAY_MATH_RE)
+  for (let index = 0; index < lines.length; index += 1) {
+    const latexMatch = lines[index].match(LATEX_DISPLAY_OPEN_LINE_RE)
+    const customMatch = lines[index].match(CUSTOM_DISPLAY_MATH_LINE_RE)
+    const openingMatch = latexMatch || customMatch
 
-    if (!match) {
+    if (!openingMatch) {
       continue
     }
 
-    const body = match[1].trim()
+    const prefix = openingMatch[1] || ''
+    const closingPattern = latexMatch ? LATEX_DISPLAY_CLOSE_LINE_RE : CUSTOM_DISPLAY_MATH_LINE_RE
 
-    // A body containing `$$` means the line holds more than one expression (or
-    // an empty `$$$$`), which this rewrite has no safe reading of.
-    if (!body || body.includes('$$')) {
-      continue
+    for (let closingIndex = index + 1; closingIndex < lines.length; closingIndex += 1) {
+      const closingMatch = lines[closingIndex].match(closingPattern)
+
+      if (!closingMatch) {
+        continue
+      }
+
+      const openingCarriageReturn = lines[index].endsWith('\r') ? '\r' : ''
+      const closingCarriageReturn = lines[closingIndex].endsWith('\r') ? '\r' : ''
+      const closingPrefix = closingMatch[1] || ''
+
+      lines[index] = `${prefix}$$${openingCarriageReturn}`
+      lines[closingIndex] = `${closingPrefix}$$${closingCarriageReturn}`
+      index = closingIndex
+
+      break
     }
-
-    // Its own paragraph: nothing but blank lines adjacent. A segment edge counts
-    // as blank — segments are split at fence boundaries, so the edge is a break.
-    const isolated = (i === 0 || !lines[i - 1].trim()) && (i === lines.length - 1 || !lines[i + 1].trim())
-
-    if (!isolated) {
-      continue
-    }
-
-    lines[i] = `$$\n${body}\n$$`
-    changed = true
   }
 
-  return changed ? lines.join('\n') : text
+  return lines.join('\n')
 }
+
+function normalizeProseMath(text: string): string {
+  // remark-math requires multiline display delimiters on their own lines.
+  // Normalize those locally before the dependency handles inline forms;
+  // its compact `$$body$$` rewrite makes the first equation line metadata
+  // and leaks the trailing `$$` into KaTeX's error fallback.
+  //
+  // splitHuggingDisplayMath runs LAST because normalizeMathDelimiters is itself
+  // a source of the hugging form: a multi-line `\[…\]` comes out of it as
+  // `$$\begin{aligned}…\end{aligned}$$`. Running afterwards catches both the
+  // hugging math the model emitted and the hugging math the rewrite produced.
+  //
+  // promoteStandaloneDisplayMath turns an isolated single-line `$$x$$` into the
+  // multi-line form so remark-math emits math-display (not math-inline).
+  const normalized = promoteStandaloneDisplayMath(
+    splitHuggingDisplayMath(normalizeMathDelimiters(normalizeDisplayMathForMarkdown(text)))
+  )
+
+  return escapeCurrencyDollarsPreservingMath(normalized)
+}
+
+function extend(out: string[], lines: string[]) {
+  for (const line of lines) {
+    out.push(line)
+  }
+}
+
+function pushProseFence(out: string[], indent: string, info: string, lines: string[]) {
+  if (info) {
+    out.push(`${indent}${info}`.trimEnd())
+  }
+
+  extend(out, lines)
+}
+
+function findClosingFence(lines: string[], start: number, marker: string): number {
+  for (let cursor = start + 1; cursor < lines.length; cursor += 1) {
+    const closeMatch = (lines[cursor] || '').match(FENCE_LINE_RE)
+
+    if (!closeMatch) {
+      continue
+    }
+
+    const closeMarker = closeMatch[2] || ''
+    const closeInfo = (closeMatch[3] || '').trim()
+
+    if (!closeInfo && closeMarker[0] === marker[0] && closeMarker.length >= marker.length) {
+      return cursor
+    }
+  }
+
+  return -1
+}
+
+// Languages that should be routed to the math (KaTeX) renderer instead of
+// being shown as a syntax-highlighted code block.
+//
+// We deliberately recognize ONLY `math` here, not `latex` or `tex`.
+// Reasoning: GitHub-style markdown uses ` ```math ` to mean "render as
+// math" and ` ```latex `/` ```tex ` to mean "show LaTeX/TeX source code"
+// (syntax highlighted). Conflating the two breaks code blocks where a
+// user is *discussing* LaTeX rather than embedding it (e.g.,
+// ```latex\n\begin{equation}\n  E = mc^2\n\end{equation}``` shown as a
+// teaching example). Anyone who wants math rendered should use ```math.
+const MATH_FENCE_LANGUAGES = new Set(['math'])
 
 function isMathFence(language: string): boolean {
   return MATH_FENCE_LANGUAGES.has(language.toLowerCase())
@@ -488,6 +720,11 @@ function normalizeFenceBlocks(text: string): string {
         pushProseFence(out, indent, infoRaw, bodyLines)
       } else if (isMathFence(language)) {
         // Streaming math fence — rewrite the language tag to "math".
+        // remark-math + rehype-katex pick up ```math fenced blocks via
+        // the language-math class on the resulting <code> element. We
+        // keep the fence intact (instead of converting to $$..$$) so
+        // any literal `$$` characters in the body don't collide with
+        // an outer math wrapper. No close emitted yet — streaming.
         out.push(`${indent}${marker}math`)
         extend(out, bodyLines)
       } else {
@@ -506,8 +743,12 @@ function normalizeFenceBlocks(text: string): string {
     }
 
     if (isMathFence(language)) {
-      // Closed math fence — rewrite the language tag to "math" so rehype-katex's
-      // language-math class detection picks it up.
+      // Closed math fence — rewrite the language tag to "math" so
+      // rehype-katex's language-math class detection picks it up.
+      // Body stays untouched (no $$..$$ rewrite) so authors can write
+      // arbitrary LaTeX including `$$display$$` markers without them
+      // colliding with our wrapper. Without this rewrite the block
+      // would render as a syntax-highlighted "latex" code listing.
       out.push(`${indent}${marker}math`)
       extend(out, bodyLines)
       out.push(`${indent}${marker}`)
@@ -526,7 +767,7 @@ function normalizeFenceBlocks(text: string): string {
 }
 
 export function preprocessMarkdown(text: string): string {
-  const cleaned = text.replace(REASONING_BLOCK_RE, '').replace(PREVIEW_MARKER_RE, '')
+  const cleaned = stripReasoningBlocks(text).replace(PREVIEW_MARKER_RE, '')
   const scrubbed = scrubBacktickNoise(cleaned)
   const normalizedFences = normalizeFenceBlocks(scrubbed)
   const strippedEmptyFences = stripEmptyFenceBlocks(normalizedFences)
@@ -539,33 +780,45 @@ export function preprocessMarkdown(text: string): string {
         return part
       }
 
-      // Whitespace-only segments must NOT go through stripPreviewTargets — its
-      // internal .trim() would collapse them and glue surrounding fences.
-      if (!part.trim()) {
+      // Run only on prose segments so `$5` literals and `\(` inside code
+      // blocks stay intact. The HTML-depth clamp belongs here for the same
+      // reason: a fenced block renders as code and never reaches rehype-raw,
+      // so escaping tags inside one would corrupt the listing for nothing.
+      // Directive lines are shielded last, after the prose rewrites have had
+      // their look, so nothing re-introduces markdown into them.
+      return shieldDirectiveLines(
+        clampHtmlNestingDepth(normalizeVisibleProse(stripPreviewTargets(normalizeProseMath(part))))
+      )
+    })
+    .join('')
+}
+
+/**
+ * Math-only normalization for static file previews. Mirrors the math half of
+ * `preprocessMarkdown` — delimiter normalization (`\(…\)`, `\[…\]`), display
+ * math on its own lines, and currency-dollar escaping — but deliberately skips
+ * the chat-only transforms (reasoning-block stripping, `@session:` ref
+ * linking, preview-target stripping, raw-URL autolinking, citation-marker
+ * stripping). A file's prose is author content, not model output, so those
+ * rewrites must not touch it. Code fences and inline code spans pass through
+ * untouched so `$`, `\(` and `\begin` inside listings are never mangled.
+ *
+ * ` ```math ` fences need no preprocessing: remark/rehype emit them as
+ * `<code class="language-math">` and the memoized rehype-katex wrapper renders
+ * them regardless of this function.
+ */
+export function normalizeFilePreviewMath(text: string): string {
+  return text
+    .split(CODE_FENCE_SPLIT_RE)
+    .map(part => {
+      if (/^(?:```|~~~)/.test(part)) {
         return part
       }
 
-      // Preserve leading/trailing whitespace around the prose body so
-      // fence-prose-fence sequences keep their blank-line gaps.
-      const leading = part.match(/^\s*/)?.[0] ?? ''
-      const trailing = part.match(/\s*$/)?.[0] ?? ''
-
-      // Run only on prose segments so `$5` literals and `\(` inside code stay.
-      // Order matters: promote AFTER normalizeMathDelimiters, so a `\[…\]`
-      // display block (already rewritten to `$$…$$` by then) gets promoted too.
-      // splitHuggingDisplayMath sits between them for the same reason:
-      // normalizeMathDelimiters is itself a source of the hugging form (a
-      // multi-line `\[…\]` comes out of it as `$$\begin{aligned}…$$`), so
-      // running after it catches both the hugging math the model emitted and
-      // the hugging math the rewrite produced.
-      const transformed = normalizeVisibleProse(
-        stripPreviewTargets(
-          promoteStandaloneDisplayMath(splitHuggingDisplayMath(normalizeMathDelimiters(escapeCurrencyDollars(part))))
-        )
-      )
-
-      return leading + transformed + trailing
+      return part
+        .split(INLINE_CODE_SPLIT_RE)
+        .map(segment => (segment.startsWith('`') ? segment : normalizeProseMath(segment)))
+        .join('')
     })
     .join('')
-    .replace(/[ \t]+\n/g, '\n')
 }

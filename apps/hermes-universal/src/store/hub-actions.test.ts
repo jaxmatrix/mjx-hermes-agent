@@ -1,105 +1,94 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as HermesApi from '@/hermes'
+// A failed hub action (non-zero subprocess exit) must REJECT so callers toast
+// it — the Aug 2026 report shape was a scan-gated/failed `hermes skills
+// install` exiting non-zero with no toast, no list change, and no error
+// anywhere in the UI: the user read it as "install did nothing".
 
 const getActionStatus = vi.fn()
 const installSkillFromHub = vi.fn()
-const uninstallSkillFromHub = vi.fn()
-const updateSkillsFromHub = vi.fn()
 
-// Partial mock: the real module still has to load (store/profile subscribes to
-// it at import time), only the four calls this store makes are stubbed.
-vi.mock('@/hermes', async importOriginal => ({
-  ...(await importOriginal<typeof HermesApi>()),
-  getActionStatus: (name: string, tail?: number) => getActionStatus(name, tail),
-  installSkillFromHub: (identifier: string, profile?: null | string) => installSkillFromHub(identifier, profile),
-  uninstallSkillFromHub: (name: string, profile?: null | string) => uninstallSkillFromHub(name, profile),
-  updateSkillsFromHub: (profile?: null | string) => updateSkillsFromHub(profile)
+vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  getActionStatus: (...args: unknown[]) => getActionStatus(...args),
+  installSkillFromHub: (...args: unknown[]) => installSkillFromHub(...args),
+  uninstallSkillFromHub: vi.fn(),
+  updateSkillsFromHub: vi.fn()
 }))
 
-// The activity store fans a finished action out to the task list; irrelevant here.
-vi.mock('@/store/activity', () => ({ upsertDesktopActionTask: vi.fn() }))
+vi.mock('@/lib/query-client', () => ({
+  queryClient: { invalidateQueries: vi.fn() }
+}))
 
-const finished = (overrides: Record<string, unknown> = {}) => ({
-  name: 'skills-install-1',
-  running: false,
-  exit_code: 0,
-  lines: [],
-  ...overrides
-})
+vi.mock('@/lib/slash-completion-cache', () => ({
+  invalidateSlashCompletions: vi.fn()
+}))
 
-beforeEach(() => {
-  installSkillFromHub.mockResolvedValue({ name: 'skills-install-1' })
-  uninstallSkillFromHub.mockResolvedValue({ name: 'skills-uninstall-1' })
-  updateSkillsFromHub.mockResolvedValue({ name: 'skills-update-1' })
-  getActionStatus.mockResolvedValue(finished())
-})
+vi.mock('@/store/activity', () => ({
+  upsertDesktopActionTask: vi.fn()
+}))
 
-afterEach(() => vi.clearAllMocks())
+// hub-actions subscribes to the active gateway profile at module scope (its
+// per-profile state wipe); a minimal stub keeps this test off the real store.
+vi.mock('@/store/profile', () => ({
+  $activeGatewayProfile: { subscribe: vi.fn() },
+  normalizeProfileKey: (value: unknown) => String(value ?? '') || 'default'
+}))
 
-describe('hub actions', () => {
-  it("rejects with the action log's reason when the install exits non-zero", async () => {
-    // Disagreeing fixture: the spawn SUCCEEDS and the poll comes back cleanly —
-    // only the exit code says it failed. That is the shape that used to resolve
-    // silently, leaving "Installing…" as the last thing the user saw.
-    getActionStatus.mockResolvedValue(
-      finished({ exit_code: 1, lines: ['fetching…', '[31mError: no such skill "nope"[0m'] })
-    )
+import { $hubActions, $hubInstalledOverride, installHubSkill } from './hub-actions'
 
-    const { installHubSkill } = await import('./hub-actions')
-
-    await expect(installHubSkill('acme/nope')).rejects.toThrow('Error: no such skill "nope"')
+describe('installHubSkill failure surfacing', () => {
+  beforeEach(() => {
+    getActionStatus.mockReset()
+    installSkillFromHub.mockReset()
+    $hubActions.set({})
+    $hubInstalledOverride.set({})
   })
 
-  it('falls back to the exit code when the action logged nothing', async () => {
-    getActionStatus.mockResolvedValue(finished({ exit_code: 2, lines: [] }))
+  it('rejects with the action log tail when the subprocess exits non-zero', async () => {
+    installSkillFromHub.mockResolvedValue({ name: 'skills-install-ascii-art-dd7bccf1' })
+    getActionStatus.mockResolvedValue({
+      name: 'skills-install-ascii-art-dd7bccf1',
+      running: false,
+      exit_code: 1,
+      pid: 4242,
+      lines: ['Resolving ascii-art...', 'Error: security scan blocked install']
+    })
 
-    const { installHubSkill } = await import('./hub-actions')
+    await expect(installHubSkill('ascii-art')).rejects.toThrow('security scan blocked install')
 
-    await expect(installHubSkill('acme/quiet')).rejects.toThrow('exit 2')
+    // A failed install must not paint the row as installed.
+    expect($hubInstalledOverride.get()['ascii-art']).toBeUndefined()
+    // ...but the row's running flag still settles to false for the button.
+    expect($hubActions.get()['ascii-art']?.running).toBe(false)
+  })
+
+  it('rejects with the exit code when the log carries no detail', async () => {
+    installSkillFromHub.mockResolvedValue({ name: 'skills-install-x-00000000' })
+    getActionStatus.mockResolvedValue({
+      name: 'skills-install-x-00000000',
+      running: false,
+      exit_code: 7,
+      pid: 4242,
+      lines: []
+    })
+
+    await expect(installHubSkill('x')).rejects.toThrow('exited with code 7')
   })
 
   it('resolves and flips the row on a clean exit', async () => {
-    const { $hubInstalledOverride, installHubSkill } = await import('./hub-actions')
+    installSkillFromHub.mockResolvedValue({ name: 'skills-install-ok-11111111' })
+    getActionStatus.mockResolvedValue({
+      name: 'skills-install-ok-11111111',
+      running: false,
+      exit_code: 0,
+      pid: 4242,
+      lines: ['Installed ok']
+    })
 
-    await installHubSkill('acme/ok')
-
-    expect($hubInstalledOverride.get()['acme/ok']).toBe(true)
-  })
-
-  it('does not flip the row when the install failed', async () => {
-    getActionStatus.mockResolvedValue(finished({ exit_code: 1, lines: ['boom'] }))
-
-    const { $hubInstalledOverride, installHubSkill } = await import('./hub-actions')
-
-    await expect(installHubSkill('acme/broken')).rejects.toThrow('boom')
-    expect($hubInstalledOverride.get()['acme/broken']).toBeUndefined()
-  })
-
-  it('targets the profile the caller passed, not the active one', async () => {
-    const { installHubSkill, uninstallHubSkill, updateHubSkills } = await import('./hub-actions')
-
-    await installHubSkill('acme/pdf', 'research')
-    await uninstallHubSkill('acme/pdf', 'pdf', 'research')
-    await updateHubSkills('research')
-
-    expect(installSkillFromHub).toHaveBeenCalledWith('acme/pdf', 'research')
-    expect(uninstallSkillFromHub).toHaveBeenCalledWith('pdf', 'research')
-    expect(updateSkillsFromHub).toHaveBeenCalledWith('research')
-  })
-
-  it('drops in-flight action state when the Capabilities scope changes', async () => {
-    const { $hubActions, $hubInstalledOverride } = await import('./hub-actions')
-    const { $settingsScopeOverride } = await import('./settings-scope')
-
-    $hubActions.setKey('acme/pdf', { kind: 'install', running: true, lines: ['…'] })
-    $hubInstalledOverride.setKey('acme/pdf', true)
-
-    $settingsScopeOverride.set('research')
-
-    expect($hubActions.get()['acme/pdf']).toBeUndefined()
-    expect($hubInstalledOverride.get()['acme/pdf']).toBeUndefined()
-
-    $settingsScopeOverride.set(null)
+    await expect(installHubSkill('ok')).resolves.toBeUndefined()
+    expect($hubInstalledOverride.get()['ok']).toBe(true)
   })
 })

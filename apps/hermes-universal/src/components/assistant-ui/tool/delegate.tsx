@@ -6,7 +6,8 @@ import { type FC, type ReactNode, useMemo } from 'react'
 import { useSessionView } from '@/app/chat/session-view'
 import { useElapsedSeconds } from '@/components/chat/activity-timer'
 import { ActivityTimerText } from '@/components/chat/activity-timer-text'
-import { SCAFFOLD_LABEL_CLASS, SCAFFOLD_META_CLASS } from '@/components/chat/scaffold-row'
+import { SCAFFOLD_GLYPH_CLASS, SCAFFOLD_LABEL_CLASS, SCAFFOLD_META_CLASS } from '@/components/chat/scaffold-row'
+import { Codicon } from '@/components/ui/codicon'
 import { FadeText } from '@/components/ui/fade-text'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { useI18n } from '@/i18n'
@@ -50,7 +51,7 @@ function statusGlyph(status: DelegateRowStatus, label: string): ReactNode {
     return <span aria-hidden className="size-1.5 rounded-full bg-(--ui-text-tertiary)" />
   }
 
-  return <CheckCircle2 aria-label={label} className="size-3.5 text-(--ui-green)/85" />
+  return <CheckCircle2 aria-label={label} className="size-3.5 text-emerald-600/85 dark:text-emerald-400/85" />
 }
 
 /**
@@ -86,9 +87,12 @@ function DelegateRowView({ row }: { row: DelegateRow }) {
   const open = sessionId ? () => void openSessionInNewWindow(sessionId, { watch: true }) : undefined
 
   return (
-    <div className="grid min-w-0 max-w-full gap-0.5" data-conversation-scaffold="">
+    <div
+      className="grid min-w-0 max-w-full gap-0.5 rounded-xl border border-(--ui-stroke-tertiary) px-3 py-2"
+      data-conversation-scaffold=""
+    >
       <div className="flex min-w-0 max-w-full items-center gap-1.5">
-        <span className="grid size-3.5 shrink-0 place-items-center">{statusGlyph(row.status, statusLabel)}</span>
+        <span className={SCAFFOLD_GLYPH_CLASS}>{statusGlyph(row.status, statusLabel)}</span>
         <button
           className={cn(
             SCAFFOLD_LABEL_CLASS,
@@ -103,6 +107,7 @@ function DelegateRowView({ row }: { row: DelegateRow }) {
         </button>
         {meta.length > 0 && <span className={SCAFFOLD_META_CLASS}>{meta.join(' · ')}</span>}
         {live && <ActivityTimerText className={cn(SCAFFOLD_META_CLASS, 'ms-auto')} seconds={elapsed} />}
+        <Codicon className="ms-auto shrink-0 text-(--conversation-scaffold-text)" name="agent" size="0.625rem" />
       </div>
       {activity.length > 0 && (
         <div className="min-w-0 max-w-full ps-5">
@@ -134,21 +139,8 @@ function DelegateRowView({ row }: { row: DelegateRow }) {
  * A card, never folded into a run summary: the point of the block is the live
  * list, and a ticker cycling one line across five children would show four of
  * them nothing.
- *
- * `fallback` is what to render when the call describes no children yet. It is
- * not a rare edge: the gateway's `tool.start` carries only `{tool_id, name,
- * context}` — the arguments arrive on `tool.complete` (see
- * `tui_gateway/server.py:_on_tool_start`) — so for the whole of a live run
- * there are no goals to list. Without a fallback the card renders `null` and a
- * delegation is INVISIBLE for exactly as long as it is running, which is worse
- * than the generic tool row it replaced.
  */
-export const DelegateTool: FC<Pick<ToolPart, 'args' | 'result' | 'toolCallId'> & { fallback?: ReactNode }> = ({
-  args,
-  fallback = null,
-  result,
-  toolCallId
-}) => {
+export const DelegateTool: FC<Pick<ToolPart, 'args' | 'result' | 'toolCallId'>> = ({ args, result, toolCallId }) => {
   const sessionId = useStore(useSessionView().$runtimeId)
   const live = useSessionSlice($subagentsBySession, sessionId)
 
@@ -158,7 +150,7 @@ export const DelegateTool: FC<Pick<ToolPart, 'args' | 'result' | 'toolCallId'> &
   )
 
   if (rows.length === 0) {
-    return <>{fallback}</>
+    return null
   }
 
   return (

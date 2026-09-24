@@ -1,302 +1,706 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-vi.mock('@/lib/api', () => ({ api: vi.fn().mockResolvedValue({}) }))
-
-import { api } from '@/lib/api'
-import type { SessionInfo } from '@/types/hermes'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  cancelMcpOAuthFlow,
-  createWebhook,
-  deleteWebhook,
-  enableWebhooks,
-  getAutomationBlueprints,
-  getCronJobRuns,
-  getEnvVars,
-  getHermesConfig,
-  getMcpOAuthFlow,
-  getMessagingPlatforms,
+  AUDIO_SPEAK_MAX_REQUEST_TIMEOUT_MS,
+  AUDIO_SPEAK_MIN_REQUEST_TIMEOUT_MS,
+  AUDIO_TRANSCRIBE_MAX_REQUEST_TIMEOUT_MS,
+  AUDIO_TRANSCRIBE_MIN_REQUEST_TIMEOUT_MS,
+  audioSpeakRequestTimeoutMs,
+  audioTranscribeRequestTimeoutMs,
+  deleteProfile,
+  deleteSession,
+  getAllSessionMessages,
+  getCustomEndpoints,
+  getGlobalModelInfo,
+  getGlobalModelOptions,
+  getLatestSessionMessages,
+  getOlderSessionMessages,
+  getProfiles,
   getSession,
+  getSessionMessages,
   getStatus,
-  getWebhooks,
-  instantiateAutomationBlueprint,
+  LATEST_SESSION_MESSAGES_LIMIT,
   listAllProfileSessions,
   listSessions,
-  pauseCronJob,
-  saveHermesConfig,
+  listSidebarSessions,
+  pluginSocket,
+  resetSidebarBatchCapability,
+  setApiRequestConnection,
   setApiRequestProfile,
-  setWebhookEnabled,
-  triggerCronJob,
-  updateCronJob
+  speakText,
+  triggerCronJob
 } from './hermes'
+import { $transcriptTailBySessionId, transcriptTailState } from './store/transcript-tail'
 
-const mockApi = vi.mocked(api)
+const emptySessionsResponse = {
+  limit: 0,
+  offset: 0,
+  sessions: [],
+  total: 0
+}
 
-afterEach(() => mockApi.mockClear())
+describe('Hermes REST helpers', () => {
+  let api: ReturnType<typeof vi.fn>
 
-// Light coverage that the whole-file port kept each function wired to the right
-// request through the mobile api() seam.
-describe('hermes REST client', () => {
-  it('getStatus → GET /api/status', async () => {
-    await getStatus()
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/status' }))
+  beforeEach(() => {
+    resetSidebarBatchCapability()
+    api = vi.fn().mockResolvedValue(emptySessionsResponse)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { api }
+    })
   })
 
-  it('getSession(id) → /api/sessions/{id}', async () => {
-    await getSession('abc')
-    expect(mockApi).toHaveBeenCalledWith(
-      expect.objectContaining({ path: expect.stringContaining('/api/sessions/abc') })
-    )
+  afterEach(() => {
+    setApiRequestConnection(null)
+    setApiRequestProfile(null)
+    vi.restoreAllMocks()
+    Reflect.deleteProperty(window, 'hermesDesktop')
   })
 
-  it('getHermesConfig → /api/config', async () => {
-    await getHermesConfig()
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/config' }))
-  })
+  it('batches the sidebar slices into a single request with per-slice limits + excludes', async () => {
+    api.mockResolvedValue({ recents: { sessions: [] }, cron: { sessions: [] }, messaging: { sessions: [] } })
 
-  it('saveHermesConfig → PUT /api/config with a body', async () => {
-    await saveHermesConfig({ x: 1 })
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/config', method: 'PUT' }))
-  })
-})
+    await listSidebarSessions({
+      recentsProfile: 'work',
+      recentsLimit: 30,
+      recentsExclude: ['cron', 'tool'],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: ['cron', 'desktop']
+    })
 
-// The catalog GET is global; instantiate names the profile it WRITES the job to
-// (the backend defaults that query param to "default", which is not the same as
-// the caller's active profile) — so the two calls must not be symmetrical.
-describe('automation blueprints', () => {
-  it('getAutomationBlueprints → GET /api/cron/blueprints, unscoped', async () => {
-    mockApi.mockResolvedValueOnce({ blueprints: [] })
-    await getAutomationBlueprints()
-
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/cron/blueprints' }))
-  })
-
-  it('instantiateAutomationBlueprint → POST with the blueprint key, values and target profile', async () => {
-    await instantiateAutomationBlueprint({ blueprint: 'daily-brief', values: { time: '08:00' } }, 'work')
-
-    expect(mockApi).toHaveBeenCalledWith(
+    expect(api).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: { blueprint: 'daily-brief', values: { time: '08:00' } },
-        method: 'POST',
-        path: '/api/cron/blueprints/instantiate?profile=work'
+        path:
+          '/api/profiles/sessions/sidebar?recents_profile=work&recents_limit=30&cron_limit=50' +
+          '&messaging_limit=100&recents_exclude=cron%2Ctool&messaging_exclude=cron%2Cdesktop'
       })
     )
   })
 
-  it('encodes a profile name that needs it', async () => {
-    await instantiateAutomationBlueprint({ blueprint: 'x', values: {} }, 'my profile')
+  it('routes session, profile, and model reads through the active registry source', async () => {
+    api.mockImplementation(async ({ path }: { path: string }) =>
+      path.startsWith('/api/profiles/sessions/sidebar')
+        ? { recents: { sessions: [] }, cron: { sessions: [] }, messaging: { sessions: [] } }
+        : emptySessionsResponse
+    )
+    setApiRequestConnection('personal')
 
-    expect(mockApi).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/api/cron/blueprints/instantiate?profile=my%20profile' })
+    await listSessions()
+    await listAllProfileSessions()
+    await listSidebarSessions({
+      recentsProfile: 'default',
+      recentsLimit: 20,
+      recentsExclude: [],
+      cronLimit: 20,
+      messagingLimit: 20,
+      messagingExclude: []
+    })
+    await getProfiles()
+    await getGlobalModelInfo()
+
+    for (const call of api.mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({ connectionId: 'personal' }))
+    }
+  })
+
+  it('keeps an explicit This device source on REST requests', async () => {
+    setApiRequestConnection('local')
+
+    await getProfiles()
+
+    expect(api).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'local', path: '/api/profiles' }))
+  })
+
+  it('routes the batched sidebar refresh through the active backend scope', async () => {
+    setApiRequestConnection('cubi')
+    setApiRequestProfile('default')
+    api.mockResolvedValue({ recents: { sessions: [] }, cron: { sessions: [] }, messaging: { sessions: [] } })
+
+    await listSidebarSessions({
+      recentsProfile: 'default',
+      recentsLimit: 20,
+      recentsExclude: ['cron'],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: ['cron', 'desktop']
+    })
+
+    expect(api).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: 'cubi',
+        profile: 'default',
+        path: expect.stringContaining('/api/profiles/sessions/sidebar?recents_profile=default')
+      })
+    )
+  })
+
+  it('routes legacy profile-session slices through the active backend scope', async () => {
+    setApiRequestConnection('cubi')
+    setApiRequestProfile('default')
+
+    await listAllProfileSessions(20, 1, 'exclude', 'recent', 'default')
+
+    expect(api).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: 'cubi',
+        profile: 'default',
+        path: expect.stringContaining('/api/profiles/sessions?')
+      })
+    )
+  })
+
+  it('does not stamp ambient profile onto unscoped helpers', async () => {
+    setApiRequestProfile('iris')
+
+    await getProfiles()
+
+    expect(api).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/api/profiles'
+      })
+    )
+    expect(api.mock.calls[0][0]).not.toHaveProperty('profile')
+  })
+
+  it('pins the profile list to an explicit (connection, profile) scope', async () => {
+    setApiRequestConnection('remote-a')
+    setApiRequestProfile('iris')
+
+    await getProfiles({ connectionId: 'remote-b', profile: 'scout' })
+    await getProfiles({ connectionId: 'local', profile: 'default' })
+
+    expect(api.mock.calls.map(([request]) => request)).toEqual([
+      expect.objectContaining({ connectionId: 'remote-b', profile: 'scout', path: '/api/profiles' }),
+      expect.objectContaining({ connectionId: 'local', profile: 'default', path: '/api/profiles' })
+    ])
+  })
+
+  it('preserves ambient and explicit-local ownership for session and profile requests', async () => {
+    setApiRequestConnection('remote-a')
+
+    await getSession('ambient-session')
+    await getSessionMessages('ambient-session')
+    await deleteSession('ambient-session')
+
+    for (const call of api.mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({ connectionId: 'remote-a' }))
+    }
+
+    api.mockClear()
+    const localScope = { connectionId: 'local', profile: 'worker' }
+
+    await getSession('local-session', localScope)
+    await getSessionMessages('local-session', localScope)
+    await deleteSession('local-session', localScope)
+    await deleteProfile('worker', localScope)
+
+    for (const call of api.mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({ connectionId: 'local', profile: 'worker' }))
+    }
+  })
+
+  it('defaults missing sidebar slices to empty session arrays', async () => {
+    api.mockResolvedValue({})
+
+    const result = await listSidebarSessions({
+      recentsProfile: 'all',
+      recentsLimit: 20,
+      recentsExclude: [],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: []
+    })
+
+    expect(result.recents.sessions).toEqual([])
+    expect(result.cron.sessions).toEqual([])
+    expect(result.messaging.sessions).toEqual([])
+  })
+
+  it('counts pinned rows toward a full legacy page so older sessions stay reachable', async () => {
+    // #81484: pins inside the window take LIMIT slots. 3 pinned + 17 unpinned
+    // against a cap of 20 IS a full page; discounting the pins read 17 < 20
+    // and the load-more row never mounted.
+    const row = (id: string, pinned: boolean) => ({ id, title: id, profile: 'default', pinned })
+
+    const recents = [
+      ...Array.from({ length: 3 }, (_, i) => row(`pinned-${i}`, true)),
+      ...Array.from({ length: 17 }, (_, i) => row(`recent-${i}`, false))
+    ]
+
+    api.mockImplementation(({ path }: { path: string }) => {
+      if (path.startsWith('/api/profiles/sessions/sidebar')) {
+        return Promise.reject(new Error('404: {"detail":"No such API endpoint: /api/profiles/sessions/sidebar"}'))
+      }
+
+      if (path.includes('source=cron') || path.includes('exclude_sources=')) {
+        return Promise.resolve({ ...emptySessionsResponse, sessions: [], total: 0 })
+      }
+
+      return Promise.resolve({ ...emptySessionsResponse, sessions: recents, total: recents.length })
+    })
+
+    const result = await listSidebarSessions({
+      recentsProfile: 'default',
+      recentsLimit: 20,
+      recentsExclude: [],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: []
+    })
+
+    expect(result.recents.profiles_truncated).toEqual({ default: true })
+  })
+
+  it('falls back to the per-slice endpoint when the batched route 404s on an older backend', async () => {
+    const row = (id: string) => ({ id, title: id, profile: 'default' })
+
+    api.mockImplementation(({ path }: { path: string }) => {
+      if (path.startsWith('/api/profiles/sessions/sidebar')) {
+        // The exact skew failure: Electron surfaces the backend catch-all.
+        return Promise.reject(
+          new Error(
+            'Error invoking remote method \'hermes:api\': Error: 404: {"detail":"No such API endpoint: /api/profiles/sessions/sidebar"}'
+          )
+        )
+      }
+
+      if (path.includes('source=cron')) {
+        return Promise.resolve({ ...emptySessionsResponse, sessions: [row('cron-1')], total: 1 })
+      }
+
+      if (path.includes('exclude_sources=cron%2Cdesktop')) {
+        return Promise.resolve({ ...emptySessionsResponse, sessions: [row('msg-1')], total: 1 })
+      }
+
+      return Promise.resolve({
+        ...emptySessionsResponse,
+        sessions: [row('recent-1')],
+        total: 7,
+        profile_totals: { default: 7 }
+      })
+    })
+
+    const result = await listSidebarSessions({
+      recentsProfile: 'work',
+      recentsLimit: 30,
+      recentsExclude: ['cron', 'tool'],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: ['cron', 'desktop']
+    })
+
+    // Slices reassembled from the legacy per-slice route with the same
+    // scoping: every section follows the caller's profile.
+    expect(result.recents.sessions.map(s => s.id)).toEqual(['recent-1'])
+    // One row back against a 30-row window: the profile is fully loaded, so
+    // the legacy path must not claim there's another page.
+    expect(result.recents.profiles_truncated).toEqual({ default: false })
+    expect(result.cron.sessions.map(s => s.id)).toEqual(['cron-1'])
+    expect(result.messaging.sessions.map(s => s.id)).toEqual(['msg-1'])
+
+    const paths = api.mock.calls.map(call => (call[0] as { path: string }).path)
+    expect(paths.filter(p => p.startsWith('/api/profiles/sessions/sidebar'))).toHaveLength(1)
+    expect(paths.filter(p => p.startsWith('/api/profiles/sessions?'))).toHaveLength(3)
+    expect(
+      paths.filter(path => path.startsWith('/api/profiles/sessions?') && path.includes('profile=work'))
+    ).toHaveLength(3)
+    expect(paths.some(path => path.includes('profile=all'))).toBe(false)
+    expect(paths).toContainEqual(expect.stringContaining('source=cron'))
+    expect(paths).toContainEqual(expect.stringContaining('exclude_sources=cron%2Ctool'))
+  })
+
+  it('keeps per-slice errors on the legacy fallback so a cron failure does not taint recents', async () => {
+    resetSidebarBatchCapability()
+    const row = (id: string) => ({ id, title: id, profile: 'default' })
+
+    api.mockImplementation(({ path }: { path: string }) => {
+      if (path.startsWith('/api/profiles/sessions/sidebar')) {
+        return Promise.reject(new Error('404: {"detail":"No such API endpoint: /api/profiles/sessions/sidebar"}'))
+      }
+
+      if (path.includes('source=cron')) {
+        return Promise.resolve({
+          ...emptySessionsResponse,
+          sessions: [],
+          errors: [{ profile: 'default', error: 'disk I/O error' }]
+        })
+      }
+
+      return Promise.resolve({ ...emptySessionsResponse, sessions: [row('recent-1')] })
+    })
+
+    const result = await listSidebarSessions({
+      recentsProfile: 'default',
+      recentsLimit: 20,
+      recentsExclude: [],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: []
+    })
+
+    expect(result.recents.sessions.map(s => s.id)).toEqual(['recent-1'])
+    expect(result.recents.errors).toBeUndefined()
+    expect(result.cron.errors).toEqual([{ profile: 'default', error: 'disk I/O error' }])
+    expect(result.errors).toBeUndefined()
+  })
+
+  it('remembers endpoint-missing and skips re-probing the batched route on later refreshes', async () => {
+    api.mockImplementation(({ path }: { path: string }) =>
+      path.startsWith('/api/profiles/sessions/sidebar')
+        ? Promise.reject(new Error('404: {"detail":"No such API endpoint: /api/profiles/sessions/sidebar"}'))
+        : Promise.resolve(emptySessionsResponse)
+    )
+
+    const req = {
+      recentsProfile: 'all' as const,
+      recentsLimit: 20,
+      recentsExclude: [],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: []
+    }
+
+    await listSidebarSessions(req)
+    await listSidebarSessions(req)
+
+    const batchedProbes = api.mock.calls.filter(call =>
+      (call[0] as { path: string }).path.startsWith('/api/profiles/sessions/sidebar')
+    )
+
+    // First refresh probes once and learns; the second goes straight to the
+    // per-slice route (3 calls each refresh, no repeated dead probe).
+    expect(batchedProbes).toHaveLength(1)
+    expect(api.mock.calls.length).toBe(1 + 3 + 3)
+  })
+
+  it('re-probes the batched route after a gateway switch resets the capability flag', async () => {
+    api.mockImplementation(({ path }: { path: string }) =>
+      path.startsWith('/api/profiles/sessions/sidebar')
+        ? Promise.reject(new Error('404: {"detail":"No such API endpoint: /api/profiles/sessions/sidebar"}'))
+        : Promise.resolve(emptySessionsResponse)
+    )
+
+    const req = {
+      recentsProfile: 'all' as const,
+      recentsLimit: 20,
+      recentsExclude: [],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: []
+    }
+
+    await listSidebarSessions(req)
+    // Soft gateway switch: the next backend may support the batched route.
+    resetSidebarBatchCapability()
+    api.mockResolvedValue({ recents: { sessions: [] }, cron: { sessions: [] }, messaging: { sessions: [] } })
+
+    const result = await listSidebarSessions(req)
+
+    const batchedProbes = api.mock.calls.filter(call =>
+      (call[0] as { path: string }).path.startsWith('/api/profiles/sessions/sidebar')
+    )
+
+    expect(batchedProbes).toHaveLength(2)
+    expect(result.recents.sessions).toEqual([])
+  })
+
+  it('does NOT fall back on transient failures — only endpoint-missing shapes trigger legacy mode', async () => {
+    api.mockRejectedValue(new Error('Request timed out after 60000ms'))
+
+    await expect(
+      listSidebarSessions({
+        recentsProfile: 'all',
+        recentsLimit: 20,
+        recentsExclude: [],
+        cronLimit: 50,
+        messagingLimit: 100,
+        messagingExclude: []
+      })
+    ).rejects.toThrow('timed out')
+
+    // One call: the batched probe. No legacy fan-out, no sticky degradation.
+    expect(api).toHaveBeenCalledTimes(1)
+
+    // And the next refresh still uses the batched route.
+    api.mockResolvedValue({ recents: { sessions: [] }, cron: { sessions: [] }, messaging: { sessions: [] } })
+    await listSidebarSessions({
+      recentsProfile: 'all',
+      recentsLimit: 20,
+      recentsExclude: [],
+      cronLimit: 50,
+      messagingLimit: 100,
+      messagingExclude: []
+    })
+
+    expect((api.mock.calls[1][0] as { path: string }).path).toMatch(/^\/api\/profiles\/sessions\/sidebar\?/)
+  })
+
+  it('waits for synchronous cron triggers as a long-running operation', async () => {
+    api.mockResolvedValue({ id: 'job-1' })
+
+    await triggerCronJob('job-1')
+
+    const request = api.mock.calls[0]?.[0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        path: '/api/cron/jobs/job-1/trigger',
+        method: 'POST'
+      })
+    )
+    expect(request.timeoutMs).toBeGreaterThanOrEqual(60 * 60 * 1000)
+  })
+
+  it('keeps the liveness poll on the short default so a dead backend fails fast', async () => {
+    api.mockResolvedValue({})
+    api.mockClear()
+
+    await getStatus()
+
+    // /api/status must NOT carry the long startup timeout — it is the runtime
+    // liveness probe and has to fail quickly when the backend drops.
+    const call = api.mock.calls[0]?.[0] as { path: string; timeoutMs?: number }
+    expect(call.path).toBe('/api/status')
+    expect(call.timeoutMs).toBeUndefined()
+  })
+
+  // Explicit profile/connection writes (deleting a profile) carry the foreground
+  // dial tag; session reads stay on the ambient default (#111651).
+  it('tags cross-profile message reads for Electron routing and backend lookup', async () => {
+    api.mockResolvedValue({ messages: [], session_id: 'session-1' })
+
+    await getSessionMessages('session-1', 'xiaoxuxu')
+
+    expect(api).toHaveBeenCalledWith({
+      path: '/api/sessions/session-1/messages?profile=xiaoxuxu',
+      profile: 'xiaoxuxu'
+    })
+  })
+
+  it('pins session metadata and transcripts to an explicit connection scope', async () => {
+    api.mockResolvedValue({ messages: [], session_id: 'session-1' })
+    const scope = { connectionId: 'source-a', profile: 'backend-default' }
+
+    await getSession('session-1', scope)
+    await getSessionMessages('session-1', scope)
+
+    expect(api).toHaveBeenNthCalledWith(1, {
+      connectionId: 'source-a',
+      path: '/api/sessions/session-1?profile=backend-default',
+      profile: 'backend-default'
+    })
+    expect(api).toHaveBeenNthCalledWith(2, {
+      connectionId: 'source-a',
+      path: '/api/sessions/session-1/messages?profile=backend-default',
+      profile: 'backend-default'
+    })
+  })
+
+  it('scopes profile deletion and rejects default before Electron dispatch', async () => {
+    api.mockResolvedValue({ ok: true, path: '/profiles/worker' })
+
+    await deleteProfile('backend-worker', { connectionId: 'source-a', profile: 'backend-worker' })
+    await expect(deleteProfile('worker', { connectionId: 'source-a', profile: 'default' })).rejects.toThrow(
+      /default profile cannot be deleted/i
+    )
+
+    expect(api).toHaveBeenCalledOnce()
+    expect(api).toHaveBeenCalledWith({
+      connectionId: 'source-a',
+      method: 'DELETE',
+      path: '/api/profiles/backend-worker',
+      priority: 'foreground',
+      profile: 'backend-worker'
+    })
+  })
+
+  it('hydrates the latest transcript with a small tail page (latest, compacted rows included)', async () => {
+    api.mockResolvedValue({
+      messages: [],
+      pagination: { limit: 120, offset: 0, order: 'latest', returned: 0 },
+      session_id: 'session-1'
+    })
+
+    await getLatestSessionMessages('session-1', 'xiaoxuxu')
+
+    expect(api).toHaveBeenCalledWith({
+      path: `/api/sessions/session-1/messages?profile=xiaoxuxu&limit=${LATEST_SESSION_MESSAGES_LIMIT}&order=latest&include_compacted=true`,
+      profile: 'xiaoxuxu'
+    })
+  })
+
+  it('records tail truncation state under the requested and resolved session ids', async () => {
+    $transcriptTailBySessionId.set({})
+    api.mockResolvedValue({
+      messages: Array.from({ length: 120 }, (_, index) => ({ content: `m${index}`, id: index, role: 'user' })),
+      pagination: { limit: 120, offset: 0, order: 'latest', returned: 120 },
+      session_id: 'resolved-1'
+    })
+
+    await getLatestSessionMessages('prefix-1')
+
+    expect(transcriptTailState('prefix-1')).toMatchObject({ nextOffset: 120, possiblyTruncated: true })
+    expect(transcriptTailState('resolved-1')).toMatchObject({ nextOffset: 120, possiblyTruncated: true })
+  })
+
+  it('requests older pages backwards from the newest message', async () => {
+    api.mockResolvedValue({ messages: [], session_id: 'session-1' })
+
+    await getOlderSessionMessages('session-1', 'xiaoxuxu', 240)
+
+    expect(api).toHaveBeenCalledWith({
+      path: `/api/sessions/session-1/messages?profile=xiaoxuxu&limit=${LATEST_SESSION_MESSAGES_LIMIT}&offset=240&order=latest&include_compacted=true`,
+      profile: 'xiaoxuxu'
+    })
+  })
+
+  it('loads complete transcripts through bounded oldest-first pages', async () => {
+    api
+      .mockResolvedValueOnce({
+        messages: [{ id: 1 }, { id: 2 }],
+        session_id: 'session-1',
+        pagination: { limit: 2, offset: 0, order: 'oldest', returned: 2 }
+      })
+      .mockResolvedValueOnce({
+        messages: [{ id: 3 }],
+        session_id: 'session-1',
+        pagination: { limit: 2, offset: 2, order: 'oldest', returned: 1 }
+      })
+
+    const result = await getAllSessionMessages('session-1', 'xiaoxuxu')
+
+    expect(result.messages).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }])
+    expect(api).toHaveBeenNthCalledWith(1, {
+      path: '/api/sessions/session-1/messages?profile=xiaoxuxu&limit=500&offset=0&order=oldest&include_compacted=true',
+      profile: 'xiaoxuxu'
+    })
+    expect(api).toHaveBeenNthCalledWith(2, {
+      path: '/api/sessions/session-1/messages?profile=xiaoxuxu&limit=500&offset=2&order=oldest&include_compacted=true',
+      profile: 'xiaoxuxu'
+    })
+  })
+
+  it('stops complete transcript loads before Desktop memory becomes unbounded', async () => {
+    api.mockResolvedValueOnce({
+      messages: [{ id: 1, content: 'large transcript page' }],
+      session_id: 'session-1',
+      pagination: { limit: 1, offset: 0, order: 'oldest', returned: 1 }
+    })
+
+    await expect(getAllSessionMessages('session-1', null, { maxJsonChars: 1 })).rejects.toThrow(
+      'Desktop safe-load limit'
+    )
+  })
+
+  it('bounds blocking TTS synthesis timeouts by text length', () => {
+    expect(audioSpeakRequestTimeoutMs('short message')).toBe(AUDIO_SPEAK_MIN_REQUEST_TIMEOUT_MS)
+    expect(audioSpeakRequestTimeoutMs('x'.repeat(8_000))).toBeGreaterThan(AUDIO_SPEAK_MIN_REQUEST_TIMEOUT_MS)
+    expect(audioSpeakRequestTimeoutMs('x'.repeat(8_000))).toBeLessThan(AUDIO_SPEAK_MAX_REQUEST_TIMEOUT_MS)
+    expect(audioSpeakRequestTimeoutMs('x'.repeat(100_000))).toBe(AUDIO_SPEAK_MAX_REQUEST_TIMEOUT_MS)
+  })
+
+  it('routes blocking TTS synthesis through the active profile backend', async () => {
+    setApiRequestProfile('rhaegal')
+    api.mockResolvedValueOnce({
+      data_url: 'data:audio/mpeg;base64,AA==',
+      mime_type: 'audio/mpeg',
+      ok: true,
+      provider: 'openai'
+    })
+
+    await expect(speakText('Read this aloud')).resolves.toEqual({
+      data_url: 'data:audio/mpeg;base64,AA==',
+      mime_type: 'audio/mpeg',
+      ok: true,
+      provider: 'openai'
+    })
+
+    expect(api).toHaveBeenCalledWith({
+      body: { text: 'Read this aloud' },
+      method: 'POST',
+      path: '/api/audio/speak',
+      profile: 'rhaegal',
+      timeoutMs: AUDIO_SPEAK_MIN_REQUEST_TIMEOUT_MS
+    })
+  })
+
+  it('bounds blocking transcription timeouts by payload length', () => {
+    expect(audioTranscribeRequestTimeoutMs('data:audio/webm;base64,AA==')).toBe(AUDIO_TRANSCRIBE_MIN_REQUEST_TIMEOUT_MS)
+    expect(audioTranscribeRequestTimeoutMs('x'.repeat(3_000_000))).toBeGreaterThan(
+      AUDIO_TRANSCRIBE_MIN_REQUEST_TIMEOUT_MS
+    )
+    expect(audioTranscribeRequestTimeoutMs('x'.repeat(3_000_000))).toBeLessThan(AUDIO_TRANSCRIBE_MAX_REQUEST_TIMEOUT_MS)
+    expect(audioTranscribeRequestTimeoutMs('x'.repeat(9_000_000))).toBe(AUDIO_TRANSCRIBE_MAX_REQUEST_TIMEOUT_MS)
+  })
+
+  it('defaults model options to configured providers only', async () => {
+    await getGlobalModelOptions()
+
+    expect(api).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/api/model/options?explicit_only=1'
+      })
+    )
+  })
+
+  it('can opt into unconfigured providers for onboarding flows', async () => {
+    await getGlobalModelOptions({ includeUnconfigured: true, refresh: true, explicitOnly: false })
+
+    expect(api).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/api/model/options?refresh=1&include_unconfigured=1'
+      })
+    )
+  })
+
+  it('scopes custom endpoint reads to the requested settings profile', async () => {
+    await getCustomEndpoints('content-studio')
+
+    expect(api).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/api/providers/custom-endpoints',
+        profile: 'content-studio',
+        priority: 'foreground'
+      })
     )
   })
 })
 
-// Ported from apps/desktop/src/webhooks-rest.test.ts. Two additions: the
-// deliberate absence of a profile scope (none of the five backend handlers
-// declares that query parameter, so sending one would advertise a scoping the
-// client does not have), and the create payload's `secret`, which the backend
-// accepts and desktop's client never offered.
-describe('webhook REST', () => {
-  // With a profile ACTIVE, so the assertion pins the absence rather than
-  // agreeing with a `profileScoped()` that happened to be empty.
-  it('getWebhooks → GET /api/webhooks, unscoped even under an active profile', async () => {
-    setApiRequestProfile('work')
+describe('pluginSocket', () => {
+  let getConnection: ReturnType<typeof vi.fn>
 
-    try {
-      await getWebhooks()
-    } finally {
-      setApiRequestProfile(null)
-    }
-
-    expect(mockApi).toHaveBeenCalledWith({ path: '/api/webhooks' })
-  })
-
-  it('enableWebhooks → POST /api/webhooks/enable', async () => {
-    await enableWebhooks()
-
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ method: 'POST', path: '/api/webhooks/enable' }))
-  })
-
-  it('createWebhook → POST /api/webhooks with the full payload', async () => {
-    const body = {
-      deliver: 'telegram',
-      deliver_chat_id: '-100123',
-      deliver_only: true,
-      description: 'push events',
-      events: ['push'],
-      name: 'github-push',
-      prompt: 'summarize the push',
-      secret: 'mine',
-      skills: ['git']
-    }
-
-    await createWebhook(body)
-
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ body, method: 'POST', path: '/api/webhooks' }))
-  })
-
-  // The name is a path segment; an unencoded one would address a different route
-  // (or none), and DELETE addressing the wrong row is not a recoverable mistake.
-  it('deleteWebhook encodes the name into the path', async () => {
-    await deleteWebhook('my hook')
-
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ method: 'DELETE', path: '/api/webhooks/my%20hook' }))
-  })
-
-  it('setWebhookEnabled → PUT /api/webhooks/{name}/enabled, encoded, with the flag', async () => {
-    await setWebhookEnabled('my hook', false)
-
-    expect(mockApi).toHaveBeenCalledWith({
-      body: { enabled: false },
-      method: 'PUT',
-      path: '/api/webhooks/my%20hook/enabled'
+  beforeEach(() => {
+    getConnection = vi.fn().mockResolvedValue(null)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { api: vi.fn(), getConnection }
     })
   })
-})
 
-// Both list endpoints send include_pinned=True, which back-fills pinned rows
-// PAST the LIMIT and appends them after the recency window. The client's job is
-// to keep its page window without throwing those rows away again.
-describe('session list paging keeps back-filled pins', () => {
-  const row = (id: string, pinned = false) => ({ id, pinned }) as unknown as SessionInfo
-
-  const page = (sessions: SessionInfo[]) => ({ sessions, total: 99, limit: 2, offset: 0 })
-
-  it('keeps a pinned row the backend appended past the limit', async () => {
-    mockApi.mockResolvedValueOnce(page([row('a'), row('b'), row('old-pin', true)]))
-
-    const result = await listSessions(2)
-
-    expect(result.sessions.map(s => s.id)).toEqual(['a', 'b', 'old-pin'])
+  afterEach(() => {
+    vi.restoreAllMocks()
+    Reflect.deleteProperty(window, 'hermesDesktop')
+    setApiRequestProfile(null)
   })
 
-  it('still drops an unpinned row past the limit — that one really is overflow', async () => {
-    mockApi.mockResolvedValueOnce(page([row('a'), row('b'), row('c'), row('old-pin', true)]))
-
-    const result = await listSessions(2)
-
-    expect(result.sessions.map(s => s.id)).toEqual(['a', 'b', 'old-pin'])
-  })
-
-  it('leaves a short page untouched', async () => {
-    mockApi.mockResolvedValueOnce(page([row('a')]))
-
-    await expect(listSessions(2).then(r => r.sessions.map(s => s.id))).resolves.toEqual(['a'])
-  })
-
-  it('applies the same window to the cross-profile aggregator', async () => {
-    mockApi.mockResolvedValueOnce(page([row('a'), row('b'), row('c'), row('old-pin', true)]))
-
-    const result = await listAllProfileSessions(2)
-
-    expect(result.sessions.map(s => s.id)).toEqual(['a', 'b', 'old-pin'])
-  })
-})
-
-// --- MCP OAuth flow cancel (MJXHRM-444) ------------------------------------
-
-describe('MCP OAuth flow lifecycle', () => {
-  it('cancels the same flow the poller reads, by DELETE on that one path', async () => {
-    await getMcpOAuthFlow('flow 1')
-    await cancelMcpOAuthFlow('flow 1')
-
-    const [poll, cancel] = mockApi.mock.calls.map(call => call[0])
-
-    // Same URL, opposite verbs: a cancel spelled against a different path would
-    // leave the flow (and its loopback redirect listener) running.
-    expect(cancel).toMatchObject({ path: poll.path, method: 'DELETE' })
-    expect(poll).not.toHaveProperty('method')
-    expect(cancel.path).toBe('/api/mcp/oauth/flows/flow%201')
-  })
-
-  // An unknown or garbage-collected id answers {ok, status: 'expired'}, not a
-  // 404 — so a cleanup path can fire this without first checking existence.
-  it('treats an already-gone flow as a resolved cancel', async () => {
-    mockApi.mockResolvedValueOnce({ ok: true, status: 'expired' })
-
-    await expect(cancelMcpOAuthFlow('gone')).resolves.toEqual({ ok: true, status: 'expired' })
-  })
-})
-
-// The settings "Applies to" scope (store/settings-scope) reaches the wire as
-// this optional trailing argument. The three states are distinct on purpose:
-// an override wins, no override falls back to the app-wide profile, and
-// neither means the key is ABSENT — which is what keeps single-profile users'
-// requests byte-identical to before the selector existed.
-describe('profile-scoped settings calls', () => {
-  afterEach(() => setApiRequestProfile(null))
-
-  it('omits profile entirely with no app profile and no override', async () => {
-    await getEnvVars()
-    expect(mockApi.mock.calls[0][0]).not.toHaveProperty('profile')
-  })
-
-  it('falls back to the app-wide profile when no override is given', async () => {
+  it('scopes the connection to the active profile, like pluginRest', async () => {
     setApiRequestProfile('work')
-    await getEnvVars()
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work' }))
+
+    const dispose = pluginSocket('kanban', '/events', () => {})
+
+    await vi.waitFor(() => expect(getConnection).toHaveBeenCalled())
+    expect(getConnection).toHaveBeenCalledWith('work')
+
+    dispose()
   })
 
-  // The whole point: the override targets a profile the app is NOT on.
-  it('sends the override in preference to the app-wide profile', async () => {
-    setApiRequestProfile('work')
-    await getEnvVars('research')
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ profile: 'research' }))
-  })
+  it('passes null when no profile is scoped (single-profile / primary)', async () => {
+    const dispose = pluginSocket('kanban', '/events', () => {})
 
-  it('scopes a config save', async () => {
-    await saveHermesConfig({ timezone: 'UTC' }, 'research')
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ method: 'PUT', profile: 'research' }))
-  })
+    await vi.waitFor(() => expect(getConnection).toHaveBeenCalled())
+    expect(getConnection).toHaveBeenCalledWith(null)
 
-  // Messaging carried NO profile at all before this — it always hit the
-  // gateway's own channels, whatever the app was scoped to.
-  it('scopes the messaging platform list', async () => {
-    setApiRequestProfile('work')
-    await getMessagingPlatforms()
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/messaging/platforms', profile: 'work' }))
-  })
-})
-
-// MJXHRM-457. Cron jobs live in per-profile stores and every route takes an
-// optional ?profile= choosing which one it opens. Only the list ever sent it, so
-// acting on a row from another profile hit the ACTIVE profile's store instead.
-describe('cron routes carry ?profile=', () => {
-  const pathOf = () => String((mockApi.mock.calls.at(-1)?.[0] as { path: string }).path)
-
-  it('stamps the profile on a trigger', async () => {
-    await triggerCronJob('j1', 'work')
-    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger?profile=work')
-  })
-
-  it('stamps the profile on a pause', async () => {
-    await pauseCronJob('j1', 'work')
-    expect(pathOf()).toBe('/api/cron/jobs/j1/pause?profile=work')
-  })
-
-  it('stamps the profile on an update', async () => {
-    await updateCronJob('j1', { name: 'x' }, 'work')
-    expect(pathOf()).toBe('/api/cron/jobs/j1?profile=work')
-  })
-
-  // The runs route already has a query string, so the separator has to be '&' —
-  // a second '?' makes `profile` part of the `limit` value and the backend
-  // silently falls back to the active profile.
-  it('appends rather than restarts the query string on the runs route', async () => {
-    await getCronJobRuns('j1', 5, 'work')
-    expect(pathOf()).toBe('/api/cron/jobs/j1/runs?limit=5&profile=work')
-  })
-
-  it('escapes a profile name that needs it', async () => {
-    await triggerCronJob('j1', 'my profile/2')
-    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger?profile=my%20profile%2F2')
-  })
-
-  // A fixture that DISAGREES: an older gateway does not annotate its records, so
-  // there is no profile to send and inventing one would retarget the request.
-  it('sends no profile when the job carries none', async () => {
-    await triggerCronJob('j1')
-    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger')
+    dispose()
   })
 })

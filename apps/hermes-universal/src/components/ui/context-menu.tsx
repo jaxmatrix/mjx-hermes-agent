@@ -4,7 +4,8 @@ import * as React from 'react'
 import { HERMES_CONTEXT_MENU_TRIGGER_ATTR } from '@/app/context-menu/markers'
 import { Codicon } from '@/components/ui/codicon'
 import { cn } from '@/lib/utils'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
+
+export { HERMES_CONTEXT_MENU_TRIGGER_ATTR }
 
 function ContextMenu({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
   return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />
@@ -19,12 +20,6 @@ function ContextMenuTrigger({ ...props }: React.ComponentProps<typeof ContextMen
     <ContextMenuPrimitive.Trigger
       data-slot="context-menu-trigger"
       {...props}
-      // AFTER `{...props}`, and that ordering is the whole fix (desktop
-      // `2d6d7c550f`). Radix `asChild` merges as `mergeProps(slotProps,
-      // childProps)`, so a child that sets its own `data-slot` — the statusbar's
-      // does — WINS and erases the marker above. The app-wide coordinator
-      // (`app/context-menu/coordinator.tsx`) stands down for a gesture that
-      // lands on this attribute; a trigger it cannot see loses its menu.
       {...{ [HERMES_CONTEXT_MENU_TRIGGER_ATTR]: '' }}
     />
   )
@@ -35,19 +30,11 @@ function ContextMenuGroup({ ...props }: React.ComponentProps<typeof ContextMenuP
 }
 
 function ContextMenuContent({ className, ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
-  // The in-app browser's guest is a NATIVE view the compositor paints above the
-  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
-  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
-  useGuestOcclusion('radix-context-menu')
-
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
-        // `--z-modal-popover`, not a bare `z-50` (MJXHRM-365): portaled to
-        // document.body, so this stacks against the dialog rung (130), not
-        // against its trigger. See dropdown-menu.tsx for the full reasoning.
         className={cn(
-          'z-(--z-modal-popover) max-h-(--radix-context-menu-content-available-height) min-w-36 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'z-50 max-h-(--radix-context-menu-content-available-height) min-w-36 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className
         )}
         data-slot="context-menu-content"
@@ -154,8 +141,7 @@ function ContextMenuSubTrigger({
       {...props}
     >
       {children}
-      {/* Points at the edge the submenu opens toward, so it mirrors with it. */}
-      <Codicon className="ms-auto text-(--ui-text-tertiary) rtl:-scale-x-100" name="chevron-right" size="1rem" />
+      <Codicon className="ms-auto text-(--ui-text-tertiary)" name="chevron-right" size="1rem" />
     </ContextMenuPrimitive.SubTrigger>
   )
 }
@@ -176,7 +162,7 @@ function ContextMenuSubContent({
         className={cn(
           // `max-h-80` (not the Radix available-height var, which is published
           // only on Content) so a long submenu scrolls instead of collapsing.
-          'dt-portal-scrollbar z-(--z-modal-popover) max-h-80 min-w-36 origin-(--radix-context-menu-content-transform-origin) overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'dt-portal-scrollbar z-50 max-h-80 min-w-36 origin-(--radix-context-menu-content-transform-origin) overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className
         )}
         collisionPadding={collisionPadding}

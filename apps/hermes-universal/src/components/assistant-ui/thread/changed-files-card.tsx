@@ -1,5 +1,8 @@
+import { useStore } from '@nanostores/react'
 import { type FC, useMemo } from 'react'
 
+import { useComposerScope } from '@/app/chat/composer/scope'
+import { useSessionView } from '@/app/chat/session-view'
 import { deriveChangedFiles } from '@/components/assistant-ui/thread/changed-files'
 import { WIDGET_SHELL_CLASS } from '@/components/chat/widget-shell'
 import { DiffCount } from '@/components/ui/diff-count'
@@ -7,8 +10,8 @@ import { FadeScroll } from '@/components/ui/fade-scroll'
 import { FileTypeIcon } from '@/components/ui/file-type-icon'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { displayPath } from '@/lib/display-path'
 import { cn } from '@/lib/utils'
-import { useDisplayPath } from '@/store/display-home'
 import { openReviewForPath, revealReview } from '@/store/review'
 
 // ~5 rows. A turn that rewrites twenty files should still read as one card in
@@ -22,17 +25,17 @@ const MAX_ROWS_HEIGHT = '9.375rem'
  *
  * Wears the shared `WIDGET_SHELL_CLASS` so it reads as the same panel as the
  * transcript's other inline widgets rather than inventing its own chrome.
- *
- * No worktree scope argument, unlike desktop: `revealReview` / `openReviewForPath`
- * target `$effectiveCwd`, which already follows the focused tile — see the
- * comment on `revealReview` in store/review.ts.
  */
 export const ChangedFilesCard: FC<{ parts: readonly unknown[] }> = ({ parts }) => {
   const { t } = useI18n()
   const copy = t.assistant.thread
   const files = useMemo(() => deriveChangedFiles(parts), [parts])
-  // Bound to the GATEWAY's home: the run edited these files on its machine.
-  const displayPath = useDisplayPath()
+  // Review THIS surface's repo: a tile transcript pins the pane to the tile's
+  // worktree; the primary passes null (follow the active session, as before).
+  const view = useSessionView()
+  const viewCwd = useStore(view.$cwd)
+  const scopeCwd = view.kind === 'primary' ? null : viewCwd || null
+  const composerScope = useComposerScope()
 
   if (files.length === 0) {
     return null
@@ -47,21 +50,18 @@ export const ChangedFilesCard: FC<{ parts: readonly unknown[] }> = ({ parts }) =
         <span className="min-w-0 flex-1 truncate text-(--ui-text-primary)">{copy.filesChanged(files.length)}</span>
         <button
           className="shrink-0 cursor-pointer text-(--ui-text-tertiary) transition-colors hover:text-(--ui-text-primary)"
-          onClick={() => revealReview()}
+          onClick={() => revealReview(scopeCwd, composerScope.target)}
           type="button"
         >
           {copy.reviewChanges}
         </button>
       </div>
-      <FadeScroll className="-mx-1.5 mt-1.5 flex flex-col px-1.5" maxHeight={MAX_ROWS_HEIGHT}>
+      <FadeScroll className="-mx-1.5 mt-1.5 flex flex-col overscroll-y-auto px-1.5" maxHeight={MAX_ROWS_HEIGHT}>
         {files.map(file => (
-          // Tip, not a native title=: universal renders in WebKitGTK and on
-          // touch, where a native tooltip is either mistimed or unreachable
-          // (there's a test enforcing this on every button).
           <Tip key={file.path} label={displayPath(file.path)}>
             <button
               className="row-hover flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 text-start"
-              onClick={() => void openReviewForPath(file.path)}
+              onClick={() => void openReviewForPath(file.path, scopeCwd, composerScope.target)}
               type="button"
             >
               <FileTypeIcon className="shrink-0 text-(--ui-text-tertiary)" path={file.path} size="0.875rem" />

@@ -1,7 +1,6 @@
 import { Codicon } from '@/components/ui/codicon'
 import { Tip } from '@/components/ui/tooltip'
 import type { HermesBranchPullRequest } from '@/global'
-import { openExternalLink } from '@/lib/external-link'
 import { cn } from '@/lib/utils'
 import { pullRequestBucket } from '@/store/pull-requests'
 
@@ -17,14 +16,24 @@ const PR_STYLE: Record<string, { className: string; icon: string }> = {
 
 export function openPullRequest(pr: HermesBranchPullRequest): void {
   if (pr.url) {
-    void openExternalLink(pr.url)
+    void window.hermesDesktop?.openExternal?.(pr.url)
   }
 }
 
 /** The branch's PR as a row chip: state glyph plus number, tooltipped with the
  *  title, and a link to the PR on click. Identity like {@link ProfileTag} —
- *  never a status dot. */
-export function PrTag({ className, pr }: { className?: string; pr: HermesBranchPullRequest }) {
+ *  never a status dot. `showIcon={false}` drops the glyph for rows that already
+ *  lead with a git icon the number can sit against (the composer's coding row),
+ *  so the chip doesn't stack a second one beside it. */
+export function PrTag({
+  className,
+  pr,
+  showIcon = true
+}: {
+  className?: string
+  pr: HermesBranchPullRequest
+  showIcon?: boolean
+}) {
   const style = PR_STYLE[pullRequestBucket(pr)] ?? PR_STYLE.open
 
   return (
@@ -38,6 +47,10 @@ export function PrTag({ className, pr }: { className?: string; pr: HermesBranchP
           style.className,
           className
         )}
+        // Marks the chip as a live link for the row's hover rule: while the
+        // pointer is on it, the row keeps its metadata and holds the kebab back
+        // (see session-row) so the click can actually land.
+        data-pr-link
         onClick={event => {
           // The row underneath opens the session on click and pins on
           // shift-click; the chip is its own target and keeps the press.
@@ -48,8 +61,9 @@ export function PrTag({ className, pr }: { className?: string; pr: HermesBranchP
         onPointerDown={event => event.stopPropagation()}
         type="button"
       >
-        <Codicon name={style.icon} size="0.75rem" />
-        <span className="underline-offset-1 group-hover/pr:underline">{pr.number}</span>
+        {showIcon && <Codicon name={style.icon} size="0.75rem" />}
+        {/* Without the glyph the number needs the `#` to still read as a PR. */}
+        <span className="underline-offset-1 group-hover/pr:underline">{showIcon ? pr.number : `#${pr.number}`}</span>
       </button>
     </Tip>
   )

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const openSessionRefMock = vi.fn()
 
 vi.mock('@/app/open-session', () => ({
+  openSession: (...args: unknown[]) => openSessionRefMock(...args),
   openSessionRef: (...args: unknown[]) => openSessionRefMock(...args)
 }))
 
@@ -247,7 +248,9 @@ describe('MarkdownTextContent session refs', () => {
 
     fireEvent.click(link)
 
-    expect(openSessionRefMock).toHaveBeenCalledWith('s_abc', 'tab')
+    await waitFor(() => {
+      expect(openSessionRefMock).toHaveBeenCalledWith('s_abc', expect.any(Function), 'tab')
+    })
   })
 
   it('leaves a ref inside inline code as literal text', () => {

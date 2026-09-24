@@ -1,116 +1,66 @@
+import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { PetHeartField, useHeartPreviewHotkey } from '@/components/chat/vibe-hearts'
-import { useMediaQuery } from '@/hooks/use-media-query'
-import { triggerHaptic } from '@/lib/haptics'
-import { IS_MOBILE } from '@/lib/platform'
-import { useStore } from '@/store/atom'
-import { $busy } from '@/store/chat'
-import { $petChange } from '@/store/live-sync'
-import { $petInfo, $petRoam, $petRoamDir, $petRoamWall, flashPetActivity, type PetRoamWall } from '@/store/pet'
-import { applyPetChange, syncPetInfo } from '@/store/pet-gallery'
+import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
+import { useOnProfileSwitch } from '@/app/hooks/use-on-profile-switch'
+import { useRouteOverlayActive } from '@/app/hooks/use-route-overlay-active'
+import { PetHeartField } from '@/components/chat/vibe-hearts'
+import { persistString, storedString } from '@/lib/storage'
+import { $changeEventsAvailable, $petChange } from '@/store/live-sync'
+import {
+  $petAtRest,
+  $petInfo,
+  $petRoam,
+  $petRoamDir,
+  clearPetUnread,
+  hasPetSpriteForMeta,
+  mergePetInfoMeta,
+  type PetInfo,
+  type PetInfoMeta,
+  petProfile,
+  setPetInfo
+} from '@/store/pet'
+import { resetPetGallery, setPetScale } from '@/store/pet-gallery'
+import { $petOverlayActive, initPetOverlayBridge, popOutPet, restorePetOverlay } from '@/store/pet-overlay'
+import { $gatewayState } from '@/store/session'
+import { isSecondaryWindow } from '@/store/windows'
 import { useTheme } from '@/themes/context'
 
+import { PET_STARTUP_RETRY_MS, petInfoPollIntervalMs } from './pet-info-poll'
 import { PetSprite, roamWalkRow } from './pet-sprite'
-import { snapshotSurfaces, walkBox } from './roam-geometry'
 import { usePetRoam } from './use-pet-roam'
-import { clampToBox, facingSign, resolveSurface, spriteRotation, tangentAxis } from './wall-geometry'
+import { type PetZoomAnchor, usePetZoomGesture } from './use-pet-zoom-gesture'
 
-// The in-app pet, ported from the desktop in-app mascot: a top-level,
-// draggable, roaming sprite mounted at the app root (mobile-controller) so it
-// floats over every route. The desktop's separate-OS-window pop-out is excluded
-// (Tauri has one window; can't work on mobile). Position is top/left-anchored,
-// persisted to localStorage, and clamped inside the window.
-//
-// On a phone it walks all four edges rather than only the floor, so the sprite
-// rotates to keep its feet on whatever it is standing on, and the walk area is
-// inset by the safe area and the keyboard. See wall-geometry.ts.
+// v2: positions are now top/left anchored (v1 stored bottom-anchored values,
+// which dragged inverted). Bumping the key discards stale v1 coordinates.
+const POSITION_KEY = 'hermes.desktop.pet-position.v2'
 
-const POSITION_KEY = 'hermes.pet-position.v2'
 // Stand-in pet size for the pre-load clamp (real size flows in with `info`).
 const NOMINAL_PET_PX = 96
-
-// The picked-up look. A haptic alone is easy to miss (and silent on a device
-// with vibration off), so the sprite also swells and casts a shadow the moment
-// it is lifted — the drag has an unmistakable start.
-const HELD_SCALE = 1.12
-const HELD_SHADOW = 'drop-shadow(0 0.375rem 0.625rem rgb(0 0 0 / 0.35))'
-
-// Long enough to outlast the soft keyboard's open/close animation.
-const RECLAMP_DEBOUNCE_MS = 150
-
-// `touch-action: none`, on every platform and at all times.
-//
-// The pet used to pass vertical panning through (`pan-y`) so a scroll starting
-// on it still scrolled the thread, and claim the box back once a long press
-// armed. That cannot work: `touch-action` is latched when the browser decides
-// what a gesture is, so re-assigning it mid-gesture is a no-op — the scroller
-// took the touch and fired `pointercancel`, killing the pickup before it could
-// ever fire. The dev HUDs drag correctly precisely because theirs is static.
-//
-// So the pet swallows a scroll that starts inside its ~63×69 box. That is the
-// accepted cost of a mascot you can actually pick up, and it is a box the user
-// can now move out of the way.
-const PET_TOUCH_ACTION = 'none'
-
-// The pet floats above the app, but not above things that block. `.composer-bars`
-// — approval / clarify / sudo / secret prompts — is z-31, and the mobile drawers
-// are z-50, so a z-60 mascot could sit on top of a prompt the user has to answer.
-// Desktop keeps 60 deliberately: the pet patrols the Settings overlay's edge, and
-// the layering there is provider-connect z-70 > settings z-50 > pet z-60.
-const PET_Z_INDEX = IS_MOBILE ? 29 : 60
 
 interface Point {
   x: number
   y: number
 }
 
-// Keep a w×h box fully inside the area the pet is allowed to occupy. That used
-// to be the raw viewport, which on a phone put the pet under the notch and
-// standing on the home indicator; `walkBox` insets it by the safe area and the
-// soft keyboard, and is the same box the roam loop walks.
+// Keep a w×h box fully inside the viewport. Pre-pet-load callers pass a nominal
+// size; the live size flows in once `info` arrives.
 function clampPoint(x: number, y: number, w: number, h: number): Point {
-  return clampToBox({ x, y }, w, h, walkBox(h, IS_MOBILE))
-}
-
-// Which way a resting pet faces: inward along the surface it is standing on,
-// toward the middle of that surface's walk. On the floor and ceiling that is the
-// horizontal midpoint; on a side wall it is the vertical one — comparing against
-// the window's WIDTH there (as this used to) asks a question about an axis the
-// pet cannot walk, so a wall-standing pet faced whichever way its x happened to
-// fall. `facingSign` then converts that screen-space answer into the sprite's
-// own, which the rotation has turned.
-//
-// Returns a transform *fragment* (possibly empty) so it can compose with the
-// wall rotation rather than replacing it.
-function facingTransform(pos: Point, petW: number, petH: number, wall: PetRoamWall): string {
-  const vertical = tangentAxis(wall) === 'y'
-  const centre = vertical ? pos.y + petH / 2 : pos.x + petW / 2
-  const midpoint = (vertical ? window.innerHeight || 600 : window.innerWidth || 800) / 2
-  // The sprite art faces left by default, so "inward" is un-mirrored when the
-  // pet is past the midpoint and mirrored when it is short of it.
-  const inward = centre < midpoint ? 1 : -1
-
-  return inward * facingSign(wall) > 0 ? 'scaleX(-1)' : ''
-}
-
-const spriteTransform = (wall: PetRoamWall): string => {
-  const deg = spriteRotation(wall)
-
-  return deg === 0 ? '' : `rotate(${deg}deg)`
-}
-
-function persistPosition(p: Point): void {
-  try {
-    localStorage.setItem(POSITION_KEY, JSON.stringify(p))
-  } catch {
-    // ignore (private mode / quota)
+  return {
+    x: Math.min(Math.max(0, x), Math.max(0, (window.innerWidth || 800) - w)),
+    y: Math.min(Math.max(0, y), Math.max(0, (window.innerHeight || 600) - h))
   }
+}
+
+// The sprite art faces left by default, so mirror it when the pet's center sits
+// on the left half of the window — it always faces inward, toward the content.
+function facing(leftX: number, petW: number): string {
+  return leftX + petW / 2 < (window.innerWidth || 800) / 2 ? 'scaleX(-1)' : 'none'
 }
 
 function loadPosition(): Point {
   try {
-    const raw = localStorage.getItem(POSITION_KEY)
+    const raw = storedString(POSITION_KEY)
 
     if (raw) {
       const parsed = JSON.parse(raw) as Point
@@ -127,59 +77,245 @@ function loadPosition(): Point {
   return clampPoint(24, (window.innerHeight || 600) - 220, NOMINAL_PET_PX, NOMINAL_PET_PX)
 }
 
-/** `overlayOpen` = a full-window route overlay (Settings) is up, so the pet
- *  patrols its bottom edge instead of the normal surfaces. */
+/**
+ * In-window floating petdex mascot. Always-on-top within the app, draggable,
+ * and reactive to agent activity via `$petState`. Fetches the active pet via
+ * the shared `pet.info` RPC; renders nothing until a pet is installed +
+ * enabled.
+ *
+ * Adopting a pet is fully in-app: type `/pet boba` in the composer. That
+ * writes `display.pet.*` from the slash worker, so we keep polling `pet.info`
+ * while no pet is active and the mascot pops in within a few seconds — no
+ * reload, no CLI. Once a pet is live we still refresh more slowly so generated
+ * pets rewritten on disk (or renamed/rebuilt by the hatch flow) repaint without
+ * restarting the app.
+ *
+ * Event-capable backends also drive refreshes via `pet.changed`, but a slow
+ * backstop poll stays in place: the watcher seeds the pet signature silently
+ * at gateway boot and only broadcasts when it *moves*, and the one-shot
+ * connect pull can race a still-warming `pet.info` (fail-open enabled:false).
+ * Without the backstop the mascot stays hidden until Settings re-seeds it.
+ *
+ * Promotion to a separate frameless OS-level window is a follow-up — the
+ * sprite + state logic here is reused as-is, only the host changes.
+ */
 export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) {
+  const { requestGateway } = useGatewayRequest()
   const { resolvedMode } = useTheme()
+  const gatewayState = useStore($gatewayState)
   const info = useStore($petInfo)
-  const busy = useStore($busy)
+  const changeEventsAvailable = useStore($changeEventsAvailable)
+  const petChange = useStore($petChange)
+  const overlayActive = useStore($petOverlayActive)
   const roamEnabled = useStore($petRoam)
-  // Activity pauses the wander: the pet reacts in place, then resumes when idle.
-  const atRest = !busy
+  const atRest = useStore($petAtRest)
   const roamDir = useStore($petRoamDir)
-  const roamWall = useStore($petRoamWall)
-  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const routeOverlayOpen = useRouteOverlayActive()
 
   const [position, setPosition] = useState<Point>(loadPosition)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  // The facing mirror lives on the sprite wrapper so any container child stays upright.
+  // The facing mirror lives on the sprite wrapper, not the container, so the
+  // speech bubble (a container child) never renders flipped/backwards.
   const spriteWrapRef = useRef<HTMLDivElement | null>(null)
-  const dragRef = useRef<{ dx: number; dy: number; x: number; y: number } | null>(null)
-
   const petW = (info.frameW ?? 192) * (info.scale ?? 0.33)
   const petH = (info.frameH ?? 208) * (info.scale ?? 0.33)
-  // Live size for the dep-free drag callbacks, which must not be rebuilt on
-  // every scale change just to read it.
-  const petSizeRef = useRef({ h: petH, w: petW })
-  petSizeRef.current = { h: petH, w: petW }
-  // Soft contact shadow, sized off the pet. Lighter on light backgrounds.
+  // Soft contact shadow, sized off the pet so every scale/species grounds the
+  // same way (cf. lairp's per-actor feet ellipse). Lighter on light backgrounds.
   const shadowW = Math.round(petW * 0.55)
   const shadowH = Math.max(3, Math.round(shadowW * 0.28))
   const shadowAlpha = resolvedMode === 'light' ? 0.2 : 0.55
+  // Live drag offset (pointer → element top-left). Drag updates the DOM
+  // directly to avoid a React re-render (and canvas reflow) per pointermove —
+  // state is only committed on release.
+  const dragRef = useRef<{ dx: number; dy: number; x: number; y: number } | null>(null)
 
-  const active = info.enabled && Boolean(info.spritesheetBase64)
-
-  // Self-heal the active pet on mount: `$petInfo` is only otherwise populated by
-  // the connect effect, so it goes empty across an HMR store reload — and a pet
-  // enabled via `/pet` while the app runs wouldn't appear until reconnect. A
-  // one-shot sync here repopulates it (the pet only mounts while connected).
-  // Also greet the user with a wave when the app opens.
-  useEffect(() => {
-    void syncPetInfo()
-    flashPetActivity({ greeting: true })
-
-    // `pet.changed` — the watcher saw the pet config move (adopted, enabled,
-    // disabled, renamed, resized) from a surface this client cannot see. This
-    // component is mounted app-shell-wide whether or not a pet is active, so it
-    // is the one place that can also make the pet APPEAR. `listen`, not
-    // `subscribe`: the current value is tick 0 and would re-sync on every mount.
-    return $petChange.listen(({ meta }) => applyPetChange(meta))
-  }, [])
-
-  // Keep the whole pet on-screen at its current size (shared by drag + reclamp).
+  // Keep the *whole* pet on-screen at its current size, so growing it near an
+  // edge can't leave the window cropping it. Shared by drag + the reclamp effect.
   const clamp = useCallback(({ x, y }: Point): Point => clampPoint(x, y, petW, petH), [petW, petH])
 
-  // Re-clamp (and persist) whenever the viewport shrinks or the pet's size changes.
+  // Fetch pet.info on connect. pet.changed re-runs this effect when the
+  // signature moves; a slow backstop covers silent seed + cold-start races.
+  // Older backends (no change_events) keep the legacy fast-while-inactive poll.
+  const active = info.enabled && Boolean(info.spritesheetBase64)
+  useEffect(() => {
+    if (gatewayState !== 'open') {
+      return
+    }
+
+    let cancelled = false
+
+    // pet.changed already carries the meta payload — an enabled=false
+    // broadcast clears the mascot with zero round-trips, and an unchanged
+    // revision (scale-only move still changes the sig) short-circuits below
+    // via hasPetSpriteForMeta + mergePetInfoMeta.
+    if (changeEventsAvailable && petChange.tick > 0 && petChange.meta?.enabled === false) {
+      setPetInfo({ enabled: false })
+
+      return
+    }
+
+    const pull = async () => {
+      try {
+        if (active) {
+          try {
+            const meta = await requestGateway<PetInfoMeta>('pet.info.meta', { profile: petProfile() })
+
+            if (cancelled || !meta) {
+              return
+            }
+
+            if (!meta.enabled) {
+              setPetInfo({ enabled: false })
+
+              return
+            }
+
+            const current = $petInfo.get()
+
+            if (hasPetSpriteForMeta(current, meta)) {
+              const merged = mergePetInfoMeta(current, meta)
+
+              if (merged !== current) {
+                setPetInfo(merged)
+              }
+
+              return
+            }
+          } catch {
+            // Older gateways may not have pet.info.meta yet; fall back to pet.info.
+          }
+        }
+
+        // Send-once semantics (#54730): tell the gateway which spritesheet
+        // revision we already hold so an unchanged multi-MB sheet is not
+        // re-sent over the WebSocket on every backstop refresh.
+        const held = $petInfo.get()
+        const knownRevision = held.enabled && held.spritesheetBase64 ? held.spritesheetRevision : undefined
+
+        const next = await requestGateway<PetInfo & { spritesheetUnchanged?: boolean }>('pet.info', {
+          knownRevision,
+          profile: petProfile()
+        })
+
+        if (!cancelled && next) {
+          const current = $petInfo.get()
+
+          if (next.enabled && next.spritesheetUnchanged && !next.spritesheetBase64) {
+            // Gateway confirmed our held sheet is current; keep the bytes.
+            next.spritesheetBase64 = current.spritesheetBase64
+          }
+
+          if (
+            next.enabled &&
+            current.enabled &&
+            current.slug === next.slug &&
+            current.displayName === next.displayName &&
+            current.scale === next.scale &&
+            current.spritesheetRevision &&
+            current.spritesheetRevision === next.spritesheetRevision
+          ) {
+            return
+          }
+
+          setPetInfo(next)
+        }
+      } catch {
+        // cosmetic feature — never surface gateway errors
+      }
+    }
+
+    const pullIfVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void pull()
+      }
+    }
+
+    void pull()
+    window.addEventListener('focus', pull)
+
+    // Cover the cold-start race where the first pull hit fail-open enabled:false
+    // before the pet store was warm. Skip further retries once the mascot is live.
+    const startupRetryTimers = PET_STARTUP_RETRY_MS.map(delay =>
+      window.setTimeout(() => {
+        if (cancelled) {
+          return
+        }
+
+        const current = $petInfo.get()
+
+        if (current.enabled && current.spritesheetBase64) {
+          return
+        }
+
+        pullIfVisible()
+      }, delay)
+    )
+
+    // Always keep a timer. Event-capable backends use the slow backstop (same
+    // contract as cron/sessions in use-background-sync); legacy keeps the
+    // historical fast-while-inactive cadence.
+    const timer = window.setInterval(pullIfVisible, petInfoPollIntervalMs(changeEventsAvailable, active))
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', pull)
+
+      for (const id of startupRetryTimers) {
+        window.clearTimeout(id)
+      }
+
+      window.clearInterval(timer)
+    }
+  }, [gatewayState, active, changeEventsAvailable, petChange, requestGateway])
+
+  // Pets are per-profile. When the active profile changes, drop the previous
+  // profile's mascot + gallery cache so the poll above refetches the new
+  // profile's pet (its config + pets dir resolve per-profile on the backend).
+  useOnProfileSwitch(() => {
+    setPetInfo({ enabled: false })
+    resetPetGallery()
+  })
+
+  // Wire the overlay control channel once, only in the primary window — the
+  // pop-out overlay belongs to it (main.ts positions it against the main
+  // window and routes control messages back to it).
+  useEffect(() => {
+    if (isSecondaryWindow()) {
+      return
+    }
+
+    return initPetOverlayBridge()
+  }, [])
+
+  // Returning to the app (by any route, not just the mail icon) clears the pet's
+  // "new message" hint — you've seen it now.
+  useEffect(() => {
+    if (isSecondaryWindow()) {
+      return
+    }
+
+    const onFocus = () => clearPetUnread()
+    window.addEventListener('focus', onFocus)
+
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
+
+  // Restore a popped-out pet on boot, once the pet has loaded (so we never spawn
+  // an empty overlay window). Primary window only; runs at most once.
+  const restoredRef = useRef(false)
+   
+  useEffect(() => {
+    if (isSecondaryWindow() || restoredRef.current || !active) {
+      return
+    }
+
+    restoredRef.current = true
+    restorePetOverlay()
+  }, [active])
+
+  // Never strand or crop the pet: re-clamp (and persist) whenever the viewport
+  // shrinks or the pet's own size changes (wheel/slider). `clamp` carries the
+  // current size, so depending on it covers both triggers.
   useEffect(() => {
     const reclamp = () =>
       setPosition(prev => {
@@ -189,38 +325,18 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
           return prev
         }
 
-        persistPosition(next)
+        persistString(POSITION_KEY, JSON.stringify(next))
 
         return next
       })
 
-    // Debounced, because on a phone `resize` fires throughout the soft
-    // keyboard's open/close animation. Clamping on every one of those frames
-    // made the pet hop across the screen while you were only typing.
-    let timer: null | ReturnType<typeof setTimeout> = null
-
-    const onResize = () => {
-      if (timer !== null) {
-        clearTimeout(timer)
-      }
-
-      timer = setTimeout(reclamp, RECLAMP_DEBOUNCE_MS)
-    }
-
     reclamp()
-    window.addEventListener('resize', onResize)
+    window.addEventListener('resize', reclamp)
 
-    return () => {
-      if (timer !== null) {
-        clearTimeout(timer)
-      }
-
-      window.removeEventListener('resize', onResize)
-    }
+    return () => window.removeEventListener('resize', reclamp)
   }, [clamp])
 
-  // Lift the pet: capture the pointer and put on the held look.
-  const beginDrag = useCallback((clientX: number, clientY: number, pointerId: number) => {
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
     const el = containerRef.current
 
     if (!el) {
@@ -228,63 +344,21 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
     }
 
     const rect = el.getBoundingClientRect()
-    dragRef.current = { dx: clientX - rect.left, dy: clientY - rect.top, x: rect.left, y: rect.top }
-    el.setPointerCapture?.(pointerId)
+
+    // Shift-click pops the pet out into a free-floating desktop overlay (it can
+    // leave the window and stays visible while Hermes is minimized) instead of
+    // starting an in-window drag. Primary window only — the overlay is anchored
+    // to it.
+    if (e.shiftKey && !isSecondaryWindow()) {
+      popOutPet({ height: rect.height, width: rect.width, x: rect.left, y: rect.top })
+
+      return
+    }
+
+    dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, x: rect.left, y: rect.top }
+    el.setPointerCapture(e.pointerId)
     el.style.cursor = 'grabbing'
-    el.style.filter = HELD_SHADOW
-    void triggerHaptic('selection')
-
-    if (spriteWrapRef.current) {
-      const { h, w } = petSizeRef.current
-      // 'floor' because a carried pet is held upright — see onPointerMove.
-      spriteWrapRef.current.style.transform = `${facingTransform({ x: rect.left, y: rect.top }, w, h, 'floor')} scale(${HELD_SCALE})`
-    }
-    // Dep-free: `petW` is read through a live ref so this callback never needs
-    // to be rebuilt, and the pointer handlers below stay stable with it.
   }, [])
-
-  const clearHeldLook = useCallback((el: HTMLElement) => {
-    el.style.cursor = 'grab'
-    el.style.filter = ''
-  }, [])
-
-  // Stand the pet up on whatever it was just put down on, and say so.
-  //
-  // This has to WRITE the transform, not wait for React to. Every pointermove
-  // overwrites `spriteWrap.style.transform` with the carried look (floor
-  // rotation + held scale), and React only rewrites that property when its own
-  // rendered value changes. `$petRoamWall.set(wall)` is a no-op in nanostores
-  // when the wall is unchanged — put the pet back on the wall it came from and
-  // nothing re-rendered, so the imperative upright transform survived the drop
-  // and the pet stood on the ceiling the right way up until some later,
-  // unrelated change happened to move the wall or the walk direction. That
-  // "later change" is the animation you could watch correct it.
-  //
-  // Writing it here also means the rotation lands at RELEASE, before the fall
-  // rather than after it — the roam loop moves the pet by mutating left/top, so
-  // there is no render during a drop to carry it either.
-  const settleSprite = useCallback((at: Point) => {
-    const { h, w } = petSizeRef.current
-    const surfaces = snapshotSurfaces(w, h, { safeArea: IS_MOBILE, walls: IS_MOBILE })
-    const { wall } = resolveSurface(surfaces, at, w, h, walkBox(h, IS_MOBILE))
-
-    $petRoamWall.set(wall)
-
-    if (spriteWrapRef.current) {
-      spriteWrapRef.current.style.transform = `${spriteTransform(wall)} ${facingTransform(at, w, h, wall)}`.trim()
-    }
-  }, [])
-
-  // Any pointer lifts the pet on contact — mouse, touch and pen alike. There is
-  // no hold to wait through: with `touch-action: none` the box owns the gesture
-  // from the first event, so a hold would only add latency to a drag that is
-  // already ours, and the scroll it used to protect is gone either way.
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      beginDrag(e.clientX, e.clientY, e.pointerId)
-    },
-    [beginDrag]
-  )
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -298,118 +372,99 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
       const next = clamp({ x: e.clientX - drag.dx, y: e.clientY - drag.dy })
       drag.x = next.x
       drag.y = next.y
-      // Mutate the DOM directly — no setState, so no re-render while dragging.
+      // Mutate the DOM directly — no setState, so no re-render while dragging. The
+      // mirror follows the pointer across the midline for the same reason; it
+      // rides the sprite wrapper so the bubble stays upright.
       el.style.left = `${next.x}px`
       el.style.top = `${next.y}px`
 
       if (spriteWrapRef.current) {
-        // Upright while it's in your hand — a pet carried across the screen
-        // still rotated onto a wall it left reads as a bug. React reasserts the
-        // composed transform on release, when the roam loop re-homes it.
-        spriteWrapRef.current.style.transform = `${facingTransform(next, petW, petH, 'floor')} scale(${HELD_SCALE})`
+        spriteWrapRef.current.style.transform = facing(next.x, petW)
       }
     },
-    [clamp, petH, petW]
+    [clamp, petW]
   )
 
-  const onPointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      const drag = dragRef.current
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    const drag = dragRef.current
 
-      if (drag) {
-        dragRef.current = null
-        const committed = { x: drag.x, y: drag.y }
-        setPosition(committed)
-        persistPosition(committed)
-        settleSprite(committed)
-      }
-
-      const el = containerRef.current
-
-      if (el) {
-        clearHeldLook(el)
-        el.releasePointerCapture?.(e.pointerId)
-      }
-    },
-    [clearHeldLook, settleSprite]
-  )
-
-  // A system interruption — an incoming call, a gesture the OS claims. Drop the
-  // drag where it stands rather than leaving the pet stuck to a dead pointer.
-  const onPointerCancel = useCallback(
-    (e: React.PointerEvent) => {
-      const drag = dragRef.current
+    if (drag) {
       dragRef.current = null
+      const committed = { x: drag.x, y: drag.y }
+      setPosition(committed)
+      persistString(POSITION_KEY, JSON.stringify(committed))
+    }
 
-      // Same landing as a release, deliberately. An interruption used to leave
-      // the pet at its dragged position in the DOM but at its OLD position in
-      // React state, still wearing the carried transform — so it snapped back
-      // and stood upright on whatever it was actually on.
-      if (drag) {
-        const committed = { x: drag.x, y: drag.y }
-        setPosition(committed)
-        persistPosition(committed)
-        settleSprite(committed)
-      }
+    const el = containerRef.current
 
-      const el = containerRef.current
+    if (el) {
+      el.style.cursor = 'grab'
+      el.releasePointerCapture?.(e.pointerId)
+    }
+  }, [])
 
-      if (el) {
-        clearHeldLook(el)
-        el.releasePointerCapture?.(e.pointerId)
-      }
+  // Alt+wheel over the pet resizes it (persisted via the same path as the
+  // settings slider). Zoom toward the cursor — shift the top-left so the pixel
+  // under the pointer stays put — so the pet grows in place instead of running
+  // off. The reclamp effect (via `clamp`) still guarantees it stays on-screen.
+  const onScale = useCallback(
+    (next: number, { clientX, clientY, ratio }: PetZoomAnchor) => {
+      setPetScale(requestGateway, next)
+      setPosition(prev => {
+        const at = clampPoint(
+          clientX - (clientX - prev.x) * ratio,
+          clientY - (clientY - prev.y) * ratio,
+          (info.frameW ?? 192) * next,
+          (info.frameH ?? 208) * next
+        )
+
+        persistString(POSITION_KEY, JSON.stringify(at))
+
+        return at
+      })
     },
-    [clearHeldLook, settleSprite]
+    [requestGateway, info.frameW, info.frameH]
   )
 
-  // Commit a roamed-to position back to React state + storage when the loop settles.
+  usePetZoomGesture(containerRef, onScale, active && !overlayActive)
+
+  // Commit a roamed-to position back to React state + storage when the wander
+  // loop settles, so the inline style matches the DOM once the loop stops
+  // driving it imperatively. Stable identity keeps the roam effect from
+  // restarting every render.
   const commitRoamPosition = useCallback((point: Point) => {
     setPosition(point)
-    persistPosition(point)
+    persistString(POSITION_KEY, JSON.stringify(point))
   }, [])
 
   const isDragging = useCallback(() => dragRef.current !== null, [])
 
-  // Roam only while idle (agent at rest) and not being dragged. Activity pauses
-  // the wander; the pet reacts in place, then resumes strolling when the turn ends.
+  // Roam only the in-window pet, only while it's idle (agent at rest) and not
+  // popped out into the OS overlay. Activity pauses the wander; the pet reacts
+  // in place, then resumes strolling when the turn ends.
   usePetRoam({
     commit: commitRoamPosition,
     containerRef,
-    // Reduced motion disables the wander outright. A mascot that wanders the
-    // screen on its own is exactly what that setting exists to stop; the pet
-    // still appears, reacts and drags.
-    enabled: roamEnabled && active && atRest && !reducedMotion,
+    enabled: roamEnabled && active && !overlayActive && atRest,
     isInteracting: isDragging,
     loopMs: info.loopMs ?? 1100,
-    mobile: IS_MOBILE,
-    overlayOpen,
+    overlayOpen: overlayOpen || routeOverlayOpen,
     petH,
     petW
   })
 
-  // DEV Shift+H heart preview lives here — FloatingPet is mounted app-shell-wide,
-  // so one listener covers every route. Called above the early return so the hook
-  // order stays stable when no pet is installed.
-  useHeartPreviewHotkey()
+  // While roaming, drive the directional run row + mirror from the travel
+  // direction; at rest, fall back to the inward-facing static mascot.
+  const walk = roamWalkRow(roamDir, info.stateRows)
 
-  // While roaming, drive the directional run row + mirror from travel direction;
-  // at rest, fall back to the inward-facing static mascot. The pose itself comes
-  // from `$petState` (activity + roam motion), read inside PetSprite.
-  //
-  // `roamDir` is a sign along the surface's TANGENT, which is vertical on a side
-  // wall — and the mirror it feeds is composed after the wall rotation, in the
-  // sprite's own frame. `facingSign` converts between the two; without it the
-  // pet moonwalks up the right wall and along the ceiling.
-  const roaming = roamDir !== 0
-  const walk = roamWalkRow((roamDir * facingSign(roamWall)) as -1 | 0 | 1, info.stateRows)
-
-  if (!info.enabled || !info.spritesheetBase64) {
+  // While popped out, the desktop overlay window owns the mascot — hide the
+  // in-window one so there aren't two.
+  if (!info.enabled || !info.spritesheetBase64 || overlayActive) {
     return null
   }
 
   return (
     <div
-      onPointerCancel={onPointerCancel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -420,42 +475,34 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
         pointerEvents: 'auto',
         position: 'fixed',
         top: position.y,
-        touchAction: PET_TOUCH_ACTION,
+        touchAction: 'none',
         userSelect: 'none',
-        zIndex: PET_Z_INDEX
+        zIndex: 60
       }}
     >
-      {/* Rotate the sprite so its feet stay against the surface. Mirroring
-          alone would leave a wall-walking pet lying on its side with its feet
-          pointing into the room. The contact shadow moved INSIDE this wrapper
-          so it rotates along and lands on the contact side by construction —
-          a symmetric ellipse is mirror-invariant, so `scaleX(-1)` leaves it
-          alone. */}
+      <div
+        aria-hidden
+        style={{
+          background: `radial-gradient(ellipse at center, rgba(0,0,0,${shadowAlpha}) 0%, rgba(0,0,0,0) 70%)`,
+          bottom: -shadowH * 0.4,
+          height: shadowH,
+          left: '50%',
+          pointerEvents: 'none',
+          position: 'absolute',
+          transform: 'translateX(-50%)',
+          width: shadowW,
+          zIndex: 0
+        }}
+      />
       <div
         ref={spriteWrapRef}
         style={{
           lineHeight: 0,
           position: 'relative',
-          transform:
-            `${spriteTransform(roamWall)} ${roaming ? (walk.mirror ? 'scaleX(-1)' : '') : facingTransform(position, petW, petH, roamWall)}`.trim(),
-          transformOrigin: 'center center',
+          transform: roamDir !== 0 ? (walk.mirror ? 'scaleX(-1)' : 'none') : facing(position.x, petW),
           zIndex: 1
         }}
       >
-        <div
-          aria-hidden
-          style={{
-            background: `radial-gradient(ellipse at center, rgba(0,0,0,${shadowAlpha}) 0%, rgba(0,0,0,0) 70%)`,
-            bottom: -shadowH * 0.4,
-            height: shadowH,
-            left: '50%',
-            pointerEvents: 'none',
-            position: 'absolute',
-            transform: 'translateX(-50%)',
-            width: shadowW,
-            zIndex: 0
-          }}
-        />
         <PetSprite info={info} rowOverride={walk.row} />
       </div>
       {/* Hearts puff off the pet; its celebrate ("yay"/jump) pose is driven by

@@ -14,9 +14,10 @@ import {
   setConversationMuted,
   setConversationStatus
 } from '@/store/voice-conversation'
-import { conversationVoiceVad } from '@/store/voice-prefs'
+import { conversationVoiceVad } from '@/store/voice-levels'
 import { markReplySpoken, unspokenTurn } from '@/store/voice-reply-cursor'
-import { pauseWakeForVoice, resumeWakeAfterVoice } from '@/store/wake-word'
+import { resumeWakeAfterVoice } from '@/store/wake-word'
+import { pauseWakeForVoice } from '@/voice/wake-pause'
 
 import { voiceEngine } from './engine'
 import { type VoiceErrorCopy, voiceErrorMessage } from './errors'

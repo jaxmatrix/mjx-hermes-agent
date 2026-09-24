@@ -44,6 +44,9 @@ export interface Connection {
   /** ssh only: the ownership id — stable across re-tunnels, unlike baseUrl.
    *  See {@link connectionCacheKey}. */
   remoteIdentity?: string
+  /** ssh only: the session scope Rust returned — the key its forward leases
+   *  and disconnect event live under. One per connection (MJXHRM-592). */
+  sshScope?: string
 }
 
 /** Cloud reuses the entire remote connect/probe/reconnect path — it differs only

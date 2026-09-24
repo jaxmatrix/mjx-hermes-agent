@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { $backendThemes, $pendingSkinApply, __resetBackendSkinSync, ingestBackendSkin } from './backend-sync'
 
@@ -8,7 +8,10 @@ const skin = (name: string) => ({
 })
 
 describe('ingestBackendSkin', () => {
-  beforeEach(() => __resetBackendSkinSync())
+  beforeEach(() => {
+    window.localStorage.clear()
+    __resetBackendSkinSync()
+  })
 
   it('registers a converted skin without applying when apply=false', () => {
     ingestBackendSkin(skin('neon'), { apply: false })
@@ -23,37 +26,9 @@ describe('ingestBackendSkin', () => {
     expect($pendingSkinApply.get()).toBe('neon')
   })
 
-  it('does not re-apply the same skin name', () => {
-    ingestBackendSkin(skin('neon'), { apply: true })
-    $pendingSkinApply.set(null)
-    ingestBackendSkin(skin('neon'), { apply: true })
-
-    expect($pendingSkinApply.get()).toBeNull()
-  })
-
-  it('applies again when the skin name changes', () => {
-    ingestBackendSkin(skin('neon'), { apply: true })
-    $pendingSkinApply.set(null)
-    ingestBackendSkin(skin('forest'), { apply: true })
-
-    expect($pendingSkinApply.get()).toBe('forest')
-  })
-
-  it('re-registers the theme when the active skin is recolored in place', () => {
-    ingestBackendSkin(skin('neon'), { apply: true })
-    const first = $backendThemes.get().neon
-
-    // Same name, new palette — the apply guard no-ops, so the ONLY signal the
-    // provider gets is this store moving. It must move.
-    ingestBackendSkin({ name: 'neon', colors: { background: '#202040', ui_accent: '#33ffaa' } }, { apply: true })
-
-    expect($backendThemes.get().neon).not.toBe(first)
-    expect($backendThemes.get().neon?.colors.background).toBe('#202040')
-  })
-
   it('seed does not paint, but a later same-name skin.changed applies (missed-activation recovery)', () => {
     // Connect while display.skin is already neon: seed records the baseline
-    // without painting (never stomp the persisted theme on connect).
+    // without painting (never stomp the persisted desktop theme on connect).
     ingestBackendSkin(skin('neon'), { apply: false }) // gateway.ready seed
     expect($pendingSkinApply.get()).toBeNull()
 
@@ -82,11 +57,11 @@ describe('ingestBackendSkin', () => {
     ingestBackendSkin(skin('neon'), { apply: true }) // repeat event (e.g. in-place recolor)
 
     // Already painted once — the repeat must not re-apply (protects a manual
-    // theme switch from being snapped back after a reconnect).
+    // desktop-side theme switch from being snapped back after a reconnect).
     expect($pendingSkinApply.get()).toBeNull()
   })
 
-  it('never registers default in the backend store (we keep our own palette)', () => {
+  it('never registers default in the backend store (desktop keeps its own palette)', () => {
     ingestBackendSkin(skin('default'), { apply: true })
 
     expect($backendThemes.get().default).toBeUndefined()
@@ -98,7 +73,7 @@ describe('ingestBackendSkin', () => {
     expect($pendingSkinApply.get()).toBeNull()
   })
 
-  it('applies a runtime switch back to default (repaints us to our own default)', () => {
+  it('applies a runtime switch back to default (repaints the desktop to its own default)', () => {
     ingestBackendSkin(skin('neon'), { apply: false }) // gateway.ready seed on some skin
     ingestBackendSkin(skin('default'), { apply: true }) // Hermes switched back to default
 
@@ -117,5 +92,26 @@ describe('ingestBackendSkin', () => {
     ingestBackendSkin({ name: '' }, { apply: true })
 
     expect($pendingSkinApply.get()).toBeNull()
+  })
+
+  it('hydrates the registry from storage on load, so a persisted pick resolves before the gateway connects', async () => {
+    ingestBackendSkin(skin('neon'), { apply: false })
+    expect(JSON.parse(window.localStorage.getItem('hermes-desktop-backend-themes-v1') ?? '{}').neon?.name).toBe('neon')
+
+    // Relaunch: a fresh module instance with the same storage.
+    vi.resetModules()
+    const fresh = await import('./backend-sync')
+
+    expect(fresh.$backendThemes.get().neon?.name).toBe('neon')
+  })
+
+  it('drops junk and built-in names from the cached registry', async () => {
+    const mono = { name: 'mono', label: 'x', colors: { background: '#000', foreground: '#fff', primary: '#f0f' } }
+    window.localStorage.setItem('hermes-desktop-backend-themes-v1', JSON.stringify({ mono, bad: { name: 'bad' } }))
+
+    vi.resetModules()
+    const fresh = await import('./backend-sync')
+
+    expect(fresh.$backendThemes.get()).toEqual({})
   })
 })

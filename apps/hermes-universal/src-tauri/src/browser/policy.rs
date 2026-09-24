@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn the_guest_label_is_namespaced() {
-        // The capability globs are main/session-*/instance-*/tile-*/sat-*/screen.
+        // The capability globs are main/session-*/instance-*/tile-*/browser-*/sat-*/screen.
         // Renaming this to `main` must turn `capabilities.rs`'s test red.
         assert_eq!(guest_label(&"browser".to_string()), "guest:browser");
     }

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -16,10 +16,11 @@ vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 vi.mock('@/store/native-notifications', () => ({ dispatchNativeNotification: vi.fn() }))
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undefined) }))
 
-import type { ToolCallPart } from '@/lib/chat-messages'
+import type { ToolCallPart } from '@/lib/session-key-messages'
+import { $clarifyRequests, sessionClarifyRequest } from '@/store/clarify'
 import { routeGatewayEvent } from '@/store/event-router'
-import { clearAllPrompts, sessionClarifyRequest } from '@/store/prompts'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { clearAllPrompts } from '@/store/prompts';
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 const event = (type: string, payload: Record<string, unknown>): GatewayEvent =>
   ({ type, session_id: 's1', payload }) as GatewayEvent
@@ -36,7 +37,8 @@ const event = (type: string, payload: Record<string, unknown>): GatewayEvent =>
 describe('event-router → clarify lifecycle', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    $clarifyRequests.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
 
@@ -49,7 +51,9 @@ describe('event-router → clarify lifecycle', () => {
     expect(sessionClarifyRequest('s1').get()).toEqual({
       requestId: 'req-1',
       question: 'Which branch?',
-      choices: ['main']
+      choices: ['main'],
+      multiSelect: false,
+      sessionId: 's1'
     })
   })
 
@@ -69,7 +73,7 @@ describe('event-router → clarify lifecycle', () => {
 })
 
 const toolParts = (key: string): ToolCallPart[] =>
-  ($sessionStates.get()[key]?.messages ?? []).flatMap(message =>
+  ($sessionKeyStates.get()[key]?.messages ?? []).flatMap(message =>
     message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call')
   )
 
@@ -84,7 +88,8 @@ const toolParts = (key: string): ToolCallPart[] =>
 describe('event-router → batch clarify', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    $clarifyRequests.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
 
@@ -108,7 +113,9 @@ describe('event-router → batch clarify', () => {
     expect(sessionClarifyRequest('s1').get()).toEqual({
       requestId: 'req-batch',
       question: '',
-      choices: null,
+      choices: [],
+      multiSelect: false,
+      sessionId: 's1',
       questions: [
         { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'], multiSelect: false },
         // No choices survived, so multi_select has nothing to multi-pick from.
@@ -136,7 +143,7 @@ describe('event-router → batch clarify', () => {
         }
       })
     ])
-    expect($sessionStates.get().s1?.needsInput).toBe(true)
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(true)
   })
 
   it('replays the answers the gateway already locked', () => {

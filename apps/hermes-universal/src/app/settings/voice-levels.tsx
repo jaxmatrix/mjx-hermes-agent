@@ -12,15 +12,16 @@ import {
   $voiceInputGain,
   $voiceInputThreshold,
   $voiceOutputVolume,
+  persistVoiceLevel,
   seedVoicePrefs,
-  setVoiceLevel,
   VOICE_LEVEL_RANGES,
   type VoiceLevelName
-} from '@/store/voice-prefs'
-import { pauseWakeForVoice, resumeWakeAfterVoice } from '@/store/wake-word'
+} from '@/store/voice-levels'
+import { resumeWakeAfterVoice } from '@/store/wake-word'
 import { voiceEngine } from '@/voice/engine'
 import { VoiceBusyError } from '@/voice/errors'
 import type { VoiceLease } from '@/voice/types'
+import { pauseWakeForVoice } from '@/voice/wake-pause'
 
 import { ListRow, SettingsSection } from './primitives'
 
@@ -217,7 +218,7 @@ export function VoiceLevelsPanel() {
   })
 
   const commit = (name: VoiceLevelName, value: number) => {
-    void setVoiceLevel(name, value).catch(error => notifyError(error, copy.saveFailed))
+    void persistVoiceLevel(name, value).catch(error => notifyError(error, copy.saveFailed))
   }
 
   return (

@@ -6,13 +6,12 @@
  * keys (dialogs, menus, terminal, …) are left alone.
  */
 
-import { $workspacePage } from '@/app/routes'
-import { queryVisible } from '@/components/pane-shell/pane-visibility'
-import { WORKSPACE_PANE_ID } from '@/lib/pane-ids'
-import { $focusedChatPane } from '@/store/session-states'
+import { $workspaceIsPage } from '@/app/routes'
+import { queryAllVisible } from '@/components/pane-shell/pane-visibility'
+import { $activeTreeGroup, $hoveredTreeGroup } from '@/components/pane-shell/tree/store'
 import { switcherActive } from '@/store/session-switcher'
 
-import { isEditableTarget, isFocusWithin } from './combo'
+import { isEditableTarget, isFocusWithin, OVERLAY_SURFACE } from './combo'
 
 /** `composer.focus` defaults that need the surface/target gate. */
 export const isComposerFocusSoftCombo = (combo: string) => combo === '/' || combo === 'enter'
@@ -40,29 +39,55 @@ const ENTER_ACTIVATES = [
   '[role="treeitem"]'
 ].join(',')
 
-// Overlays that cover the whole window (portaled to the body, or the overlay
-// shell itself) — one anywhere means the composer is behind it.
-const BLOCKING_OVERLAY =
-  '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper],[data-overlay-surface]'
-
 // Blockers that live INSIDE a chat surface. Inactive tabs stay mounted, so this
 // one has to be visible-scoped: a clarify card waiting in a background thread
 // must not take the foreground composer's letter keys.
 const BLOCKING_IN_SURFACE = '[data-clarify-choices]'
 
+/** The layout-tree zone a pane is rendered in — see `tree/renderer/tree-group`. */
+const TREE_GROUP = '[data-tree-group]'
+
 /**
- * The ONE clarify card that owns its shortcut keys right now, or null.
+ * THE live clarify card — the single card whose shortcuts are armed right now.
  *
- * Keep-alive means every clarify card a zone ever showed is still MOUNTED, and a
- * split can put two of them on screen at once — but only one can own a keystroke
- * fired at the document. Resolving that here, once, is what lets the composer
- * (which stands down for the card) and the card itself (which acts) agree about
- * WHICH card it is. They used not to: the composer was already visible-scoped
- * while every mounted card bound the document unconditionally, so a clarify
- * parked in a background tab ate the foreground's letters and answered its own
- * question with them.
+ * Exported because the card's own `keydown` handler has to resolve the same
+ * element this module does. Both bind the same keys on `window`, so if they
+ * disagree about which card is live they act for different sessions: this
+ * resolver yields to the VISIBLE card, while a handler keyed on anything else
+ * (mount order, say) answers one the user cannot see.
+ *
+ * Visible is not by itself an identity, though. A split layout puts two chat
+ * surfaces on screen at once, so both cards clear the hidden-pane filter and
+ * taking the first remaining DOM match would pick document ORDER — the earlier
+ * zone would own the keys permanently and the other visible card could never
+ * receive its shortcut. Break that tie on the SAME hovered → focused zone
+ * ladder every tab verb already runs (`tabTargetGroup` in `tree/store`,
+ * mirrored for the model hotkey by `composerTargetInHoveredZone`, #74447)
+ * rather than inventing a second notion of which surface is "the" one.
+ *
+ * The last resort stays document order rather than null on purpose: when
+ * neither rung names a zone that holds a card (pointer off every zone, nothing
+ * interacted with yet) returning null would leave Enter doing nothing at all,
+ * which is a worse regression than the single-card behaviour it replaces.
  */
-export const keyOwningClarifyCard = (): HTMLElement | null => queryVisible(BLOCKING_IN_SURFACE)
+export const visibleClarifyCard = (): HTMLElement | null => {
+  const cards = queryAllVisible<HTMLElement>(BLOCKING_IN_SURFACE)
+
+  // Overwhelmingly the common case — nothing to disambiguate, no store read.
+  if (cards.length < 2) {
+    return cards[0] ?? null
+  }
+
+  for (const zone of [$hoveredTreeGroup.get(), $activeTreeGroup.get()]) {
+    const card = zone ? cards.find(el => el.closest<HTMLElement>(TREE_GROUP)?.dataset.treeGroup === zone) : undefined
+
+    if (card) {
+      return card
+    }
+  }
+
+  return cards[0]
+}
 
 /** True when the focused control would normally handle Enter itself. */
 export function isActivateOnEnterTarget(target: EventTarget | null): boolean {
@@ -86,7 +111,7 @@ export function isActivateOnEnterTarget(target: EventTarget | null): boolean {
  * with no store coupling.
  */
 export function clarifyCardOwnsKey(event: KeyboardEvent): boolean {
-  const card = keyOwningClarifyCard()
+  const card = visibleClarifyCard()
 
   if (!card) {
     return false
@@ -115,7 +140,7 @@ export function clarifyCardOwnsKey(event: KeyboardEvent): boolean {
 }
 
 /**
- * Dialogs, menus, terminal, the focused full page, session switcher, and any open overlay —
+ * Dialogs, menus, terminal, full pages, session switcher, and any open overlay —
  * they keep their keys, so type-to-focus / soft `/` / Enter stand down rather
  * than stealing keystrokes those surfaces own (or leaking them into the composer
  * mounted behind an overlay). A live clarify card is handled per-key by
@@ -124,12 +149,9 @@ export function clarifyCardOwnsKey(event: KeyboardEvent): boolean {
 export function composerFocusBlockedBySurface(): boolean {
   return (
     switcherActive() ||
-    // A page owns the keys only while it IS the focused chat surface. It lives in
-    // the workspace pane, and a chat tile beside it must still take typing —
-    // otherwise opening Capabilities silently kills the keyboard for every tile.
-    ($workspacePage.get() !== null && $focusedChatPane.get() === WORKSPACE_PANE_ID) ||
+    $workspaceIsPage.get() ||
     isFocusWithin('[data-terminal]') ||
-    Boolean(document.querySelector(BLOCKING_OVERLAY))
+    Boolean(document.querySelector(OVERLAY_SURFACE))
   )
 }
 
@@ -162,5 +184,6 @@ export function composerFocusKeysAllowed(event: KeyboardEvent, combo: string): b
     return false
   }
 
-  return !(combo === 'enter' && isActivateOnEnterTarget(event.target))
+  // Space activates focused buttons too; it must not become a composer draft.
+  return !((combo === 'enter' || event.key === ' ') && isActivateOnEnterTarget(event.target))
 }

@@ -8,10 +8,23 @@
    it: an unknown Tailwind class is silently dropped, which is the whole reason
    `better-tailwindcss/no-unknown-classes` now guards this app. */
 @import 'tw-animate-css';
+/* As desktop's stylesheet imports them. Universal's old entry imported both as
+   modules; the entry is desktop's file now and imports only this stylesheet, so
+   without these every `Codicon` is an empty box and every equation unstyled. */
+@import 'katex/dist/katex.min.css';
+@import '@vscode/codicons/dist/codicon.css';
 /* Class-based dark variant (matches desktop). `.dark` is toggled on <html> by
    the ThemeProvider (Ic7); the mode-appropriate `--theme-*` seeds are injected
    inline per skin by applyTheme(). Declared here so `dark:` utilities compile. */
+/* v4 gates hover: on @media (hover: hover). Some Windows hosts with a
+   digitizer answer false even with a mouse, so hover-reveal controls stay
+   opacity-0 (clickable, invisible). Trust :hover itself. */
+@custom-variant hover (&:hover);
 @custom-variant dark (&:is(.dark *));
+
+/* Sidebar sections: tall viewports give each its own scroller; compact ones
+   flatten everything into one shared scroll. */
+@custom-variant compact (@media (max-height: 768px));
 
 /* Input-capability variants. The desktop port brought its hover-reveal idiom
    with it (`opacity-0 group-hover:opacity-100`, `text-transparent
@@ -47,6 +60,47 @@
    phone's bottom nav bar down while typing, where navigation and an accessory
    key row cannot both have the little screen that is left. */
 @custom-variant keyboard-open (:root[data-keyboard-open] &);
+
+/* Titlebar clusters: 24×24 hit targets, 13.9px glyphs. codicon.css is
+   unlayered (`font: 16px/1`); Tailwind utilities in @layer lose that fight. */
+.titlebar-icon-button .codicon[class*='codicon-'] {
+  font-size: var(--titlebar-icon-size, 13.9px);
+}
+
+/* Blanket reduced-motion override: kill ALL CSS animations and transitions
+   when the user (or the E2E harness via prefers-reduced-motion) requests it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Pause continuous animations only when the window is hidden/minimized. */
+:root[data-renderer-animations-paused]
+  :is(
+    .shimmer,
+    .quest-glow,
+    .pet-egg,
+    .pet-egg__glow,
+    .pet-egg-shadow,
+    .pet-wobble,
+    .progress-slide,
+    .kanban-arc,
+    .glyph-spinner__strip,
+    .decode-cursor-blink
+  ),
+:root[data-renderer-animations-paused] .arc-border::before,
+:root[data-renderer-animations-paused]
+  [data-slot='aui_assistant-message-content']
+  .aui-md
+  [data-slot='code-card'][data-streaming='true'] {
+  animation-play-state: paused !important;
+}
 
 /* ─── Fonts ──────────────────────────────────────────────────────────────────
    Everything the app can name is VENDORED under ./fonts — nothing depends on
@@ -564,6 +618,22 @@
     --dt-popover-foreground: var(--ui-text-primary);
     --dt-primary: var(--theme-primary);
     --dt-primary-foreground: #fcfcfc;
+    /* Boot-paint fallbacks; themes/context.tsx may replace --dt-primary-solid. */
+    --dt-primary-solid: var(--theme-primary);
+    --dt-primary-solid-foreground: #fcfcfc;
+    --tool-memory-legendary-from: color-mix(in srgb, var(--ui-yellow) 72%, #f5d08a);
+    --tool-memory-legendary-mid: color-mix(in srgb, var(--ui-orange) 55%, var(--ui-purple));
+    --tool-memory-legendary-to: color-mix(in srgb, var(--ui-purple) 82%, #c4b5fd);
+    --tool-memory-legendary-icon: color-mix(in srgb, var(--ui-yellow) 55%, var(--ui-purple));
+    --tool-memory-legendary-meta: color-mix(in srgb, var(--ui-purple) 58%, var(--ui-text-tertiary));
+    --tool-memory-legendary-glow: color-mix(in srgb, var(--ui-purple) 38%, transparent);
+    --ui-diff-add-border: var(--ui-green);
+    --ui-diff-add-background: color-mix(in srgb, var(--ui-green) 12%, transparent);
+    --ui-diff-add-foreground: color-mix(in srgb, var(--ui-green) 70%, #000);
+    --ui-diff-remove-border: var(--ui-red);
+    --ui-diff-remove-background: color-mix(in srgb, var(--ui-red) 12%, transparent);
+    --ui-diff-remove-foreground: color-mix(in srgb, var(--ui-red) 70%, #000);
+    --titlebar-icon-size: 13.9px;
     --dt-secondary: var(--theme-secondary);
     --dt-secondary-foreground: var(--ui-text-secondary);
     --dt-accent: var(--theme-accent-soft);
@@ -816,7 +886,12 @@
        --titlebar-height: desktop sets this from JS (Electron chrome); the
          universal titlebar is CSS-sized.
        --composer-fill: desktop declares the same fallback in its own :root
-         beside the composer state ladder; universal keeps it here. */
+         beside the composer state ladder; universal keeps it here.
+       --z-window-chrome: the frameless window's own min/max/close
+         (`app/shell/window-chrome.tsx`). On Electron those are OS buttons and
+         float over every web layer, so this is the top rung — above the boot
+         chain, or a window showing a crash surface could not be closed. */
+    --z-window-chrome: 1600;
     --dt-midground-foreground: #fcfcfc;
     --titlebar-height: 2.125rem;
     --composer-fill: color-mix(in srgb, var(--dt-card) 90%, var(--dt-background));
@@ -943,6 +1018,10 @@
                             follows it, satellites included. Tint only.
    `data-hermes-clear`      the whole window is being faded, text included.  */
 :root[data-hermes-glass] {
+  /* As desktop's: the boot script in index.html pins an opaque inline
+     background on <html> before first paint; it has to go transparent here or
+     it sits behind the translucent <body> and blocks the material. */
+  background-color: transparent !important;
   --ui-chat-surface-background: transparent;
   --ui-sidebar-surface-background: transparent;
   --ui-editor-surface-background: transparent;
@@ -2447,14 +2526,48 @@ span[data-slot='aui_msg-reactions'] {
 }
 
 /* ── Movable / pop-out composer (ported from apps/desktop) ────────────────────
-   The floating composer's fixed sizing is on the [data-popped-out] Tailwind
-   classes; here is the drag-region hatch affordance + the dock-glow intensity
-   scale (dimmer in light mode, where the primary glow reads stronger). */
+   The dock column owns width; Tailwind classes on the element still set
+   position. Keyboard inset lives on --composer-dock-inset-bottom (mobile),
+   not here. */
+[data-slot='composer-dock'] {
+  width: calc(min(var(--composer-width), calc(100% - 2rem)) + 10px);
+  padding-bottom: var(--composer-shell-pad-block-end);
+}
+
+[data-slot='composer-root'] {
+  width: 100%;
+  padding-inline: 5px;
+}
+
+[data-slot='composer-dock'][data-popped-out] {
+  width: var(--composer-popout-width, 24rem);
+  max-width: calc(100vw - 1.5rem);
+  padding-bottom: 0;
+}
+
+[data-slot='composer-root'][data-popped-out] {
+  padding: 5px;
+}
+
+/* Dock-glow intensity + unfocused multi-pane chat surface. */
 :root {
   --dock-glow-scale: 0.55;
+  --chat-unfocused-opacity: 0.62;
 }
 :root.dark {
   --dock-glow-scale: 1;
+  --chat-unfocused-opacity: 0.72;
+}
+
+[data-chat-surface][data-chat-unfocused] {
+  opacity: var(--chat-unfocused-opacity);
+  filter: grayscale(0.2);
+}
+
+[data-chat-surface] {
+  transition:
+    opacity 75ms ease-out,
+    filter 75ms ease-out;
 }
 
 /* Drag-region hatch — a diagonal ///// pattern that fades into the transparent
@@ -2497,6 +2610,28 @@ span[data-slot='aui_msg-reactions'] {
    the two stylesheets stay a literal match and the next feature port needs
    no CSS work. Do not prune "unused" rules from this section.
    ========================================================================== */
+
+/* Landed `memory` tool row — gold → purple on the brain glyph + title. */
+.tool-memory-legendary-title {
+  background-image: linear-gradient(
+    105deg,
+    var(--tool-memory-legendary-from) 0%,
+    var(--tool-memory-legendary-mid) 48%,
+    var(--tool-memory-legendary-to) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  font-weight: 600;
+}
+
+.tool-memory-legendary-glyph {
+  filter: drop-shadow(0 0 0.28rem var(--tool-memory-legendary-glow));
+}
+
+.tool-memory-legendary-meta {
+  color: var(--tool-memory-legendary-meta);
+}
 
 /* Command-palette deep-link flash (desktop styles.css ~647). Applied by
    app/settings/use-deep-link-highlight.ts, which had no matching CSS. */
@@ -2597,6 +2732,45 @@ body.guest-pointer-lock iframe {
   .scrollbar-dt::-webkit-scrollbar-button,
   .scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-button {
     display: none;
+  }
+
+  /* Retain the existing opt-in class as an alias for the global behavior. */
+  .scrollbar-fade::-webkit-scrollbar-thumb,
+  .scrollbar-dt .scrollbar-fade::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    transition: none;
+  }
+
+  .scrollbar-fade:hover::-webkit-scrollbar-thumb,
+  .scrollbar-dt .scrollbar-fade:hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 18%, transparent);
+  }
+
+  .scrollbar-fade:hover::-webkit-scrollbar-thumb:hover,
+  .scrollbar-dt .scrollbar-fade:hover::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 40%, transparent);
+  }
+
+  /* Hover marquee: truncated line scrolls overflow into view while hovered. */
+  .hover-marquee[data-marquee='true'] {
+    text-overflow: clip;
+  }
+
+  .hover-marquee[data-marquee='true'] > .hover-marquee-inner {
+    display: inline-block;
+    animation: hover-marquee var(--marquee-t, 3s) linear infinite;
+  }
+
+  @keyframes hover-marquee {
+    0%,
+    10% {
+      transform: translateX(0);
+    }
+
+    75%,
+    100% {
+      transform: translateX(calc(-1 * var(--marquee-d, 0px)));
+    }
   }
 
   /* Variant for portaled overlays (Radix DropdownMenu, Popover, etc.) that
@@ -3510,3 +3684,25 @@ html[data-hud] [data-hud-card] {
     --dt-scrollbar-thumb: oklch(from var(--dt-midground) l 0 h);
   }
 }
+
+/* folded from desktop (batch-3) */
+[data-tab-key-hint] + .tab-key-hint-icon {
+    visibility: hidden;
+  }
+
+/* folded from desktop (batch-3) */
+[data-slot='pane-tab'][data-closeable]:hover > .pane-tab-content {
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--pane-tab-close-width) - 1rem),
+    transparent calc(100% - var(--pane-tab-close-width))
+  );
+}
+
+/* folded from desktop (batch-3) */
+/* Remove label pixels under the hover close button; translucent paint would
+   stack the glass tint and still let the label bleed through. */
+[data-slot='pane-tab'][data-closeable] {
+  --pane-tab-close-width: 1.5rem;
+}
+

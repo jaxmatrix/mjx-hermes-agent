@@ -1,87 +1,49 @@
-/**
- * The client's reasoning vocabulary, and the two config surfaces that used to
- * re-type it.
- *
- * The list existed three times — the model submenu, the Model settings page,
- * and the `delegation.reasoning_effort` enum — and one copy had drifted: it
- * stopped at `xhigh`, so a subagent could never be asked for `max` or `ultra`
- * from the UI even though `gateway/platforms/api_server.py` `_REASONING_EFFORTS`
- * accepts both. These tests fail if any of them re-grows its own copy.
- */
-
+import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@hermes/shared'
 import { describe, expect, it } from 'vitest'
 
-import { ENUM_OPTIONS } from '@/app/settings/constants'
 import {
-  DEFAULT_REASONING_EFFORT,
-  isReasoningEffort,
   isThinkingEnabled,
-  REASONING_EFFORT_VALUES,
-  REASONING_EFFORTS,
+  reasoningEffortClamp,
+  reasoningEffortLabel,
   resolveReasoningEffort
-} from '@/lib/reasoning-effort'
+} from './reasoning-effort'
 
-// hermes_constants.py VALID_REASONING_EFFORTS, in ladder order.
-const BACKEND_LADDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
-
-describe('the canonical ladder', () => {
-  it('matches the backend, ordering included', () => {
-    expect([...REASONING_EFFORTS]).toEqual(BACKEND_LADDER)
-  })
-
-  it('adds the off state on top of the scale, not inside it', () => {
-    expect([...REASONING_EFFORT_VALUES]).toEqual(['none', ...BACKEND_LADDER])
-    expect(REASONING_EFFORTS).not.toContain('none')
-  })
-
-  it('offers max and ultra to the delegation config row', () => {
-    // The drifted copy. `''` heads the list because an unset delegation effort
-    // inherits the agent's.
-    expect(ENUM_OPTIONS['delegation.reasoning_effort']).toEqual(['', ...BACKEND_LADDER])
-  })
-})
-
-describe('resolveReasoningEffort', () => {
-  it('keeps a level the backend knows', () => {
-    expect(resolveReasoningEffort('ultra')).toBe('ultra')
-    expect(resolveReasoningEffort('MAX')).toBe('max')
-  })
-
-  it('selects nothing when thinking is off', () => {
-    expect(resolveReasoningEffort('none')).toBe('')
-  })
-
-  it('inherits the fallback for an unset value, and only then', () => {
-    expect(resolveReasoningEffort('', 'high')).toBe('high')
-    expect(resolveReasoningEffort('low', 'high')).toBe('low')
-    expect(resolveReasoningEffort('')).toBe(DEFAULT_REASONING_EFFORT)
-  })
-
-  // A level this build has never heard of must not select nothing — an empty
-  // radio group reads as "no effort", which is not what the config says.
-  it('clamps an unknown level to the default rather than dropping it', () => {
-    expect(resolveReasoningEffort('bananas')).toBe(DEFAULT_REASONING_EFFORT)
-  })
-})
-
-describe('isThinkingEnabled', () => {
-  it('is on for every real level', () => {
-    for (const effort of REASONING_EFFORTS) {
-      expect(isThinkingEnabled(effort)).toBe(true)
+describe('reasoning-effort', () => {
+  it('labels every level it claims to support', () => {
+    for (const effort of REASONING_EFFORT_VALUES) {
+      expect(reasoningEffortLabel(effort)).not.toBe('')
     }
+
+    expect(reasoningEffortLabel('')).toBe('')
+    // Unknown values pass through rather than silently reading as a real level.
+    expect(reasoningEffortLabel('bogus')).toBe('bogus')
   })
 
-  it('is off only for an explicit none', () => {
+  it('labels a route clamp from the gateway wire level only, never by inference', () => {
+    expect(reasoningEffortLabel('ultra', 'max')).toBe('Ultra→Max')
+    expect(reasoningEffortClamp('ultra', 'max')).toEqual({ effort: 'ultra', wire: 'max' })
+    // Unknown ('' — not stamped yet / optimistic pick) or verbatim: plain label, no claim.
+    expect(reasoningEffortLabel('ultra', '')).toBe('Ultra')
+    expect(reasoningEffortLabel('ultra')).toBe('Ultra')
+    expect(reasoningEffortLabel('high', 'high')).toBe('High')
+    expect(reasoningEffortClamp('high', 'high')).toBeNull()
+    expect(reasoningEffortClamp('none', '')).toBeNull()
+  })
+
+  it('treats empty as inherit and only `none` as off', () => {
     expect(isThinkingEnabled('none')).toBe(false)
+    expect(isThinkingEnabled('high')).toBe(true)
+    // Empty inherits the fallback, so an off fallback reads as off.
     expect(isThinkingEnabled('', 'none')).toBe(false)
-    expect(isThinkingEnabled('')).toBe(true)
+    expect(isThinkingEnabled('', 'high')).toBe(true)
   })
-})
 
-describe('isReasoningEffort', () => {
-  it('rejects the off state and unknown values', () => {
-    expect(isReasoningEffort('none')).toBe(false)
-    expect(isReasoningEffort('bananas')).toBe(false)
-    expect(isReasoningEffort('Ultra')).toBe(true)
+  it('resolves a scale value: inherit, off, or clamp', () => {
+    expect(resolveReasoningEffort('high')).toBe('high')
+    // Empty inherits the profile default rather than snapping to medium.
+    expect(resolveReasoningEffort('', 'ultra')).toBe('ultra')
+    // Off selects nothing on the scale.
+    expect(resolveReasoningEffort('none')).toBe('')
+    expect(resolveReasoningEffort('bogus')).toBe(DEFAULT_REASONING_EFFORT)
   })
 })

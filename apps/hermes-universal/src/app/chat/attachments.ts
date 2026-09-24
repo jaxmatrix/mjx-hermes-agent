@@ -2,15 +2,15 @@ import { open } from '@tauri-apps/plugin-dialog'
 
 import { formatRefValue as refValue } from '@/components/assistant-ui/directive-text'
 import { translateNow } from '@/i18n'
-import { selectRemotePaths } from '@/lib/desktop-fs'
+import { selectRemotePaths } from '@/lib/desktop-fs-universal'
 import { ensureSession } from '@/store/chat'
 import type { ComposerAttachment } from '@/store/composer'
 import { $dataUrlReadMaxMb, dataUrlReadMaxBytes, readCappedFileBase64 } from '@/store/data-url-read-max'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
-import { requestForSession } from '@/store/session-request-router'
-import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
+import { requestForSession } from '@/store/session-route-dispatch'
+import { $sessionKeyStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
 // Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach
 // (which stages it server-side and returns a @file:/@image: ref) → the ref is
@@ -158,7 +158,7 @@ export async function attachToSession(
 
   try {
     const runtimeKey = runtimeKeyForStoredSession(storedSessionId)
-    const live = (runtimeKey ? $sessionStates.get()[runtimeKey]?.runtimeSessionId : null) ?? storedSessionId
+    const live = (runtimeKey ? $sessionKeyStates.get()[runtimeKey]?.runtimeSessionId : null) ?? storedSessionId
 
     const { result: res } = await withSessionNotFoundResume(live, storedSessionId, sessionId =>
       requestForSession<{ ref_text?: string }>(

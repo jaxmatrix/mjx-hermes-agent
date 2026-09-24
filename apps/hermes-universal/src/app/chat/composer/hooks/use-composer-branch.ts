@@ -30,9 +30,7 @@ export function useComposerBranch({ clearDraft, cwd, draftRef }: UseComposerBran
       scope.attachments.clear()
       requestStartWorkSession(path, text)
     },
-    // `scope.attachments` comes off the composer-scope CONTEXT, so naming it
-    // costs nothing — it only changes identity when the surface itself does.
-    [clearDraft, draftRef, scope.attachments]
+    [clearDraft, draftRef]
   )
 
   // Branch off into a NEW worktree (base = branch name, or current HEAD). A

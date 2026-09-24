@@ -49,7 +49,7 @@ export function ApprovalBar({ request, sessionKey }: { request: ApprovalRequest;
   // `allowPermanent: false` (tirith warning) hides "Always".
   const choices = request.choices ?? (request.smartDenied ? ['once', 'deny'] : undefined)
   const allowSession = choices ? choices.includes('session') : true
-  const allowAlways = choices ? choices.includes('always') : request.allowPermanent
+  const allowAlways = choices ? choices.includes('always') : Boolean(request.allowPermanent)
 
   const allowed = (choice: ApprovalChoice): boolean => {
     if (choice === 'always') {

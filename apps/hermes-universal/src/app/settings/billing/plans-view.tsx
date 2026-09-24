@@ -118,7 +118,7 @@ function PlanCard({ flow, tier }: { flow: DowngradeFlow; tier: BillingPlanTierVi
 
   // When the confirm panel closes (cancel / scheduled), return focus to this tile
   // so keyboard focus is never left detached on the removed panel.
-
+   
   useEffect(() => {
     if (wasConfirming.current && !confirming) {
       cardRef.current?.focus()
@@ -208,7 +208,7 @@ export function BillingPlansView({ onBack, tiers }: { onBack: () => void; tiers:
           type="button"
           variant="ghost"
         >
-          <ChevronLeft className="size-4 rtl:-scale-x-100" />
+          <ChevronLeft className="size-4" />
         </Button>
         <span>Plans</span>
       </div>

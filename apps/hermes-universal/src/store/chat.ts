@@ -1,3 +1,4 @@
+import type { SessionRedirectResponse } from '@/app/types'
 import { translateNow } from '@/i18n'
 import {
   appendAssistantTextPart,
@@ -19,8 +20,7 @@ import {
   type TextPart,
   type ToolCallPart,
   withActiveAssistant
-} from '@/lib/chat-messages'
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
+} from '@/lib/session-key-messages'
 import { stopSpeaking } from '@/lib/tts'
 import {
   isVoicePlaybackActive,
@@ -28,53 +28,42 @@ import {
   stopVoicePlayback,
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
+import { $activeConnectionId } from '@/store/active-connection'
 import { replayPendingApproval } from '@/store/approvals'
 import { atom, computed } from '@/store/atom'
-import { requestGateway } from '@/store/gateway'
+import { sessionClarifyRequest } from '@/store/clarify'
+import { requestGateway } from '@/store/gateway-client'
 import { newSessionOverrides } from '@/store/model'
 import { clearNotifications, notifyError } from '@/store/notifications'
 import { setPetActivity } from '@/store/pet'
 import { clearPreviewArtifacts } from '@/store/preview-status'
+import { normalizeProfileKey } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { resolveNewSessionCwd } from '@/store/project-scope'
-import {
-  $approval,
-  $clarify,
-  $secret,
-  $sudo,
-  type ApprovalRequest,
-  type ClarifyRequest,
-  clearSessionApproval,
-  clearSessionClarify,
-  clearSessionSecret,
-  clearSessionSudo,
-  type SecretRequest,
-  sessionApprovalRequest,
-  sessionClarifyRequest,
-  sessionSecretRequest,
-  sessionSudoRequest,
-  type SudoRequest
-} from '@/store/prompts'
+import { type ApprovalRequest, type ClarifyRequest, clearSessionApproval, clearSessionClarify, clearSessionSecret, clearSessionSudo, type SecretRequest, type SudoRequest } from '@/store/prompt-session-bridge'
+import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
 import {
   $activeSessionKey,
-  $sessionStates,
-  type ClientSessionState,
+  $sessionKeyStates,
   dropSessionState,
   emptySessionState,
   ensureSessionSlice,
   isDraftKey,
+  LOCAL_SESSION_SCOPE,
   newDraftKey,
   rekeySession,
+  runtimeKeyFor,
   runtimeKeyForStoredSession,
+  type SessionKeyState,
   updateSession
 } from '@/store/session-state-types'
 import { clearSessionSubagents } from '@/store/subagents'
 import { $transcriptPaint } from '@/store/transcript-paint'
 import { beginTurn, getInflightTurn, recordTurnCorrection, settleTurn } from '@/store/turn-lifecycle'
-import type { SessionCreateResponse, SessionRedirectResponse, UsageStats } from '@/types/hermes'
+import type { SessionCreateResponse, UsageStats } from '@/types/hermes'
 
 // The chat transcript model and its pure reducers now live in the LEAF module
-// @/lib/chat-messages, so the unified session reducer can apply the exact same
+// @/lib/session-key-messages, so the unified session reducer can apply the exact same
 // logic to every session's slice without importing this store. Re-exported here
 // because ~10 modules and the tests import them from `@/store/chat`.
 //
@@ -102,6 +91,7 @@ export {
 // The blocking-prompt request shapes live in store/prompts.ts (the owner of
 // prompt state for every session); re-exported here for the existing sites.
 export type { ApprovalRequest, ClarifyRequest, SecretRequest, SudoRequest }
+export { $approval, $clarify, $secret, $sudo } from '@/store/prompt-session-bridge'
 
 export type ApprovalChoice = 'always' | 'deny' | 'once' | 'session'
 
@@ -124,7 +114,7 @@ const sessionRecovery = () => import('@/store/session-recovery')
 //
 // None of these hold state. Every session — the one on screen, the ones in
 // tiles, the ones behind mobile bubbles — stores its transcript and turn state
-// in `$sessionStates`, and these are computed projections of whichever slice
+// in `$sessionKeyStates`, and these are computed projections of whichever slice
 // `$activeSessionKey` currently names. That is the whole point: a background
 // session's tokens cannot reach the visible chat, because the visible chat has
 // no storage of its own to reach (MJX-132).
@@ -133,7 +123,7 @@ const sessionRecovery = () => import('@/store/session-recovery')
 // ---------------------------------------------------------------------------
 
 /** The slice the user is looking at. */
-const $active = computed([$activeSessionKey, $sessionStates], (key, states) => states[key] ?? EMPTY_STATE)
+const $active = computed([$activeSessionKey, $sessionKeyStates], (key, states) => states[key] ?? EMPTY_STATE)
 
 const EMPTY_STATE = emptySessionState()
 const EMPTY_MESSAGES: ChatMessage[] = []
@@ -150,7 +140,7 @@ export const $messagesEmpty = computed($messages, messages => messages.length ==
  * `$messages` is knowledge and `$paintedMessages` is pixels. Only
  * `app/chat/runtime.tsx` reads this one; everything that reconciles, journals,
  * narrates, branches or submits reads `$messages`, and cannot see a cached row
- * because the lane is not in `$sessionStates` at all.
+ * because the lane is not in `$sessionKeyStates` at all.
  *
  * Returns the IDENTICAL array reference as `$messages` whenever the lane is
  * empty — which is the ordinary case for every session in the app. A fresh `[]`
@@ -183,10 +173,6 @@ export const $lastVisibleMessageIsUser = computed($messages, messages => {
 export const $awaitingResponse = computed([$busy, $lastVisibleMessageIsUser], (busy, lastIsUser) => busy && lastIsUser)
 
 export const $statusLine = computed($active, state => state.statusLine)
-
-// The ACTIVE session's blocking prompts. Every session's prompt is stored keyed
-// in store/prompts.ts; these are the active one's entries.
-export { $approval, $clarify, $secret, $sudo }
 
 /**
  * The gateway's LIVE session id for the active chat, or null for a draft that
@@ -232,7 +218,7 @@ export const $sessionStartedAt = computed($active, state => state.sessionStarted
 export const $currentUsage = computed($active, state => state.usage ?? EMPTY_USAGE)
 
 /** Apply an updater to the ACTIVE session's slice. */
-function updateActive(updater: (state: ClientSessionState) => ClientSessionState): void {
+function updateActive(updater: (state: SessionKeyState) => SessionKeyState): void {
   updateSession($activeSessionKey.get(), updater)
 }
 
@@ -322,10 +308,16 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   // an `await import()` here would issue the create a tick late — callers
   // interrupting a draft rely on it being in flight synchronously.)
   const profile = $activeProfile.get()
+  // THE BINDING MOMENT (MJXHRM-591, invariant 42). The one tab that follows the
+  // active connection is an UNBOUND draft, and it stops following the instant
+  // this create goes out — bound to the connection the ambient socket is on AT
+  // THE DISPATCH, read here, synchronously, and not after the await: a switch
+  // during the round trip must not repoint a chat that was created elsewhere.
+  const boundTo = $activeConnectionId.get() ?? LOCAL_SESSION_SCOPE
 
   const created = await requestGateway<SessionCreateResponse>('session.create', {
     cols: 96,
-    ...SESSION_SOURCE_PARAMS,
+    source: 'desktop',
     ...(cwd && { cwd }),
     ...(profile ? { profile } : {}),
     ...newSessionOverrides()
@@ -347,7 +339,15 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   // `info.model/provider` echo the override (or the profile default) now, so
   // the composer — which reads the slice — paints the right name before the
   // deferred agent build's `session.info` lands.
-  rekeySession(draftKey, id, {
+  // …and the binding is written in the SAME synchronous step as the rekey, so
+  // there is no frame in which the slice exists under its runtime key without
+  // knowing which backend issued it. The key is scoped for the same reason the
+  // slice is: two gateways mint the same shape of id.
+  const runtimeKey = runtimeKeyFor(boundTo, id)
+
+  rekeySession(draftKey, runtimeKey, {
+    connectionId: boundTo,
+    profile: normalizeProfileKey(profile),
     runtimeSessionId: id,
     storedSessionId: storedId,
     cwd: (created.info?.cwd ?? cwd ?? '').trim(),
@@ -468,7 +468,7 @@ export async function sendPrompt(text: string, options: { displayText?: string }
       // on the STORED id (what the list refresh + session.title use), with the
       // first message as the provisional title (preview). Dynamic import —
       // store/session imports store/chat, so a static import here would cycle.
-      void import('@/store/session').then(m => m.registerNewSession(storedId, shown)).catch(() => {})
+      void import('@/store/session-lifecycle').then(m => m.registerNewSession(storedId, shown)).catch(() => {})
     }
 
     // Stop, pressed while the session was still being created. `sendPrompt` goes
@@ -648,7 +648,7 @@ export function noteMissedSteer(key: string, rawText: string): void {
  */
 export async function redirectPrompt(rawText: string, key = $activeSessionKey.get()): Promise<boolean> {
   const text = rawText.trim()
-  const slice = $sessionStates.get()[key]
+  const slice = $sessionKeyStates.get()[key]
   const sessionId = slice?.runtimeSessionId
 
   if (!text || !sessionId) {
@@ -735,7 +735,7 @@ export async function redirectPrompt(rawText: string, key = $activeSessionKey.ge
  * toast. Resolves true when the gateway took the interrupt.
  */
 export async function interruptSession(key = $activeSessionKey.get()): Promise<boolean> {
-  const slice = $sessionStates.get()[key]
+  const slice = $sessionKeyStates.get()[key]
   const sessionId = slice?.runtimeSessionId
 
   if (!sessionId) {
@@ -836,7 +836,7 @@ const pendingUnboundStops = new Map<string, Promise<boolean>>()
  * through the door iteration 31 reported on `invalidateRuntimeBindings`, which
  * MJXHRM-358 has since closed.
  */
-async function interruptUnboundSession(key: string, slice: ClientSessionState | undefined): Promise<boolean> {
+async function interruptUnboundSession(key: string, slice: SessionKeyState | undefined): Promise<boolean> {
   const turn = getInflightTurn(key)
 
   if (turn && turn.phase !== 'settled') {
@@ -887,7 +887,7 @@ function waitForRuntimeBinding(storedId: string, timeoutMs = STOP_BINDING_TIMEOU
   const bound = (): null | string => {
     const key = runtimeKeyForStoredSession(storedId)
 
-    return key && $sessionStates.get()[key]?.runtimeSessionId ? key : null
+    return key && $sessionKeyStates.get()[key]?.runtimeSessionId ? key : null
   }
 
   const immediate = bound()
@@ -912,7 +912,7 @@ function waitForRuntimeBinding(storedId: string, timeoutMs = STOP_BINDING_TIMEOU
 
     const timer = setTimeout(() => finish(null), timeoutMs)
 
-    const unsubscribe = $sessionStates.listen(() => {
+    const unsubscribe = $sessionKeyStates.listen(() => {
       const key = bound()
 
       if (key) {
@@ -1369,7 +1369,7 @@ export async function submitEditedPrompt(
   rawText: string,
   editKey = $activeSessionKey.get()
 ): Promise<void> {
-  const slice = $sessionStates.get()[editKey]
+  const slice = $sessionKeyStates.get()[editKey]
   const sessionId = slice?.runtimeSessionId
   const messages = slice?.messages ?? EMPTY_MESSAGES
   const plan = sessionId ? planEdit(messages, sourceId, rawText) : null
@@ -1570,7 +1570,7 @@ export async function restoreToMessage(
   // Addressed by KEY, not by the active-chat projections: a tile's transcript
   // renders the same user bubble, and a rewind is destructive enough that
   // "whichever chat is on screen" is the wrong session to resolve it against.
-  const slice = $sessionStates.get()[restoreKey]
+  const slice = $sessionKeyStates.get()[restoreKey]
   const sessionId = slice?.runtimeSessionId
 
   if (!sessionId) {
@@ -1691,7 +1691,7 @@ export async function respondApproval(
   choice: ApprovalChoice,
   key = $activeSessionKey.get()
 ): Promise<PromptRespondOutcome> {
-  const slice = $sessionStates.get()[key]
+  const slice = $sessionKeyStates.get()[key]
   // A slice with no runtime id has nothing the gateway can resolve — `_sess()`
   // answers an empty `session_id` with the same "session not found" it gives a
   // dead one, which is exactly what the old swallow was hiding.
@@ -1947,7 +1947,7 @@ export function resetChat(cwd?: string): void {
   // meant each of them had to remember, and only two ever did — which is the
   // whole shape of this ticket. Desktop resolves it in the one place too
   // (`startFreshSessionDraft`).
-  ensureSessionSlice(draftKey, { cwd: cwd?.trim() || resolveNewSessionCwd() })
+  ensureSessionSlice({ draftKey }, { cwd: cwd?.trim() || resolveNewSessionCwd() })
   $activeSessionKey.set(draftKey)
 
   // Drop the OLD draft — an unsaved chat the user walked away from has nothing

@@ -1,3 +1,4 @@
+import { compactNumber } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -6,6 +7,7 @@ import { type CodeEditorApi } from '@/components/chat/code-editor'
 import { JsonDocumentEditor } from '@/components/chat/json-document-editor'
 import { LogTail } from '@/components/chat/log-tail'
 import { PageLoader } from '@/components/page-loader'
+import { AvatarChip } from '@/components/ui/avatar-chip'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { ErrorBanner } from '@/components/ui/error-state'
@@ -16,23 +18,22 @@ import { TextTab } from '@/components/ui/text-tab'
 import { Textarea } from '@/components/ui/textarea'
 import { Tip } from '@/components/ui/tooltip'
 import {
-  authMcpServer,
   getActionStatus,
   getLogs,
   getMcpCatalog,
-  getMcpOAuthFlow,
   getUsageAnalytics,
   type HermesGateway,
   installMcpCatalogEntry,
   type McpCatalogEntry,
   type McpTestResult,
+  type ProfileScope,
+  profileScopeKey,
   saveMcpServers,
   testMcpServer
 } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
-import { openExternalLink } from '@/lib/external-link'
-import { compactNumber } from '@/lib/format'
-import { brandFor, brandGlyphStyle } from '@/lib/mcp-brands'
+import { startCompletionPoll } from '@/lib/completion-poll'
+import { brandFor } from '@/lib/mcp-brands'
 import { estimateServerTokens, serverUsageCount } from '@/lib/mcp-cost'
 import { completeMcpDesktopOAuth } from '@/lib/mcp-dashboard-oauth'
 import { type McpImportEntry, parseMcpImport } from '@/lib/mcp-import'
@@ -46,7 +47,7 @@ import { $activeSessionId } from '@/store/session'
 
 import { hermesConfigCacheWriter, useHermesConfigRecord } from '../hooks/use-config-record'
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
-import { DetailPane, ICON_BUTTON, MasterDetail } from '../master-detail'
+import { DetailPane, ICON_BUTTON, MASTER_DETAIL_WIDE_COLS } from '../master-detail'
 import { PanelAddButton, PanelEmpty } from '../overlays/panel'
 import { prettyName } from '../settings/helpers'
 import { useDeepLinkHighlight } from '../settings/use-deep-link-highlight'
@@ -90,10 +91,6 @@ const serverEnabled = (server: Record<string, unknown>) => server.enabled !== fa
 // and the Catalog install view; invalidated after an install.
 const MCP_CATALOG_KEY = ['mcp-catalog'] as const
 
-// Pane-store key for the list/editor sash (MasterDetail `resizeId`) — the same
-// store the terminal and editor panes persist their widths in.
-const MCP_SPLIT_ID = 'skills-mcp'
-
 type Probe = McpTestResult | 'probing'
 
 // Per-server cost/usage overlay inputs: `tokens` is the approximate per-call
@@ -112,7 +109,7 @@ interface ServerCost {
 const MCP_USAGE_TTL_MS = 10 * 60_000
 const mcpUsageCache = new Map<string, { at: number; value: Record<string, number> }>()
 
-async function loadMcpUsage(scopeKey: string, profile?: null | string): Promise<null | Record<string, number>> {
+async function loadMcpUsage(scopeKey: string, scopeProfile: ProfileScope): Promise<null | Record<string, number>> {
   const cached = mcpUsageCache.get(scopeKey)
 
   if (cached && Date.now() - cached.at < MCP_USAGE_TTL_MS) {
@@ -120,7 +117,7 @@ async function loadMcpUsage(scopeKey: string, profile?: null | string): Promise<
   }
 
   try {
-    const analytics = await getUsageAnalytics(30, profile ?? undefined)
+    const analytics = await getUsageAnalytics(30, scopeProfile)
     const value = Object.fromEntries((analytics.tools ?? []).map(entry => [entry.tool, entry.count]))
     mcpUsageCache.set(scopeKey, { at: Date.now(), value })
 
@@ -154,9 +151,9 @@ function statusOf(server: Record<string, unknown>, probe: Probe | undefined): Se
 }
 
 const STATUS_DOT: Record<ServerStatus, string> = {
-  ok: 'bg-(--ui-green)',
-  error: 'bg-(--ui-red)',
-  'needs-auth': 'bg-(--ui-yellow)',
+  ok: 'bg-emerald-500',
+  error: 'bg-red-500',
+  'needs-auth': 'bg-amber-500',
   probing: 'animate-pulse bg-foreground/40',
   off: 'bg-foreground/20',
   unknown: 'bg-foreground/20'
@@ -349,19 +346,19 @@ function scanServerBlocks(text: string): ServerBlock[] {
   return blocks
 }
 
-export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; profile?: null | string }) {
+export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; profile?: ProfileScope }) {
   const { t } = useI18n()
   const m = t.settings.mcp
   const activeSessionId = useStore($activeSessionId)
 
-  // The profile this tab configures: the Capabilities "Applies to" scope
-  // (`profile`, from store/settings-scope) when set, otherwise the app-wide
-  // active profile. Every fetch/save below is scoped to it, and it keys the
-  // config/catalog/probe caches so switching the selector refetches and never
-  // shows another profile's servers. With no override this resolves to
-  // $activeGatewayProfile, so behavior is identical to before.
+  // The profile this tab configures: the Capabilities profile-scope selector's
+  // choice (`profile`) when set, otherwise the app-wide active profile. Every
+  // fetch/save below is scoped to it, and it keys the config/catalog/probe
+  // caches so switching the selector refetches and never shows another
+  // profile's servers (AGENTS.md scope-in-key). When no override is passed this
+  // resolves to $activeGatewayProfile, so behavior is identical to before.
   const appProfile = useStore($activeGatewayProfile)
-  const scopeProfileKey = normalizeProfileKey(profile ?? appProfile)
+  const scopeProfileKey = profile != null ? profileScopeKey(profile) : normalizeProfileKey(appProfile)
 
   // Shared config cache (see use-config-record): revisiting the tab paints the
   // cached record instantly; mutations write through `setConfig` and stay
@@ -387,12 +384,12 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
 
   const [saving, setSaving] = useState(false)
   const [probes, setProbes] = useState<Record<string, Probe>>({})
+  const probesRef = useRef(probes)
+  probesRef.current = probes
 
   // 30-day per-tool call counts (registry names). null = analytics unavailable
   // or not loaded yet — the cost overlay then omits usage entirely.
   const [toolCalls30d, setToolCalls30d] = useState<null | Record<string, number>>(null)
-  const probesRef = useRef(probes)
-  probesRef.current = probes
 
   // Blocks the browser until an OAuth flow lands a token; also reset on profile
   // switch, so declared up here alongside the other per-profile view state.
@@ -436,7 +433,8 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
 
   // Key by the SCOPED profile — installed/enabled badges are per-profile, so
   // sharing one cache across profiles would flash the previous profile's state
-  // on switch. With no override this is the active profile, identical to before.
+  // on switch. When no selector override is set this is the active profile,
+  // identical to before.
   const catalogQuery = useQuery({
     queryKey: [...MCP_CATALOG_KEY, scopeProfileKey],
     queryFn: () => getMcpCatalog(profile ?? undefined),
@@ -490,6 +488,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   // in-progress edit — the draft is the user's until they save or reset.
   const draftSeeded = useRef(false)
 
+   
   useEffect(() => {
     // profilePending: config still holds the PREVIOUS profile's record right
     // after a switch — seeding from it would latch the wrong profile's doc.
@@ -527,6 +526,15 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   // write its result into profile B's state after the user switched.
   const profileEpoch = useRef(0)
 
+  // Scoped Skills tabs remount when their owner changes; stop the old native
+  // OAuth waiter even when no app-wide profile-switch event is emitted.
+  useEffect(
+    () => () => {
+      profileEpoch.current += 1
+    },
+    [scopeProfileKey]
+  )
+
   // A profile switch invalidates the config query (see store/profile.ts), which
   // refetches the new backend's mcp.json. Reset ALL per-profile view state — the
   // draft (incl. a dirty one, so profile A's edits can't be saved into B), its
@@ -553,6 +561,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   // on a fresh success, errorUpdatedAt on a fresh failure. Releasing on error too
   // means a failed refetch surfaces the retry UI instead of leaving mutations
   // silently no-op forever.
+   
   useEffect(() => {
     if (
       profilePending &&
@@ -610,9 +619,8 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
     try {
       const flow = await completeMcpDesktopOAuth({
         serverName,
-        start: name => authMcpServer(name, profile ?? undefined),
-        status: flowId => getMcpOAuthFlow(flowId, profile ?? undefined),
-        openExternal: url => openExternalLink(url)
+        profile,
+        cancelled: () => profileEpoch.current !== epoch
       })
 
       const result: McpTestResult = { ok: true, tools: flow.tools ?? [] }
@@ -669,30 +677,6 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
     }
   }
 
-  // Cosmetic 30-day usage counts for the cost overlay — cached module-wide per
-  // scope profile, epoch-guarded like the probes so a slow profile-A fetch
-  // can't paint into profile B.
-  useEffect(() => {
-    const epoch = profileEpoch.current
-
-    void loadMcpUsage(scopeProfileKey, profile ?? appProfile).then(value => {
-      if (profileEpoch.current === epoch) {
-        setToolCalls30d(value)
-      }
-    })
-  }, [scopeProfileKey, profile, appProfile])
-
-  // Overlay inputs for one server: token estimate from its (successful) probe,
-  // 30-day uses from analytics. Both halves degrade to null independently.
-  const costFor = (serverName: string, server: Record<string, unknown>): ServerCost => {
-    const probe = probes[serverName]
-
-    return {
-      tokens: probe && probe !== 'probing' && probe.ok ? estimateServerTokens(server, probe.tools) : null,
-      uses: toolCalls30d ? serverUsageCount(serverName, toolCalls30d) : null
-    }
-  }
-
   // It should just know: probe enabled servers as config arrives — but through
   // the cache, so revisiting the page doesn't respawn/reconnect the fleet.
   useEffect(() => {
@@ -713,6 +697,30 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
     // render and adding it would re-probe the fleet on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [servers])
+
+  // Cosmetic 30-day usage counts for the cost overlay — cached module-wide per
+  // scope profile, epoch-guarded like the probes so a slow profile-A fetch
+  // can't paint into profile B.
+  useEffect(() => {
+    const epoch = profileEpoch.current
+
+    void loadMcpUsage(scopeProfileKey, profile ?? appProfile ?? null).then(value => {
+      if (profileEpoch.current === epoch) {
+        setToolCalls30d(value)
+      }
+    })
+  }, [scopeProfileKey, profile, appProfile])
+
+  // Overlay inputs for one server: token estimate from its (successful) probe,
+  // 30-day uses from analytics. Both halves degrade to null independently.
+  const costFor = (serverName: string, server: Record<string, unknown>): ServerCost => {
+    const probe = probes[serverName]
+
+    return {
+      tokens: probe && probe !== 'probing' && probe.ok ? estimateServerTokens(server, probe.tools) : null,
+      uses: toolCalls30d ? serverUsageCount(serverName, toolCalls30d) : null
+    }
+  }
 
   // Config writes reach live sessions immediately — no manual "Reload MCP".
   const silentReload = async () => {
@@ -780,7 +788,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
     return next
   }
 
-  const toggleServer = async (serverName: string, enabled: boolean) => {
+  const setServerEnabled = async (serverName: string, enabled: boolean) => {
     if (profilePending) {
       return
     }
@@ -1038,7 +1046,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   const activeEntry = savedEntry ?? draftEntry
 
   return (
-    <MasterDetail resizeId={MCP_SPLIT_ID} split="wide">
+    <div className={cn('grid h-full min-h-0 grid-cols-1', MASTER_DETAIL_WIDE_COLS)}>
       {/* LEFT: the focused block's server config, or the unified fleet+catalog list. */}
       <aside className="flex min-h-0 flex-col overflow-hidden border-e border-(--ui-stroke-quaternary)">
         {selected && activeEntry ? (
@@ -1052,7 +1060,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
             onBack={() => setCursor(0)}
             onProbe={() => void runProbe(selected)}
             onRemove={() => void removeServer(selected)}
-            onToggle={checked => void toggleServer(selected, checked)}
+            onToggle={checked => void setServerEnabled(selected, checked)}
             onToggleTool={toolName => void toggleTool(selected, toolName)}
             probe={probes[selected]}
             saved={savedEntry !== undefined}
@@ -1060,18 +1068,19 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
           />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col p-2">
-            {/* ONE coherent column: the configured fleet on top, the
-                Nous-approved catalog below it. Installed entries live in the
-                fleet list (with live status), so the catalog section only
-                offers what's NOT installed yet — no duplicate rows, no tab
-                flipping to find the install button. */}
-            {/* Geometry mirrors ListStrip (mb-1 h-6 ps-2) so this header lands
-                on the exact line the sort link occupies in the Skills/Tools views. */}
-            <div className="mb-1 flex h-6 shrink-0 items-center ps-2 pe-1">
-              <span className="flex-1 text-[0.72rem] font-medium text-(--ui-text-tertiary)">{m.tabServers}</span>
-              <McpImportButton disabled={profilePending} onImport={importServers} />
-            </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+              {/* ONE coherent column: the configured fleet on top, the
+                  Nous-approved catalog below it. Installed entries live in the
+                  fleet list (with live status), so the catalog section only
+                  offers what's NOT installed yet — no duplicate rows, no tab
+                  flipping to find the install button. */}
+              {/* Geometry mirrors ListStrip (mb-1 h-6 pl-2) so this header
+                  lands on the exact line the sort link occupies in the
+                  Skills/Tools views. */}
+              <div className="mb-1 flex h-6 shrink-0 items-center ps-2 pe-1">
+                <span className="flex-1 text-[0.72rem] font-medium text-(--ui-text-tertiary)">{m.tabServers}</span>
+                <McpImportButton disabled={profilePending} onImport={importServers} />
+              </div>
               {names.length === 0 ? (
                 <PanelEmpty
                   action={
@@ -1100,7 +1109,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
                         onProbe={() => void runProbe(serverName)}
                         onRemove={() => void removeServer(serverName)}
                         onSelect={() => focusServer(serverName)}
-                        onToggle={checked => void toggleServer(serverName, checked)}
+                        onToggle={checked => void setServerEnabled(serverName, checked)}
                         status={status}
                         statusText={statusLine(m, status, probes[serverName], server, cost)}
                         unused={
@@ -1118,7 +1127,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
               )}
               {(catalogQuery.isLoading || availableCatalog.length > 0) && (
                 <>
-                  <div className="mt-3 mb-1 flex h-6 shrink-0 items-center border-t border-(--ui-stroke-quaternary) ps-2 pe-1 pt-2">
+                  <div className="mb-1 mt-3 flex h-6 shrink-0 items-center border-t border-(--ui-stroke-quaternary) ps-2 pe-1 pt-2">
                     <span className="text-[0.72rem] font-medium text-(--ui-text-tertiary)">{m.tabCatalog}</span>
                   </div>
                   <McpCatalog
@@ -1188,7 +1197,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
           <McpLogs emptyLabel={m.noOutput} server={selected && savedEntry ? selected : null} source={logSource} />
         </DetailPane>
       </main>
-    </MasterDetail>
+    </div>
   )
 }
 
@@ -1263,7 +1272,7 @@ function ServerConfig({
             size="icon"
             variant="ghost"
           >
-            <Codicon className="rtl:-scale-x-100" name="chevron-left" size="0.8125rem" />
+            <Codicon name="chevron-left" size="0.8125rem" />
           </Button>
         </Tip>
         <McpAvatar className="mt-2.5" name={name} status={status} />
@@ -1427,16 +1436,6 @@ function ServerIconActions({
   )
 }
 
-// Small gray attribute chip (transport / auth / needs-build), matching the
-// catalog's flat row treatment.
-function CatalogTag({ children }: { children: string }) {
-  return (
-    <span className="rounded bg-(--ui-bg-tertiary) px-1.5 py-0.5 text-[0.6rem] text-(--ui-text-secondary)">
-      {children}
-    </span>
-  )
-}
-
 // Paste-anything import: a compact popover on the Servers header. Paste any
 // README shape — mcp.json snippet, npx/docker command line, `claude mcp add`,
 // a bare URL, or a Cursor deeplink — see the inferred name + config, then
@@ -1517,6 +1516,16 @@ function McpImportButton({ disabled, onImport }: { disabled: boolean; onImport: 
   )
 }
 
+// Small gray attribute chip (transport / auth / needs-build), matching the
+// catalog's flat row treatment.
+function CatalogTag({ children }: { children: string }) {
+  return (
+    <span className="rounded bg-(--ui-bg-tertiary) px-1.5 py-0.5 text-[0.6rem] text-(--ui-text-secondary)">
+      {children}
+    </span>
+  )
+}
+
 // The Nous-approved MCP catalog: one-click installs of curated servers, with an
 // inline prompt for any required credentials (never shows stored values). On
 // install the parent refetches config + catalog and reloads live sessions.
@@ -1529,7 +1538,7 @@ function McpCatalog({
   entries: McpCatalogEntry[]
   loading: boolean
   onInstalled: () => void
-  profile?: null | string
+  profile?: ProfileScope
 }) {
   const { t } = useI18n()
   const m = t.settings.mcp
@@ -1622,7 +1631,7 @@ function McpCatalog({
                   {entry.auth_type === 'api_key' && <CatalogTag>API key</CatalogTag>}
                   {entry.needs_install && !entry.installed && <CatalogTag>{m.catalogNeedsInstall}</CatalogTag>}
                   {entry.installed && (
-                    <span className="text-[0.6rem] text-(--ui-green)">
+                    <span className="text-[0.6rem] text-emerald-400">
                       {entry.enabled ? m.catalogEnabled : m.catalogInstalled}
                     </span>
                   )}
@@ -1717,36 +1726,25 @@ function McpLogs({
 }) {
   const [lines, setLines] = useState<null | string[]>(null)
   // A profile switch reroutes getLogs to the new backend; keying the effect on
-  // the active profile tears down the old poll (its `cancelled` flag blocks a
-  // late setLines) so profile A's logs never flash in B.
+  // the active profile tears down the old poll (stop suppresses a late
+  // publish) so profile A's logs never flash in B.
   const activeProfile = useStore($activeGatewayProfile)
 
   useEffect(() => {
-    let cancelled = false
+    setLines(null)
 
-    const poll = async () => {
-      try {
+    return startCompletionPoll({
+      delayMs: LOG_POLL_MS,
+      poll: async () => {
         const response =
           source === 'stdio'
             ? await getLogs({ file: 'mcp', lines: 500 })
             : await getLogs({ file: 'agent', lines: 300, search: server ?? 'mcp' })
 
-        if (!cancelled) {
-          setLines(source === 'stdio' && server ? filterStdioSections(response.lines, server) : response.lines)
-        }
-      } catch {
-        // Backend momentarily unavailable — keep the last tail.
-      }
-    }
-
-    setLines(null)
-    void poll()
-    const timer = window.setInterval(() => void poll(), LOG_POLL_MS)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
+        return source === 'stdio' && server ? filterStdioSections(response.lines, server) : response.lines
+      },
+      publish: setLines
+    })
   }, [server, source, activeProfile])
 
   return <LogTail emptyLabel={emptyLabel} lines={lines} />
@@ -1756,41 +1754,28 @@ function McpLogs({
 // Avatars + list rows
 // ---------------------------------------------------------------------------
 
-// Brand glyphs for well-known MCP providers, exactly the Messaging avatar
-// treatment (simpleicons on a 16% brand tint) — shared with the composer
-// suggestion pills and the inline setup card via lib/mcp-brands. Unknown
-// servers fall back to the same letter monogram Messaging uses.
-
-// PlatformAvatar (messaging), copied 1:1 — same size, radius, type scale, and
-// brand-tint treatment — plus a status dot overlay. Identity ladder: curated
-// brand glyph → letter monogram. We deliberately do NOT fetch remote favicons:
-// a configured MCP URL can be a private/internal host, and hitting Google's
-// favicon service for it would leak that hostname off-box.
+// The shared identity chip (`ui/avatar-chip`) plus a status dot. Identity
+// ladder: curated brand glyph (lib/mcp-brands, shared with the composer
+// suggestion pills and the inline setup card) → letter monogram. Nothing here
+// reaches the network for a mark: a configured MCP URL can be a private host,
+// and the connector card's favicon rung only ever reads a public site's own
+// markup, never a third-party icon service.
 function McpAvatar({ className, name, status }: { className?: string; name: string; status: ServerStatus }) {
-  const brand = brandFor(name)
-
   return (
-    <span
-      className={cn(
-        'relative inline-grid size-6 shrink-0 place-items-center rounded-md text-[length:var(--conversation-caption-font-size)] font-medium',
-        !brand && 'bg-(--ui-bg-tertiary) text-(--ui-text-tertiary)',
-        className
-      )}
-      style={brand ? { backgroundColor: `color-mix(in srgb, ${brand.color} 16%, transparent)` } : undefined}
-    >
-      {brand ? (
-        <brand.Icon aria-hidden className="size-3.5" style={brandGlyphStyle(brand)} />
-      ) : (
-        name.charAt(0).toUpperCase()
-      )}
-      <span
-        aria-hidden
-        className={cn(
-          'absolute -bottom-0.5 -end-0.5 size-2 rounded-full ring-2 ring-(--ui-chat-surface-background)',
-          STATUS_DOT[status]
-        )}
-      />
-    </span>
+    <AvatarChip
+      brand={brandFor(name)}
+      className={className}
+      name={name}
+      overlay={
+        <span
+          aria-hidden
+          className={cn(
+            'absolute -bottom-0.5 -right-0.5 size-2 rounded-full ring-2 ring-(--ui-chat-surface-background)',
+            STATUS_DOT[status]
+          )}
+        />
+      }
+    />
   )
 }
 
@@ -1859,7 +1844,7 @@ function McpRow({
         </span>
       </button>
       <ServerIconActions
-        className="opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100 coarse:opacity-100"
+        className="opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100"
         onProbe={onProbe}
         onRemove={onRemove}
         probing={status === 'probing'}

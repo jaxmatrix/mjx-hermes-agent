@@ -4,8 +4,8 @@ import { portalAgentSignIn, portalLogout } from '@/lib/auth'
 import { errorText } from '@/lib/error-text'
 import { IS_NATIVE_MOBILE } from '@/lib/platform'
 import { atom } from '@/store/atom'
-import { connectCloud } from '@/store/connection'
-import { saveGatewayTarget, savePendingPortal, takePendingPortal } from '@/store/gateway-restore'
+import { applyConnection } from '@/store/connections'
+import { savePendingPortal, takePendingPortal } from '@/store/gateway-restore'
 
 // Nous Cloud store (E5). Portal login + agent discovery + connect. The Privy
 // portal session + per-agent SSO live in Rust (src-tauri/src/cloud.rs); this holds
@@ -214,12 +214,11 @@ export async function cloudSignOut(): Promise<void> {
 }
 
 /**
- * Silent SSO into the agent's gateway, then connect in cloud/oauth mode.
+ * Silent SSO into the agent's gateway, then desktop's apply: save it as a cloud
+ * source and switch onto it (`applyConnection`). The agent session is already in
+ * the shared jar by then, so the switch's preflight finds it signed in.
  *
- * Throws on failure. It is called INSIDE `softSwitchGateway`, which reads a clean return
- * as "the switch worked" — so swallowing here skipped the rollback (leaving the session
- * lists wiped and the socket closed) and then broadcast the *previous* target to every
- * other WebView, re-homing them onto the gateway this one had just left.
+ * Throws on failure, with the reason parked in `$cloudError` for the panel.
  */
 export async function connectCloudAgent(agent: CloudAgent): Promise<void> {
   if (!agent.dashboardUrl) {
@@ -239,15 +238,10 @@ export async function connectCloudAgent(agent: CloudAgent): Promise<void> {
       throw new Error('Could not sign in to this agent')
     }
 
-    await connectCloud(result.baseUrl)
-    // Enrich the saved restore target (connectCloud persisted the baseUrl) with the
-    // agent id/name so the boot connecting screen can label it (D8).
-    saveGatewayTarget({
-      mode: 'cloud',
-      cloudBaseUrl: result.baseUrl,
-      cloudAgentId: agent.id,
-      cloudAgentName: agent.name
-    })
+    await applyConnection(
+      { authMode: 'oauth', kind: 'cloud', label: agent.name, url: result.baseUrl },
+      { allowInteractive: true }
+    )
   } catch (err) {
     $cloudError.set(errorText(err))
 

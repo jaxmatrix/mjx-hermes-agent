@@ -21,7 +21,7 @@ export function curatedTourSteps(t: Translations): { selector?: string; text: st
   const copy = t.commandCenter.tour.steps
 
   return [
-    { selector: '[data-tour="sidebar"]', text: copy.sidebar.text, title: copy.sidebar.title },
+    { selector: '[data-tour="sessions-sidebar"]', text: copy.sidebar.text, title: copy.sidebar.title },
     { selector: '[data-tour="composer"]', text: copy.composer.text, title: copy.composer.title },
     { selector: '[data-tour="statusbar"]', text: copy.statusbar.text, title: copy.statusbar.title },
     { text: copy.palette.text, title: copy.palette.title }

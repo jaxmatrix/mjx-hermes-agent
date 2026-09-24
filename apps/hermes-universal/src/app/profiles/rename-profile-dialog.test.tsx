@@ -1,82 +1,70 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-vi.mock('@/hermes', () => ({ renameProfile: vi.fn(async () => ({ name: 'default', ok: true, path: '/h' })) }))
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
 
 import { renameProfile } from '@/hermes'
-import { I18nProvider } from '@/i18n'
+import { retireLocalProfileGateways } from '@/store/gateway'
+import { migrateTilesForProfile } from '@/store/session-states'
 
 import { RenameProfileDialog } from './rename-profile-dialog'
 
-const rename = vi.mocked(renameProfile)
-
-const open = (isDefault: boolean, currentName = 'default') => {
-  const onRenamed = vi.fn()
-
-  render(
-    <I18nProvider>
-      <RenameProfileDialog
-        currentName={currentName}
-        isDefault={isDefault}
-        onClose={vi.fn()}
-        onRenamed={onRenamed}
-        open
-      />
-    </I18nProvider>
-  )
-
-  return onRenamed
-}
-
-const field = () => screen.getByLabelText(/Display name|New name/) as HTMLInputElement
-
-const submit = () => fireEvent.submit(field().closest('form') as HTMLFormElement)
+// Pins the rename half of the deleted-profile-resurrection class (#88638 fixed
+// the delete half): a retained renderer socket for the OLD profile name must be
+// retired BEFORE the rename PATCH tears down its backend, or the socket's
+// reconnect loop respawns the old-name backend and recreates the directory the
+// rename just moved.
 
 afterEach(() => {
-  rename.mockClear()
+  cleanup()
+  vi.clearAllMocks()
 })
 
-describe('RenameProfileDialog display-name mode', () => {
-  // "default" is the profile ID, not a name — pre-filling it would have the
-  // user delete it before typing, and submitting it unchanged is meaningless.
-  it('starts blank and offers the display-name copy for the default profile', () => {
-    open(true)
+vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  renameProfile: vi.fn(async () => ({ name: 'renamed', ok: true, path: '/x' }))
+}))
 
-    expect(field().value).toBe('')
-    expect(screen.getByText('Name this agent')).toBeTruthy()
+vi.mock('@/store/gateway', () => ({
+  retireLocalProfileGateways: vi.fn()
+}))
+
+vi.mock('@/store/session-states', () => ({
+  migrateTilesForProfile: vi.fn()
+}))
+
+it('retires the old-name local gateways before issuing the rename', async () => {
+  const order: string[] = []
+
+  vi.mocked(retireLocalProfileGateways).mockImplementationOnce(() => {
+    order.push('retire')
+  })
+  vi.mocked(renameProfile).mockImplementationOnce(async () => {
+    order.push('rename')
+
+    return { name: 'renamed', ok: true, path: '/x' }
   })
 
-  // The canonical id is what goes on the wire; the backend turns a rename of
-  // "default" into a profile.yaml display_name. A named profile still moves.
-  it('sends the canonical id with the free-text display name', async () => {
-    open(true)
+  render(<RenameProfileDialog currentName="selena" onClose={vi.fn()} open />)
 
-    fireEvent.change(field(), { target: { value: 'Ada Lovelace' } })
-    submit()
+  fireEvent.change(screen.getByLabelText(/new name/i), { target: { value: 'renamed' } })
+  fireEvent.click(screen.getByRole('button', { name: /^rename$/i }))
 
-    await waitFor(() => expect(rename).toHaveBeenCalledWith('default', 'Ada Lovelace'))
-  })
+  await waitFor(() => expect(renameProfile).toHaveBeenCalledWith('selena', 'renamed'))
+  expect(retireLocalProfileGateways).toHaveBeenCalledWith('selena')
+  expect(order).toEqual(['retire', 'rename'])
+  // The sessions moved with the directory: tabs / cached tails / remembered ids keyed by the
+  // old name follow, else every restored tab 404s against a backend that no longer exists (#111868).
+  expect(migrateTilesForProfile).toHaveBeenCalledWith('selena', 'renamed')
+})
 
-  // Slug rules are a NAMED-profile constraint (the directory move); a display
-  // name is presentation only, so spaces and Unicode must not be rejected.
-  it('accepts a name the slug rules would reject, and drops the slug hint', async () => {
-    open(true)
+it('does not retire gateways when validation rejects the submit', async () => {
+  render(<RenameProfileDialog currentName="selena" onClose={vi.fn()} open />)
 
-    fireEvent.change(field(), { target: { value: 'Ada 💡' } })
+  fireEvent.change(screen.getByLabelText(/new name/i), { target: { value: '' } })
+  fireEvent.click(screen.getByRole('button', { name: /^rename$/i }))
 
-    expect(screen.queryByText(/Lowercase letters/i)).toBeNull()
-    submit()
-
-    await waitFor(() => expect(rename).toHaveBeenCalledWith('default', 'Ada 💡'))
-  })
-
-  it('still enforces the slug rules for a named profile', async () => {
-    open(false, 'research')
-
-    fireEvent.change(field(), { target: { value: 'Ada 💡' } })
-    submit()
-
-    await waitFor(() => expect(screen.getByText(/Invalid name/i)).toBeTruthy())
-    expect(rename).not.toHaveBeenCalled()
-  })
+  await waitFor(() => expect(screen.getByText('Name is required.')).toBeTruthy())
+  expect(retireLocalProfileGateways).not.toHaveBeenCalled()
+  expect(renameProfile).not.toHaveBeenCalled()
 })

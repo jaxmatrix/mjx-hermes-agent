@@ -1,34 +1,15 @@
+import type { ModelOptionProvider } from '@hermes/shared'
 import { atom } from 'nanostores'
 
-import { modelSearchText } from '@/lib/model-search-text'
-import { displayModelName } from '@/lib/model-status-label'
-import { normalize } from '@/lib/text'
-import type { ModelOptionProvider } from '@/types/hermes'
+import { persistString, storedString } from '@/lib/storage'
 
-const STORAGE_KEY = 'hermes.visible-models'
+const STORAGE_KEY = 'hermes.desktop.visible-models'
 
-// Guarded localStorage helpers (desktop imported these from @/lib/storage,
-// which universal doesn't have). Best-effort — never throw in a non-DOM/quota
-// context.
-function storedString(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-function persistString(key: string, value: string | null): void {
-  try {
-    if (value === null) {
-      window.localStorage.removeItem(key)
-    } else {
-      window.localStorage.setItem(key, value)
-    }
-  } catch {
-    // Quota / private-mode — ignore.
-  }
-}
+/** Every `provider::model` key the user has had a chance to judge — snapshotted
+ *  each time the visible set is persisted. A model absent from here appeared
+ *  AFTER the user last curated (plugin update, catalog refresh, new release), so
+ *  it falls through to the curated default rule instead of defaulting to hidden. */
+const KNOWN_STORAGE_KEY = 'hermes.desktop.known-models'
 
 /** Models shown per provider in the status-bar dropdown before the user has
  *  customized the list. Backend `models` are already relevance-ordered. */
@@ -93,8 +74,8 @@ export function collapseModelFamilies(models: readonly string[]): ModelFamily[] 
   return families
 }
 
-function loadVisible(): Set<string> | null {
-  const raw = storedString(STORAGE_KEY)
+function loadKeySet(storageKey: string): Set<string> | null {
+  const raw = storedString(storageKey)
 
   if (!raw) {
     return null
@@ -111,13 +92,56 @@ function loadVisible(): Set<string> | null {
 
 /** Explicit set of visible `provider::model` keys, or null when the user
  *  hasn't customized — in which case the curated default applies. */
-export const $visibleModels = atom<Set<string> | null>(loadVisible())
+export const $visibleModels = atom<Set<string> | null>(loadKeySet(STORAGE_KEY))
+
+/** Keys the user has seen, or null when nothing has been recorded yet (a fresh
+ *  install, or a store written before the snapshot existed). */
+export const $knownModels = atom<Set<string> | null>(loadKeySet(KNOWN_STORAGE_KEY))
 
 export const $modelVisibilityOpen = atom(false)
 
-export function setVisibleModels(keys: Set<string>): void {
+/** Every collapsed-family key across `providers`. */
+function allFamilyKeys(providers: readonly ModelOptionProvider[]): Set<string> {
+  const keys = new Set<string>()
+
+  for (const provider of providers) {
+    for (const family of collapseModelFamilies(provider.models ?? [])) {
+      keys.add(modelVisibilityKey(provider.slug, family.id))
+    }
+  }
+
+  return keys
+}
+
+/** Persist the visible set and, when the current catalog is supplied, mark every
+ *  model in it as judged so only models that appear later count as new. */
+export function setVisibleModels(keys: Set<string>, providers: readonly ModelOptionProvider[] = []): void {
   $visibleModels.set(new Set(keys))
   persistString(STORAGE_KEY, JSON.stringify([...keys]))
+
+  if (providers.length === 0) {
+    return
+  }
+
+  persistKnownModels(new Set([...($knownModels.get() ?? []), ...allFamilyKeys(providers)]))
+}
+
+function persistKnownModels(known: Set<string>): void {
+  $knownModels.set(known)
+  persistString(KNOWN_STORAGE_KEY, JSON.stringify([...known]))
+}
+
+/** One-time adoption for a visible set persisted before the known snapshot
+ *  existed: everything in the catalog at that moment counts as judged (the
+ *  user's hide choices are honoured verbatim); only models that appear later are
+ *  new. Never a running union — that would mark a newcomer judged on the very
+ *  render that first shows it. Call when the catalog has loaded. */
+export function seedKnownModels(providers: readonly ModelOptionProvider[]): void {
+  if ($knownModels.get() !== null || $visibleModels.get() === null || providers.length === 0) {
+    return
+  }
+
+  persistKnownModels(allFamilyKeys(providers))
 }
 
 export function setModelVisibilityOpen(open: boolean): void {
@@ -142,52 +166,44 @@ export function defaultVisibleKeys(providers: readonly ModelOptionProvider[]): S
  *  falls back to the top-N collapsed families when a provider ships no featured
  *  list. Shared by `defaultVisibleKeys` and `resolveVisibleKeys` so the
  *  expansion rule lives in exactly one place. */
-function expandProviderDefaults(provider: ModelOptionProvider, target: Set<string>): void {
+function expandProviderDefaults(
+  provider: ModelOptionProvider,
+  target: Set<string>,
+  admit: (key: string) => boolean = () => true
+): void {
   const families = collapseModelFamilies(provider.models ?? [])
 
   const featured = provider.featured_models ?? []
 
-  // The backend picks the shortlist from the provider's RAW model list, which
-  // still holds the ids `collapseModelFamilies` folds away — a `…-fast` sibling,
-  // or a date-pinned snapshot superseded by its rolling alias. Matching those on
-  // `family.id` alone drops them, so a lab's flagship silently goes missing from
-  // the default view (the snapshot usually carries the models.dev release date
-  // that got it featured, while the alias carries none). Resolve each featured
-  // id to the family that represents it instead.
-  const featuredFamilies = new Set(
-    featured.map(model => familyIdForModel(families, model)).filter((id): id is string => !!id)
-  )
-
-  const defaults = featuredFamilies.size
-    ? families.filter(family => featuredFamilies.has(family.id))
+  const defaults = featured.length
+    ? families.filter(family => featured.includes(family.id))
     : families.slice(0, DEFAULT_VISIBLE_PER_PROVIDER)
 
   for (const family of defaults) {
-    target.add(modelVisibilityKey(provider.slug, family.id))
+    const key = modelVisibilityKey(provider.slug, family.id)
+
+    if (admit(key)) {
+      target.add(key)
+    }
   }
-}
-
-/** The family row a raw model id renders as, or null when the catalog has no
- *  row for it. Inverts `collapseModelFamilies`: a base id is itself, a `…-fast`
- *  sibling is its base, and a date-pinned snapshot is its rolling alias. */
-function familyIdForModel(families: readonly ModelFamily[], model: string): null | string {
-  const direct = families.find(family => family.id === model || family.fastId === model)
-
-  if (direct) {
-    return direct.id
-  }
-
-  const rolling = model.replace(/-\d{8}$/, '')
-
-  return rolling === model ? null : (families.find(family => family.id === rolling)?.id ?? null)
 }
 
 /** Resolve the canonical working set: the user's stored keys plus the curated
  *  default expansion for any provider they haven't customized. Hide-all
  *  sentinels are PRESERVED here — this is the set the toggle handler mutates and
  *  persists, so dropping a sentinel would silently re-enable a provider the user
- *  emptied. Use `effectiveVisibleKeys` for display (sentinels stripped). */
-export function resolveVisibleKeys(stored: Set<string> | null, providers: readonly ModelOptionProvider[]): Set<string> {
+ *  emptied. Use `effectiveVisibleKeys` for display (sentinels stripped).
+ *
+ *  A provider the user has curated still admits models absent from `known`
+ *  (they arrived after the last curation) through the same default rule, so a
+ *  plugin or catalog update never lands a model silently switched off. A
+ *  provider the user hid outright (sentinel) stays hidden, new models included.
+ *  With no snapshot yet (`known` null) nothing counts as new. */
+export function resolveVisibleKeys(
+  stored: Set<string> | null,
+  providers: readonly ModelOptionProvider[],
+  known: Set<string> | null = $knownModels.get()
+): Set<string> {
   if (!stored) {
     return defaultVisibleKeys(providers)
   }
@@ -201,15 +217,17 @@ export function resolveVisibleKeys(stored: Set<string> | null, providers: readon
   for (const provider of providers) {
     const providerPrefix = `${provider.slug}::`
 
-    const hasStoredProvider = [...stored].some(key => key.startsWith(providerPrefix) && !isProviderSentinel(key))
-
-    const hasSentinel = stored.has(emptyProviderSentinelKey(provider.slug))
-
-    if (hasStoredProvider || hasSentinel) {
+    if (stored.has(emptyProviderSentinelKey(provider.slug))) {
       continue
     }
 
-    expandProviderDefaults(provider, next)
+    const hasStoredProvider = [...stored].some(key => key.startsWith(providerPrefix) && !isProviderSentinel(key))
+
+    if (!hasStoredProvider) {
+      expandProviderDefaults(provider, next)
+    } else if (known) {
+      expandProviderDefaults(provider, next, key => !known.has(key))
+    }
   }
 
   return next
@@ -219,9 +237,10 @@ export function resolveVisibleKeys(stored: Set<string> | null, providers: readon
  *  set with bookkeeping sentinels stripped (they are not real models). */
 export function effectiveVisibleKeys(
   stored: Set<string> | null,
-  providers: readonly ModelOptionProvider[]
+  providers: readonly ModelOptionProvider[],
+  known: Set<string> | null = $knownModels.get()
 ): Set<string> {
-  const next = resolveVisibleKeys(stored, providers)
+  const next = resolveVisibleKeys(stored, providers, known)
 
   // Strip sentinel keys — they are bookkeeping, not real visibility entries.
   for (const key of [...next]) {
@@ -242,10 +261,11 @@ export function toggleModelVisibility(
   stored: Set<string> | null,
   providers: readonly ModelOptionProvider[],
   providerSlug: string,
-  model: string
+  model: string,
+  known: Set<string> | null = $knownModels.get()
 ): Set<string> {
   // `resolveVisibleKeys` always returns a fresh Set, so we can mutate it directly.
-  const next = resolveVisibleKeys(stored, providers)
+  const next = resolveVisibleKeys(stored, providers, known)
   const key = modelVisibilityKey(providerSlug, model)
   const sentinel = emptyProviderSentinelKey(providerSlug)
 
@@ -271,19 +291,19 @@ export function toggleModelVisibility(
 }
 
 /** Compute the next persisted visibility set when a provider's master switch is
- *  flipped (the Edit Models select-all). `visible=true` enables every one of the
- *  provider's collapsed model families (and clears its hide-all sentinel);
- *  `visible=false` removes them all and records the sentinel so the defaults are
- *  not silently re-expanded. Seeds from `resolveVisibleKeys` so other providers'
- *  state (including their sentinels) survives the persist, mirroring
- *  `toggleModelVisibility`. */
+ *  flipped. `visible=true` enables every one of the provider's collapsed model
+ *  families (and clears its hide-all sentinel); `visible=false` removes them all
+ *  and records the sentinel so the defaults are not silently re-expanded.
+ *  Seeds from `resolveVisibleKeys` so other providers' state (including their
+ *  sentinels) survives the persist, mirroring `toggleModelVisibility`. */
 export function setProviderVisibility(
   stored: Set<string> | null,
   providers: readonly ModelOptionProvider[],
   providerSlug: string,
-  visible: boolean
+  visible: boolean,
+  known: Set<string> | null = $knownModels.get()
 ): Set<string> {
-  const next = resolveVisibleKeys(stored, providers)
+  const next = resolveVisibleKeys(stored, providers, known)
   const sentinel = emptyProviderSentinelKey(providerSlug)
   const provider = providers.find(p => p.slug === providerSlug)
   const families = collapseModelFamilies(provider?.models ?? [])
@@ -311,70 +331,4 @@ export function setProviderVisibility(
   }
 
   return next
-}
-
-interface CuratedFamiliesOptions {
-  /** The surface's active model id (base or `…-fast` sibling). Its family is
-   *  always kept, so selecting a model can never make its own row vanish. */
-  activeModel?: string
-  /** Raw search box text. Any query spans the WHOLE catalog. */
-  search?: string
-  /** Display-visible keys — `effectiveVisibleKeys(stored, providers)`. */
-  visible: Set<string>
-}
-
-/**
- * Which of a provider's model families a picker should render. This is the one
- * place curation lives: hosts (the composer dropdown, the ⌘⇧M dialog, Edit
- * Models) pass their search box and the resolved visibility set and render what
- * comes back — they do not each re-derive "top-N vs featured vs searching".
- *
- * Collapsed we show the user's chosen models (or the curated default); typing
- * spans every available model so anything is reachable past the cut. A search is
- * itself a narrowing action, so we do NOT cap per-provider matches — a provider
- * serving 19 models must show all 19 when the user searches for it, not a
- * truncated subset. Catalog order is preserved throughout: we only filter, never
- * re-sort, so the backend's curated ordering survives.
- */
-export function curatedFamilies(
-  provider: ModelOptionProvider,
-  { activeModel, search, visible }: CuratedFamiliesOptions
-): ModelFamily[] {
-  const families = collapseModelFamilies(provider.models ?? [])
-
-  if (families.length === 0) {
-    return families
-  }
-
-  const q = normalize(search)
-
-  // Pin the active model's row so selecting a model can never make its own row
-  // vanish — but NOT while searching. A query means "show me matches", and a
-  // pinned non-match would sit in the results list as a row the user did not
-  // ask for (and, in the cmdk picker, as a candidate Enter can land on).
-  const activeId =
-    !q && activeModel
-      ? families.find(family => family.id === activeModel || family.fastId === activeModel)?.id
-      : undefined
-
-  const shown = q
-    ? new Set(families.filter(family => familyMatches(provider, family, q)).map(family => family.id))
-    : new Set(families.filter(family => visible.has(modelVisibilityKey(provider.slug, family.id))).map(f => f.id))
-
-  return families.filter(family => shown.has(family.id) || family.id === activeId)
-}
-
-/** Substring match over everything a user might type to find a model: the wire
- *  id and its `…-fast` sibling, the provider's name and slug, the prettified
- *  display name, and the search-only aliases (`k3` → `kimi`). */
-function familyMatches(provider: ModelOptionProvider, family: ModelFamily, query: string): boolean {
-  const haystack = [
-    modelSearchText(family.id),
-    family.fastId ?? '',
-    provider.name,
-    provider.slug,
-    displayModelName(family.id)
-  ].join(' ')
-
-  return haystack.toLowerCase().includes(query)
 }

@@ -1,5 +1,7 @@
-import { $appLocale, type Locale, normalizeLocale, translateFrom, TRANSLATIONS } from '@/i18n'
+import { type Locale, normalizeLocale, TRANSLATIONS } from '@/i18n'
+import { getRuntimeI18nLocale, setRuntimeI18nLocale, translateFrom } from '@/i18n/runtime'
 import { IS_DESKTOP } from '@/lib/platform'
+import { atom } from '@/store/atom'
 import { $connectionPhase, type ConnectionPhase } from '@/store/connection'
 
 // The tray's copy — pushed down, because a native menu cannot read the catalog.
@@ -44,8 +46,11 @@ const STATUS_KEY: Record<ConnectionPhase, string> = {
  * switch behind for the rest of the run.
  */
 function tr(locale: Locale, key: string): string {
-  return translateFrom(l => TRANSLATIONS[l], locale, key, [])
+  return translateFrom((l: Locale) => TRANSLATIONS[l], locale, key, [])
 }
+
+/** Mirrors `display.language` for tray pushes (no React render pass). */
+export const $appLocale = atom<Locale>(getRuntimeI18nLocale())
 
 function activeLocale(): Locale {
   return normalizeLocale($appLocale.get())
@@ -99,7 +104,8 @@ export function initTray(): void {
     return
   }
 
-  $appLocale.subscribe(locale => {
+  $appLocale.subscribe((locale: Locale) => {
+    setRuntimeI18nLocale(normalizeLocale(locale))
     void pushLabels(normalizeLocale(locale))
   })
 

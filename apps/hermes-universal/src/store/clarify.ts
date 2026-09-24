@@ -1,51 +1,48 @@
-/**
- * Clarify-choice hygiene.
- *
- * The pending request itself lives in `store/prompts.ts` alongside the other
- * blocking prompts (that is what makes it survive a session rekey — see
- * MJXHRM-207). What lives HERE is the part desktop keeps in its own
- * `store/clarify.ts`: making a choice list safe to render, and answering a
- * clarify without answering it.
- *
- * Choices come from a model's tool call, so they are only as well-formed as the
- * model made them. A blank entry renders an unlabelled button, a multi-line one
- * breaks the single-row layout, and a 4KB one pushes the panel off screen —
- * none of which the panel can recover from once rendered.
- */
+import { atom, computed } from 'nanostores'
 
-import type { GatewayEvent } from '@/gateway'
-import { coerceText } from '@/lib/chat-messages'
-import { requestGateway } from '@/store/gateway'
-import { notifyError } from '@/store/notifications'
-import { clearSessionClarify, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
-import { reduceSessionState } from '@/store/session-reducer'
-import { updateSession } from '@/store/session-state-types'
-import type { SessionResumeResponse } from '@/types/hermes'
+import { respondToServerRequest } from './server-requests'
+import { $activeSessionId } from './session'
+import { addSessionKeyHooks } from './session-state-types'
 
-/** Longest a choice may be and still read as a button label rather than prose. */
-const MAX_CHOICE_LENGTH = 200
+export interface ClarifyQuestion {
+  /** Server-generated wire id (q0..qN) — clarify.respond keys answers by it. */
+  qid: string
+  question: string
+  choices: string[] | null
+  multiSelect: boolean
+}
+
+export interface ClarifyRequest {
+  requestId: string
+  question: string
+  choices: string[] | null
+  multiSelect: boolean
+  /** Local receipt time (Unix seconds), used to reject stale resume cleanup. */
+  receivedAt?: number
+  sessionId: string | null
+  /** Batch (multi-question) clarify: present instead of question/choices. */
+  questions?: ClarifyQuestion[]
+  /** Answers already locked server-side (reconnect replay): qid → answer. */
+  lockedAnswers?: Record<string, string>
+}
 
 /**
  * The backend labels the agent's recommended option by appending this to the
- * FIRST choice (`tools/clarify_tool.py::mark_recommended`) — there is no
- * `recommended` field on the wire, the label is baked into the choice string
- * itself and `strip_recommended` takes it back off the answer server-side.
- *
- * So the renderer never writes it: it only styles it, and discounts it when
- * measuring a choice so a long option is not dropped for length the label
- * added. The answer goes back VERBATIM, label and all — the tool strips it
- * before the model ever sees it.
+ * first choice (`tools/clarify_tool.py::mark_recommended`). The renderer never
+ * writes it — it only styles it, and discounts it when measuring a choice so a
+ * long option isn't dropped for length the label added.
  */
 export const RECOMMENDED_LABEL = '(Recommended)'
 
-/** The choice without its recommendation label, for measuring and rendering. */
 export const bareChoice = (choice: string): string =>
   choice.endsWith(RECOMMENDED_LABEL) ? choice.slice(0, -RECOMMENDED_LABEL.length).trim() : choice
 
 /**
- * The choices worth rendering. Anything blank, over-long, or multi-line is
- * dropped rather than rendered badly; an empty result means "free text only",
- * which the panel already handles.
+ * Validate and normalize a choices array.
+ *
+ * Keeps non-blank, newline-free strings of length ≤ 200; drops everything else
+ * and returns an empty array when nothing usable survives — the caller then
+ * falls back to a free-text answer instead of dead buttons.
  */
 export function normalizeChoices(choices: unknown): string[] {
   if (!Array.isArray(choices)) {
@@ -53,38 +50,31 @@ export function normalizeChoices(choices: unknown): string[] {
   }
 
   return choices.filter(
-    (choice): choice is string =>
-      typeof choice === 'string' &&
-      choice.trim().length > 0 &&
-      bareChoice(choice).length <= MAX_CHOICE_LENGTH &&
-      !choice.includes('\n')
+    (c): c is string => typeof c === 'string' && c.trim().length > 0 && bareChoice(c).length <= 200 && !c.includes('\n')
   )
 }
 
 /**
- * One question of a batch clarify.
- *
- * `qid` is the gateway's wire id (`q0`..`qN`, `tui_gateway/server.py`'s
- * `_batch_clarify`), NOT the model's own `id` — `clarify.respond` keys the
- * per-question lock by it and answers a `4002` to anything else.
+ * Structured warning for a clarify payload that arrived with choices but had
+ * them all normalized away — keeps the remaining #69122 "no selectable choices"
+ * triggers diagnosable in the field without dead constant fields.
  */
-export interface ClarifyQuestion {
-  qid: string
-  question: string
-  choices: string[] | null
-  multiSelect: boolean
+export function warnDroppedChoices(source: 'gateway' | 'tool_args', question: string, rawChoices: unknown): void {
+  console.warn('[clarify] choices dropped after normalization', {
+    choices_count: Array.isArray(rawChoices) ? rawChoices.length : 0,
+    question_length: question.length,
+    source
+  })
 }
 
 /**
- * The `questions[]` of a batch `clarify.request`, made safe to render.
+ * Validate and normalize a batch clarify payload's `questions` array.
  *
- * Same hygiene as `normalizeChoices` one level up: an entry with no `qid` can
- * never be answered (the lock would 4002), and one with no question text
- * renders an unlabelled block, so both are dropped. `multi_select` is only
- * honored alongside surviving choices — there is nothing to multi-pick from in
- * a free-text question. An empty result means "not a batch", and the caller
- * falls back to the single-question shape rather than mounting an
- * unanswerable form.
+ * Keeps entries with a non-blank string `qid` and `question`; per-question
+ * choices go through `normalizeChoices` (all-blank → open-ended) and
+ * multi_select is only honored alongside surviving choices. Returns an empty
+ * array when nothing usable remains — the caller treats that as "not a
+ * batch" instead of rendering an unanswerable form.
  */
 export function normalizeQuestions(questions: unknown): ClarifyQuestion[] {
   if (!Array.isArray(questions)) {
@@ -119,169 +109,119 @@ export function normalizeQuestions(questions: unknown): ClarifyQuestion[] {
   return normalized
 }
 
-/**
- * The per-question answers the gateway has already locked, as replayed on a
- * reconnect (`answers` on the resumed `clarify.request` payload —
- * `_pending_clarify_request_payload`). Non-string values are dropped rather
- * than staged as `[object Object]`.
- */
-export function readLockedAnswers(answers: unknown): Record<string, string> | undefined {
-  if (typeof answers !== 'object' || answers === null) {
-    return undefined
+// Pending clarify requests keyed by the runtime session id that raised them.
+// Storing per-session (instead of one shared slot) lets a *background* session
+// park its clarify request while the user is looking at a different chat, then
+// resolve it once they switch over — without a second concurrent clarify
+// clobbering the first. A request with no session id lands under the empty key.
+const keyFor = (sessionId: string | null | undefined): string => sessionId ?? ''
+
+export const $clarifyRequests = atom<Record<string, ClarifyRequest>>({})
+
+// The clarify request for the currently-viewed session. The inline ClarifyTool
+// only ever mounts inside the active session's transcript, so it reads this
+// focus-scoped view rather than reaching into the whole map.
+export const $clarifyRequest = computed(
+  [$clarifyRequests, $activeSessionId],
+  (requests, activeId) => requests[keyFor(activeId)] ?? null
+)
+
+/** The clarify request for one specific session — the tile counterpart of the
+ *  active-session `$clarifyRequest` view (same map, fixed key). */
+export const sessionClarifyRequest = (sessionId: string | null) =>
+  computed($clarifyRequests, requests => requests[keyFor(sessionId)] ?? null)
+
+export function setClarifyRequest(request: ClarifyRequest): void {
+  $clarifyRequests.set({ ...$clarifyRequests.get(), [keyFor(request.sessionId)]: request })
+}
+
+export function clearClarifyRequest(requestId?: string, sessionId?: string | null): void {
+  const requests = $clarifyRequests.get()
+
+  // Targeted clear when the caller knows the session (the common path from the
+  // inline ClarifyTool answering its own request).
+  if (sessionId !== undefined) {
+    const key = keyFor(sessionId)
+    const current = requests[key]
+
+    if (!current || (requestId && current.requestId !== requestId)) {
+      return
+    }
+
+    const next = { ...requests }
+    delete next[key]
+    $clarifyRequests.set(next)
+
+    return
   }
 
-  const locked = Object.fromEntries(
-    Object.entries(answers as Record<string, unknown>).filter(
-      (pair): pair is [string, string] => typeof pair[1] === 'string'
-    )
-  )
+  // Fallback with no session hint: drop every entry matching the request id
+  // (or clear all when none is given).
+  const next: Record<string, ClarifyRequest> = {}
+  let changed = false
 
-  return Object.keys(locked).length > 0 ? locked : undefined
-}
-
-/**
- * Say so when a payload HAD choices and none survived.
- *
- * Silently degrading to a free-text box looks identical to a question the model
- * never offered options for, so a malformed tool call would be invisible.
- */
-export function warnDroppedChoices(source: 'gateway' | 'tool_args', question: string, rawChoices: unknown): void {
-  console.warn('[clarify] choices dropped after normalization', { source, question, rawChoices })
-}
-
-/** Normalize, warning when a non-empty payload normalized away to nothing. */
-export function readChoices(source: 'gateway' | 'tool_args', question: string, rawChoices: unknown): string[] | null {
-  const choices = normalizeChoices(rawChoices)
-
-  if (rawChoices != null && choices.length === 0 && question) {
-    warnDroppedChoices(source, question, rawChoices)
+  for (const [key, value] of Object.entries(requests)) {
+    if (requestId && value.requestId !== requestId) {
+      next[key] = value
+    } else {
+      changed = true
+    }
   }
 
-  return choices.length > 0 ? choices : null
+  if (changed) {
+    $clarifyRequests.set(next)
+  }
 }
 
+/** Whether `sessionId` has a clarify parked on it right now (imperative read —
+ *  the composer checks this on Enter, not on every render). */
+export const hasClarifyRequest = (sessionId: string | null | undefined): boolean =>
+  Boolean($clarifyRequests.get()[keyFor(sessionId)])
+
 /**
- * The pending request this tool row is asking about — or null when the row and
- * the request are about different questions.
+ * Answer `sessionId`'s pending clarify with an empty answer (a skip) and drop it
+ * locally, resolving to whether there was one to skip.
  *
- * A transcript can hold an OLD clarify row whose `tool.complete` never landed
- * (a disconnect ate it) while a NEW clarify is parked on the session. Both rows
- * would otherwise read the same store entry and offer to answer it. The question
- * is the only field the row and the request share, so it is the tie-break — and
- * a row with no question of its own (nothing but `tool.start`'s id ever reached
- * it) yields to the request rather than rendering blank.
+ * The composer uses this when the user types a real message instead of picking
+ * an option: a clarify blocks the agent inside its tool batch, so leaving it
+ * unanswered would park the follow-up until the server-side clarify timeout
+ * (default 5 min) — the message looks sent and nothing happens. Skipping lets
+ * the tool return and the turn carry on with the user's actual words.
+ *
+ * An empty answer is the same thing the card's own Skip button sends; answering
+ * a request that already expired is a no-op, so racing the timeout is harmless.
  */
-export function matchClarifyRequest<T extends { question: string }>(
-  request: null | T | undefined,
-  rowQuestion: string
-): null | T {
+function rekeyClarifyRequests(fromKey: string, toKey: string): void {
+  const requests = $clarifyRequests.get()
+  const current = requests[keyFor(fromKey)]
+
+  if (!current) {
+    return
+  }
+
+  const next = { ...requests }
+  delete next[keyFor(fromKey)]
+  next[keyFor(toKey)] = { ...current, sessionId: toKey }
+  $clarifyRequests.set(next)
+}
+
+addSessionKeyHooks({
+  drop: key => clearClarifyRequest(undefined, key),
+  rekey: rekeyClarifyRequests
+})
+
+export async function skipClarifyRequest(sessionId: string | null | undefined): Promise<boolean> {
+  const request = $clarifyRequests.get()[keyFor(sessionId)]
+
   if (!request) {
-    return null
-  }
-
-  return rowQuestion && request.question && rowQuestion !== request.question ? null : request
-}
-
-/**
- * Put back the clarify a resumed session is still parked on.
- *
- * `clarify.request` is emitted ONCE, with no replay buffer, and a parked turn is
- * not in the committed transcript — so a client that cold-opens (or reloads
- * into) a waiting session has neither the question nor the `request_id`, and the
- * agent stays in the backend's `_block` until its timeout. The gateway now
- * describes the parked prompt on `session.resume`
- * (`_session_pending_prompt`); replaying it through THE SAME reducer case the
- * live event uses is what rebuilds both halves — the store entry the panel
- * answers from, and the synthetic tool row it mounts on.
- *
- * Idempotent by construction: the store entry is a replace, and the reducer
- * upserts its row (correlating on `question`), so a session that still holds a
- * live clarify from before the reconnect keeps ONE card.
- */
-export function applyResumedClarify(key: string, resumed: Pick<SessionResumeResponse, 'pending_prompt'>): void {
-  const pending = resumed.pending_prompt
-
-  if (!pending || pending.event !== 'clarify.request') {
-    return
-  }
-
-  const payload = pending.payload ?? {}
-  const requestId = coerceText(payload.request_id)
-  const questions = normalizeQuestions(payload.questions)
-  const question = coerceText(payload.question)
-
-  if (!requestId || (!question && questions.length === 0)) {
-    return
-  }
-
-  setSessionClarify(
-    key,
-    questions.length > 0
-      ? {
-          requestId,
-          // A batch carries no top-level question; the card reads `questions`.
-          question: '',
-          choices: null,
-          questions,
-          // The half a batch resume has that a live batch event does not: the
-          // answers already locked server-side, so the card comes back with its
-          // ✓s instead of presenting settled questions as unanswered.
-          lockedAnswers: readLockedAnswers(payload.answers)
-        }
-      : {
-          requestId,
-          question,
-          choices: readChoices('gateway', question, payload.choices),
-          ...(payload.multi_select === true ? { multiSelect: true } : {})
-        }
-  )
-  updateSession(key, state =>
-    reduceSessionState(state, { type: 'clarify.request' } as GatewayEvent, payload as Record<string, unknown>)
-  )
-}
-
-/** Is a clarify parked on this session right now? Imperative, for the composer. */
-export const hasClarifyRequest = (key: null | string | undefined): boolean =>
-  Boolean(key && sessionClarifyRequest(key).get())
-
-/**
- * Answer the pending clarify with the empty string — the same thing the card's
- * own Skip button sends, and what the user typing a real message into the
- * composer means: "none of these".
- *
- * The request is cleared FIRST so a second Enter can't answer twice, and the
- * failure never rejects: this is fire-and-forget beside the real send, and a
- * failed skip must not swallow the message the user was actually sending.
- * `true` when there was something to skip.
- *
- * But it must not be SILENT either (MJXHRM-418). "The tool times out on its
- * own" is not a guarantee: `_clarify_timeout_seconds()` returns None for a
- * configured timeout <= 0, and `_block(timeout=None)` then waits forever,
- * released only by a real answer or `session.interrupt`. With the card already
- * torn down there is nothing left that could ever answer it — the same dead end
- * the optimistic responders had, minus the five-minute floor. So a skip that
- * did not land puts the question BACK and says so, and the next Enter retries it.
- */
-export async function skipClarifyRequest(key: null | string | undefined): Promise<boolean> {
-  const request = key ? sessionClarifyRequest(key).get() : null
-
-  if (!key || !request) {
     return false
   }
 
-  clearSessionClarify(key)
+  // Clear first: the answer is already decided, and an in-flight RPC must not
+  // leave a live card the user can answer a second time.
+  clearClarifyRequest(request.requestId, request.sessionId)
 
-  try {
-    await requestGateway('clarify.respond', { request_id: request.requestId, answer: '' })
-  } catch (error) {
-    // Only if nothing newer has taken the slot in the meantime — restoring over
-    // a fresh question would make THAT one unanswerable.
-    if (!sessionClarifyRequest(key).get()) {
-      setSessionClarify(key, request)
-    }
-
-    notifyError(error, 'The question could not be skipped — answer it to unblock the agent')
-  }
+  respondToServerRequest(request.requestId, { answer: '' })
 
   return true
 }

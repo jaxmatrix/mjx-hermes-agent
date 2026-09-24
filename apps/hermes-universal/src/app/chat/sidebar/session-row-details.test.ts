@@ -1,64 +1,78 @@
-/**
- * MJXHRM-452 — the extra lines a non-compact sidebar row shows.
- *
- * Pure and deterministic on purpose: this row re-renders constantly, so anything
- * reading a store or formatting a relative time would either churn or lie.
- * Everything below comes off the row itself.
- */
-
 import { describe, expect, it } from 'vitest'
 
 import type { SessionInfo } from '@/types/hermes'
 
-import { sessionRowDetails } from './session-row-details'
+import { sessionRowDetails, type SessionRowFormatters } from './session-row-details'
 
-const fmt = {
-  messageCount: (count: number) => `${count} ${count === 1 ? 'message' : 'messages'}`,
-  toolCallCount: (count: number) => `${count} ${count === 1 ? 'tool call' : 'tool calls'}`
+const en: SessionRowFormatters = {
+  messageCount: count => `${count} ${count === 1 ? 'message' : 'messages'}`,
+  toolCallCount: count => `${count} ${count === 1 ? 'tool call' : 'tool calls'}`
 }
 
-const session = (patch: Partial<SessionInfo> = {}): SessionInfo =>
-  ({
-    git_branch: null,
-    message_count: 0,
-    model: null,
-    preview: null,
-    title: 'Titled',
-    tool_call_count: 0,
-    ...patch
-  }) as SessionInfo
-
-describe('sessionRowDetails metadata', () => {
-  it('joins branch, model and non-zero counts in that order', () => {
-    expect(
-      sessionRowDetails(
-        session({ git_branch: 'feature/menu', message_count: 3, model: 'anthropic/claude-x', tool_call_count: 1 }),
-        fmt
-      ).metadata
-    ).toBe('feature/menu · claude-x · 3 messages · 1 tool call')
-  })
-
-  it('drops the provider prefix from the model', () => {
-    // Every row of a profile carries the same prefix — it is pure noise on a
-    // row this narrow.
-    expect(sessionRowDetails(session({ model: 'openai/gpt-5-codex' }), fmt).metadata).toBe('gpt-5-codex')
-  })
-
-  it('omits zero counts rather than printing "0 messages"', () => {
-    // Seeded to disagree with a naive join: both counts are present as fields.
-    expect(sessionRowDetails(session({ message_count: 0, tool_call_count: 0 }), fmt).metadata).toBe('')
-  })
+const session = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
+  ended_at: null,
+  id: 's1',
+  input_tokens: 0,
+  is_active: false,
+  last_active: 1,
+  message_count: 26,
+  model: 'google/gemini-3.1-pro',
+  output_tokens: 0,
+  preview: '  Explore\nGmail-like density tiers for session rows.  ',
+  source: 'desktop',
+  started_at: 1,
+  title: 'Session density exploration',
+  tool_call_count: 8,
+  ...overrides
 })
 
-describe('sessionRowDetails preview', () => {
-  it('collapses whitespace so a multi-line prompt stays one line', () => {
-    expect(sessionRowDetails(session({ preview: '  fix   the\n  parser  ' }), fmt).preview).toBe('fix the parser')
+describe('session row details', () => {
+  it('formats deterministic metadata without ambiguous call wording', () => {
+    expect(sessionRowDetails(session({ git_branch: 'feature/menu' }), en)).toEqual({
+      metadata: 'feature/menu · gemini-3.1-pro · 26 messages · 8 tool calls',
+      preview: 'Explore Gmail-like density tiers for session rows.'
+    })
   })
 
-  it('withholds the preview when the row has no title of its own', () => {
-    // A titleless row ALREADY renders its preview as the title, so repeating it
-    // underneath prints the same sentence twice.
-    expect(sessionRowDetails(session({ preview: 'fix the parser', title: null }), fmt).preview).toBeNull()
-    expect(sessionRowDetails(session({ preview: 'fix the parser', title: '   ' }), fmt).preview).toBeNull()
+  it('uses singular labels and omits unavailable fields', () => {
+    expect(
+      sessionRowDetails(
+        session({
+          git_branch: null,
+          message_count: 1,
+          model: null,
+          preview: null,
+          title: 'Manual title',
+          tool_call_count: 1
+        }),
+        en
+      )
+    ).toEqual({ metadata: '1 message · 1 tool call', preview: null })
+  })
+
+  it('omits zero counts from metadata so the sidebar stays clean', () => {
+    expect(
+      sessionRowDetails(session({ git_branch: null, message_count: 0, model: null, tool_call_count: 0 }), en)
+    ).toEqual({ metadata: '', preview: 'Explore Gmail-like density tiers for session rows.' })
+  })
+
+  it('normalizes whitespace-only title, branch, and preview values', () => {
+    expect(
+      sessionRowDetails(
+        session({
+          git_branch: '   ',
+          preview: '  ',
+          title: '   '
+        }),
+        en
+      )
+    ).toEqual({ metadata: 'gemini-3.1-pro · 26 messages · 8 tool calls', preview: null })
+  })
+
+  it('omits the preview when it already supplies the displayed title', () => {
+    expect(sessionRowDetails(session({ title: null }), en)).toEqual({
+      metadata: 'gemini-3.1-pro · 26 messages · 8 tool calls',
+      preview: null
+    })
   })
 })

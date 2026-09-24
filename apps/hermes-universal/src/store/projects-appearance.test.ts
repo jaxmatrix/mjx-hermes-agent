@@ -1,19 +1,29 @@
+import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as GatewayModule from '@/store/gateway'
-
-const { requestGateway } = vi.hoisted(() => ({ requestGateway: vi.fn() }))
-
-// Partial mock: store/connection subscribes to `$gatewayState` at import time,
-// so the real module has to stay underneath.
-vi.mock('@/store/gateway', async importOriginal => ({
-  ...(await importOriginal<typeof GatewayModule>()),
-  requestGateway
-}))
-
 import type { SidebarProjectTree } from '@/app/chat/sidebar/projects/model'
+import { $activeGatewayProfile } from '@/store/profile'
 
 import { $projects, $projectsRpcAvailable, $projectTree, setProjectAppearance } from './projects'
+
+const { gateway, request } = vi.hoisted(() => {
+  const request = vi.fn()
+  const gateway = { connectionState: 'open' as const, request }
+
+  return { gateway, request }
+})
+
+vi.mock('@/store/gateway', () => ({
+  $gateway: atom(null),
+  activeGateway: vi.fn(() => gateway),
+  ensureActiveGatewayOpen: vi.fn(async () => gateway)
+}))
+
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  setApiRequestProfile: vi.fn()
+}))
 
 const node = (patch: Partial<SidebarProjectTree> = {}): SidebarProjectTree => ({
   id: 'p_app',
@@ -25,11 +35,12 @@ const node = (patch: Partial<SidebarProjectTree> = {}): SidebarProjectTree => ({
 })
 
 beforeEach(() => {
-  requestGateway.mockReset()
-  requestGateway.mockResolvedValue({} as never)
+  request.mockReset()
+  request.mockResolvedValue({} as never)
   $projects.set([])
   $projectTree.set([])
   $projectsRpcAvailable.set(true)
+  $activeGatewayProfile.set('default')
 })
 
 describe('setProjectAppearance', () => {
@@ -38,7 +49,7 @@ describe('setProjectAppearance', () => {
 
     await expect(setProjectAppearance(node({ color: '#111111' }), { color: '#4a9eff' })).resolves.toBe(false)
 
-    expect(requestGateway).toHaveBeenCalledWith('projects.update', { id: 'p_app', color: '#4a9eff' })
+    expect(request).toHaveBeenCalledWith('projects.update', expect.objectContaining({ id: 'p_app', color: '#4a9eff' }))
     expect($projectTree.get()[0].color).toBe('#4a9eff')
   })
 
@@ -47,30 +58,30 @@ describe('setProjectAppearance', () => {
 
     await setProjectAppearance(node({ color: '#4a9eff' }), { color: null })
 
-    expect(requestGateway).toHaveBeenCalledWith('projects.update', { id: 'p_app', color: '' })
+    expect(request).toHaveBeenCalledWith('projects.update', expect.objectContaining({ id: 'p_app', color: '' }))
   })
 
   // An inherited (auto) project is a git repo root with no projects.db row, so
   // there is no id to PATCH — theming it has to create the row.
   it('materializes an inherited project into a real one', async () => {
-    requestGateway.mockResolvedValue({
+    request.mockResolvedValue({
       project: { id: 'p_new', name: 'App', color: '#4a9eff', folders: [] }
     } as never)
 
     await expect(setProjectAppearance(node({ id: '/www/app', isAuto: true }), { color: '#4a9eff' })).resolves.toBe(true)
 
-    expect(requestGateway).toHaveBeenCalledWith(
+    expect(request).toHaveBeenCalledWith(
       'projects.create',
       expect.objectContaining({ name: 'App', folders: ['/www/app'], primary_path: '/www/app', color: '#4a9eff' })
     )
   })
 
   it('carries the already-set field so setting one does not wipe the other', async () => {
-    requestGateway.mockResolvedValue({ project: null } as never)
+    request.mockResolvedValue({ project: null } as never)
 
     await setProjectAppearance(node({ id: '/www/app', color: '#4a9eff', isAuto: true }), { icon: 'rocket' })
 
-    expect(requestGateway).toHaveBeenCalledWith(
+    expect(request).toHaveBeenCalledWith(
       'projects.create',
       expect.objectContaining({ color: '#4a9eff', icon: 'rocket' })
     )
@@ -81,6 +92,6 @@ describe('setProjectAppearance', () => {
       false
     )
 
-    expect(requestGateway).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
   })
 })

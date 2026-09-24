@@ -13,28 +13,43 @@ import {
 import {
   arrayMove,
   horizontalListSortingStrategy,
-  rectSortingStrategy,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { LOCAL_CONNECTION_ID } from '@hermes/shared'
+import { useStore } from '@nanostores/react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
 
+import type { ProfileScope } from '@/api/client'
 import { CodeEditor } from '@/components/chat/code-editor'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { ColorSwatches } from '@/components/ui/color-swatches'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Tip, Tooltip, TooltipContent, TooltipScope, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  dropdownMenuSectionLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { ProfileGlyph } from '@/components/ui/profile-glyph'
+import { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import type { DesktopRegistryConnection } from '@/global'
 import { getProfileSoul, updateProfileSoul } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { sortConnectionsForDisplay } from '@/lib/connection-display'
 import { triggerHaptic } from '@/lib/haptics'
-import { createLongPress } from '@/lib/long-press'
-import { IS_MOBILE } from '@/lib/platform'
+import { Loader2 } from '@/lib/icons'
 import { PROFILE_SWATCHES, profileColorSoft, resolveProfileColor } from '@/lib/profile-color'
 import {
   REORDER_DRAG_TRANSITION_CSS,
@@ -42,69 +57,65 @@ import {
   reorderCommitHaptic,
   reorderStepHaptic
 } from '@/lib/reorder'
-import { TAP_SLOP_PX } from '@/lib/touch'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/store/atom'
+import {
+  $activeConnectionId,
+  $connectionsRegistry,
+  $hasMultipleConnections,
+  selectConnection
+} from '@/store/connections'
+import { $fleetRoster, refreshFleetRoster } from '@/store/fleet-roster'
 import { notify, notifyError } from '@/store/notifications'
 import {
   $activeGatewayProfile,
   $profileColors,
   $profileCreateRequest,
   $profileOrder,
+  $profiles,
   $profileScope,
   ALL_PROFILES,
   normalizeProfileKey,
   profileLabel,
-  refreshProfiles,
+  refreshActiveProfile,
   selectProfile,
   setProfileColor,
   setProfileOrder,
   setShowAllProfiles,
   sortByProfileOrder
 } from '@/store/profile'
-import { $profiles } from '@/store/profiles'
+import {
+  $profileRemoteOverrides,
+  openRemoteOverrideDialog,
+  refreshProfileRemoteOverrides
+} from '@/store/profile-remote-override'
+import { runExportProfileFlow, runImportProfileFlow } from '@/store/profile-share'
 import type { ProfileInfo } from '@/types/hermes'
 
 import { CreateProfileDialog } from '../../profiles/create-profile-dialog'
 import { DeleteProfileDialog } from '../../profiles/delete-profile-dialog'
 import { RenameProfileDialog } from '../../profiles/rename-profile-dialog'
-import { PROFILES_ROUTE } from '../../routes'
+import { PROFILES_ROUTE, SETTINGS_ROUTE } from '../../routes'
+
+import { ConnectionGlyph } from './connection-glyph'
+import { buildRestGroups, countRestAgents, type FleetAgent, type FleetGroup, fleetRouteKey } from './fleet-rail'
+import { ProfileLaunchContextMenu, ProfileLaunchMenuSection } from './profile-launch-menu'
+import { ProfileRemoteOverrideDialog } from './profile-remote-override-dialog'
+import { useFleetRoster } from './use-fleet-roster'
+import { useProfilePrewarm } from './use-profile-prewarm'
+import { useProfileRailRefreshOnActive } from './use-profile-rail-refresh-on-active'
 
 const RAIL_GAP = 4 // px — matches gap-1 between squares.
 
-// One class on every control in the rail — the pills, the squares, the "+" and
-// the "⌄" — so the strip has one corner and one size. `styles.css` owns both;
-// read the comment on the `profile-rail-control` utility there for why a class
-// and not the `data-slot` / `data-variant` the app's other touch rules key on
-// (short version: the squares' nested Radix `asChild` triggers overwrite
-// `data-slot`, so those rules never reached them). Anything new added to the
-// rail wants this too.
-const RAIL_CONTROL = 'profile-rail-control'
-
-// Past this many named profiles the squares stop scaling (tiny drag targets,
-// endless horizontal scroll), so the tail spills into the "⌄" overflow popover
-// instead. Drag-reorder, long-press-recolor and the context menu stay on the
-// inline squares — the rail never degrades into a text control.
-//
-// Higher on a phone: the rail is a footer inside a 19rem pane on the desktop,
-// but the full width of the screen at the top of the phone's sidebar surface,
-// so it has the room for most people's whole profile set without a popover.
-export const RAIL_VISIBLE_LIMIT = IS_MOBILE ? 7 : 4
-
-// The letter that stands in for a profile inside its colored square.
-function profileInitial(name: string): string {
-  return name.replace(/[^a-z0-9]/gi, '').charAt(0) || '?'
-}
+// Past this many profiles the strip of colored squares stops scaling (tiny
+// drag targets, endless horizontal scroll), so the rail collapses to a compact
+// menu. Drag-reorder and long-press-recolor live only on the squares path.
+const PROFILE_DROPDOWN_THRESHOLD = 13
 
 // Neighbors reflow on RAIL_TRANSITION; the dragged square glides between
 // snapped cells on the snappier DRAG_TRANSITION. Both come from the SHARED
 // reorder primitive (lib/reorder.ts) so every reorder strip feels identical.
 const RAIL_TRANSITION = REORDER_RAIL_TRANSITION
 const DRAG_TRANSITION = REORDER_DRAG_TRANSITION_CSS
-
-// Sensor options, hoisted out of render — see the call site below (MJXHRM-383).
-const railPointerSensorOptions = { activationConstraint: { distance: TAP_SLOP_PX } }
-const railKeyboardSensorOptions = { coordinateGetter: sortableKeyboardCoordinates }
 
 // The rail is a single horizontal strip of fixed cells. Pin drags to the x-axis
 // (no cross-axis scrollbar), snap to whole cells so a square steps slot-to-slot
@@ -123,33 +134,19 @@ const stepThroughCells: Modifier = ({ containerNodeRect, draggingNodeRect, trans
   return { ...transform, x: Math.min(maxX, Math.max(minX, snapped)), y: 0 }
 }
 
-// Wheel deltas arrive in three units. Chromium (desktop's only target) always
-// sends pixels, so desktop adds deltaY straight to scrollLeft; WebKitGTK — which
-// renders universal's desktop build — can report DOM_DELTA_LINE, where a notch is
-// ±1 and the untranslated add reads as a dead rail. Normalize before scrolling.
-function wheelStep(event: WheelEvent, el: HTMLElement): number {
-  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-    return event.deltaY * 16
-  }
-
-  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-    return event.deltaY * el.clientWidth
-  }
-
-  return event.deltaY
-}
-
 // Arc-Spaces-style profile rail at the sidebar foot: a default↔all toggle pinned
 // left, the colored named profiles scrolling between, and Manage pinned right.
-// The active profile pops in its own color — the "where am I" cue. Single-
-// profile users see the "+" (create their first profile) and the Manage
-// overflow (edit the default profile's SOUL.md); the colored named squares
-// and the default↔all toggle only appear once a second profile exists.
+// The active profile pops in its own color — the "where am I" cue.
 //
-// Ported from desktop `profile-switcher.tsx` (MJX-108). Desktop's hover-intent
-// `useProfilePrewarm` is deliberately dropped: it warms Electron's per-profile
-// backend *process* pool, and universal re-scopes REST against one gateway, so
-// there is nothing to spawn ahead of the click.
+// With one registered gateway this is the whole story. With several, the rail
+// becomes the FLEET rail: the active gateway's profiles stay exactly as they
+// are, and every other registered gateway follows on the same strip as an
+// at-rest group — a hairline, that gateway's kind glyph, its default home
+// square and its named squares, dimmed. Clicking an at-rest square performs
+// the same re-home the statusbar switcher does, landing on that exact
+// (gateway, profile); the workspace still lives on one gateway at a time, only
+// the picker spans the fleet. Groups keep registry order regardless of which
+// one is active, so a square never moves under the pointer that clicked it.
 export function ProfileRail() {
   const { t } = useI18n()
   const p = t.profiles
@@ -158,18 +155,93 @@ export function ProfileRail() {
   const gatewayProfile = useStore($activeGatewayProfile)
   const order = useStore($profileOrder)
   const colors = useStore($profileColors)
+  const remoteOverrides = useStore($profileRemoteOverrides)
+  const multipleConnections = useStore($hasMultipleConnections)
+  const registry = useStore($connectionsRegistry)
+  const activeConnectionId = useStore($activeConnectionId)
+  const roster = useStore($fleetRoster)
   const navigate = useNavigate()
-
   const [createOpen, setCreateOpen] = useState(false)
   const [pendingRename, setPendingRename] = useState<null | ProfileInfo>(null)
   const [pendingDelete, setPendingDelete] = useState<null | ProfileInfo>(null)
   const [pendingSoul, setPendingSoul] = useState<null | string>(null)
-  const [overflowOpen, setOverflowOpen] = useState(false)
-  const [dragging, setDragging] = useState(false)
-  // A drag that starts in the overflow grid has to travel down out of the
-  // popover, so it can't wear the rail's axis lock.
-  const [dragFromOverflow, setDragFromOverflow] = useState(false)
+  // Fleet-side counterparts: the at-rest square being acted on. Its route is
+  // the dialog's scope, so the edit executes on the owning gateway.
+  const [pendingRestRename, setPendingRestRename] = useState<null | FleetAgent>(null)
+  const [pendingRestDelete, setPendingRestDelete] = useState<null | FleetAgent>(null)
+  const [pendingRestSoul, setPendingRestSoul] = useState<null | FleetAgent>(null)
+  // Route key of the at-rest square whose switch is dialing (spinner on that
+  // square, not in the statusbar — the previous source stays painted).
+  const [pendingRoute, setPendingRoute] = useState<null | string>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  useFleetRoster(multipleConnections)
+
+  const connections = registry?.connections
+
+  const restGroups = useMemo(
+    () =>
+      multipleConnections ? buildRestGroups({ activeConnectionId, connections: connections ?? [], order, roster }) : [],
+    [activeConnectionId, connections, multipleConnections, order, roster]
+  )
+
+  // Fleet mode needs something to show beside the active gateway. Two
+  // registrations of one backend collapse to a single roster source, which
+  // keeps the rail on its single-gateway path.
+  const fleet = restGroups.length > 0
+
+  // Registry order for the whole strip, active group included — the active
+  // gateway keeps its slot instead of jumping to the front on a switch.
+  const activeConnection = connections?.find(connection => connection.id === activeConnectionId) ?? null
+  // Named picks on This device retain the legacy profile door, which resolves
+  // per-profile remote overrides. At-rest fleet actions keep their exact source.
+  const namedProfileConnectionId = activeConnectionId === LOCAL_CONNECTION_ID ? null : activeConnectionId
+
+  const fleetSequence = useMemo(() => {
+    const byId = new Map(restGroups.map(group => [group.connectionId, group]))
+    const ordered = sortConnectionsForDisplay(connections ?? [])
+    const sequence: Array<{ kind: 'active' } | { group: FleetGroup; kind: 'rest' }> = []
+    let activePlaced = false
+
+    for (const connection of ordered) {
+      if (connection.id === activeConnectionId) {
+        sequence.push({ kind: 'active' })
+        activePlaced = true
+      } else {
+        const group = byId.get(connection.id)
+
+        if (group) {
+          sequence.push({ group, kind: 'rest' })
+        }
+      }
+    }
+
+    // Legacy primary path publishes no connection id: the active gateway is
+    // unknown to the registry, so it leads the strip.
+    if (!activePlaced) {
+      sequence.unshift({ kind: 'active' })
+    }
+
+    return sequence
+  }, [activeConnectionId, connections, restGroups])
+
+  // Too many profiles for the square strip → collapse to the select. Declared
+  // ahead of the wheel effect, which re-binds when the strip mounts/unmounts.
+  // The threshold counts the whole fleet: fourteen squares are fourteen
+  // squares wherever they live.
+  const condensed = profiles.length + countRestAgents(restGroups) > PROFILE_DROPDOWN_THRESHOLD
+
+  const switchToRest = (agent: FleetAgent) => {
+    const key = fleetRouteKey(agent.connectionId, agent.profile)
+    triggerHaptic('selection')
+    setPendingRoute(key)
+
+    void selectConnection(agent.connectionId, { profile: agent.profile })
+      .catch((error: unknown) => notifyError(error, p.switchConnectionFailed(agent.connectionLabel)))
+      .finally(() => setPendingRoute(current => (current === key ? null : current)))
+  }
+
+  const restScope = (agent: FleetAgent): ProfileScope => ({ connectionId: agent.connectionId, profile: agent.profile })
 
   // A plain mouse wheel only emits deltaY; map it to horizontal scroll so the
   // rail is navigable without a trackpad. Trackpad x-scroll (deltaX) passes
@@ -187,14 +259,15 @@ export function ProfileRail() {
         return
       }
 
-      el.scrollLeft += wheelStep(event, el)
+      el.scrollLeft += event.deltaY
       event.preventDefault()
     }
 
     el.addEventListener('wheel', onWheel, { passive: false })
 
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+    // `condensed` swaps the strip out for the dropdown (ref goes null/back).
+  }, [condensed])
 
   const isAll = scope === ALL_PROFILES
   const activeKey = normalizeProfileKey(gatewayProfile)
@@ -208,29 +281,10 @@ export function ProfileRail() {
 
   const multiProfile = profiles.length > 1
 
-  // Rail order decides who stays inline; the tail spills into the overflow
-  // popover. The active profile is the one exception — it is pulled back out of
-  // the spill onto the rail (and out of the menu) so "where am I" is always
-  // visible, landing in its own slot just left of the "⌄".
-  const overflowing = named.length > RAIL_VISIBLE_LIMIT
-  const inline = overflowing ? named.slice(0, RAIL_VISIBLE_LIMIT) : named
-  const spilled = overflowing ? named.slice(RAIL_VISIBLE_LIMIT) : []
-  const hoisted = spilled.find(entry => !isAll && normalizeProfileKey(entry.name) === activeKey) ?? null
-  const hidden = hoisted ? spilled.filter(entry => entry !== hoisted) : spilled
-
   // distance constraint: a small drag reorders, a tap still selects the profile.
-  // The rail owns these rather than sharing the sidebar's `dndSensors`: the
-  // activation distance differs, and the sessions list adds vertical autoScroll
-  // this horizontal strip must not inherit.
-  //
-  // The option objects are module-level for the reason spelled out in
-  // `reorderable-list.tsx` (MJXHRM-383): fresh literals here defeat `useSensor`'s
-  // memo and hand every `useSortable` consumer a new `onPointerDown` per render.
-  // No rail chip is memoized today, so this is currently only wasted work rather
-  // than a broken bail-out — but it is the same latent trap, one line away.
   const sensors = useSensors(
-    useSensor(PointerSensor, railPointerSensorOptions),
-    useSensor(KeyboardSensor, railKeyboardSensorOptions)
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
   // Tick a haptic each time the drag crosses into a new cell, and a satisfying
@@ -239,14 +293,6 @@ export function ProfileRail() {
 
   const handleDragStart = ({ active }: DragStartEvent) => {
     lastOverRef.current = String(active.id)
-    setDragging(true)
-    setDragFromOverflow(hidden.some(entry => entry.name === String(active.id)))
-  }
-
-  const handleDragCancel = () => {
-    lastOverRef.current = null
-    setDragging(false)
-    setDragFromOverflow(false)
   }
 
   const handleDragOver = ({ over }: DragOverEvent) => {
@@ -260,8 +306,6 @@ export function ProfileRail() {
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     lastOverRef.current = null
-    setDragging(false)
-    setDragFromOverflow(false)
 
     if (!over || active.id === over.id) {
       return
@@ -277,18 +321,30 @@ export function ProfileRail() {
     }
   }
 
-  // Re-pull the profile list on mount so a profile created elsewhere shows up;
-  // cheap and best-effort. (Desktop probes /api/profiles/active for the running
-  // backend's profile too; universal's `$activeProfile` IS that source of truth.)
+  // Re-pull the running profile + list on mount, and again whenever the window
+  // regains focus/visibility -- a profile created, deleted, or renamed by
+  // another surface (Manage Profiles, another window, the CLI) leaves this
+  // rail's cached $profiles stale until something re-fetches it. See
+  // use-profile-rail-refresh-on-active.ts for the extracted (and tested)
+  // wiring.
+  useProfileRailRefreshOnActive()
+
+  // Which profiles carry a per-profile remote override (connection.json
+  // profiles.<name>) — refreshed whenever the profile list changes so the
+  // rail's "remote" badge tracks create/rename/override edits.
+  const profileNames = profiles.map(profile => profile.name)
+  const profileNamesKey = profileNames.join('\u0000')
+
   useEffect(() => {
-    void refreshProfiles().catch(() => undefined)
-  }, [])
+    void refreshProfileRemoteOverrides(profileNamesKey ? profileNamesKey.split('\u0000') : [])
+  }, [profileNamesKey])
 
   // Open the create dialog when the `profile.create` hotkey fires (the dialog
   // state lives here, so the global keybind bumps a request atom we watch).
   const createRequest = useStore($profileCreateRequest)
   const lastCreateRef = useRef(createRequest)
 
+   
   useEffect(() => {
     if (createRequest === lastCreateRef.current) {
       return
@@ -298,111 +354,184 @@ export function ProfileRail() {
     setCreateOpen(true)
   }, [createRequest])
 
-  const reloadProfiles = async () => void (await refreshProfiles().catch(() => undefined))
-
-  // One square, three homes: the inline strip, the hoisted active slot, and the
-  // overflow grid. Sharing the wiring keeps the picker's squares gesture-for-
-  // gesture identical to the rail's, and keeps every dialog owned by the rail.
-  const renderSquare = (entry: ProfileInfo, opts?: { hoisted?: boolean; overflow?: boolean }) => (
-    <ProfileSquare
-      active={opts?.hoisted === true || (!isAll && normalizeProfileKey(entry.name) === activeKey)}
-      color={resolveProfileColor(entry.name, colors)}
-      freeDrag={opts?.overflow}
-      key={entry.name}
-      label={profileLabel(entry)}
-      onDelete={() => setPendingDelete(entry)}
-      onEditSoul={() => setPendingSoul(entry.name)}
-      onRecolor={color => setProfileColor(entry.name, color)}
-      onRename={() => setPendingRename(entry)}
-      onSelect={() => {
-        selectProfile(entry.name)
-
-        // Picking from the grid dismisses it; the rail has nothing to dismiss.
-        if (opts?.overflow) {
-          setOverflowOpen(false)
-          triggerHaptic('selection')
-        }
-      }}
-      sortDisabled={opts?.hoisted}
-    />
+  // The sortable strip of the active gateway's named profiles (unchanged
+  // from the single-gateway rail; fleet mode only decides where it sits).
+  const activeStrip = (
+    <>
+      {multiProfile && (
+        <DndContext
+          collisionDetection={closestCenter}
+          modifiers={[stepThroughCells]}
+          onDragEnd={handleDragEnd}
+          onDragOver={handleDragOver}
+          onDragStart={handleDragStart}
+          sensors={sensors}
+        >
+          <SortableContext items={named.map(profile => profile.name)} strategy={horizontalListSortingStrategy}>
+            {/* relative → the strip is the dragged square's offsetParent, so the
+              clamp modifier bounds drags to the occupied cells (not the +). */}
+            <div className="relative flex items-center gap-1">
+              {named.map(profile => (
+                <ProfileSquare
+                  active={!isAll && normalizeProfileKey(profile.name) === activeKey}
+                  color={resolveProfileColor(profile.name, colors)}
+                  connectionId={namedProfileConnectionId}
+                  key={profile.name}
+                  label={profileLabel(profile)}
+                  name={profile.name}
+                  // The legacy per-profile remote override predates the
+                  // gateway registry; once the rail shows machines directly
+                  // it only confuses, so it is offered on single-gateway
+                  // setups only.
+                  onConnectRemote={multipleConnections ? undefined : () => openRemoteOverrideDialog(profile.name)}
+                  onDelete={() => setPendingDelete(profile)}
+                  onEditSoul={() => setPendingSoul(profile.name)}
+                  onRecolor={color => setProfileColor(profile.name, color)}
+                  onRename={() => setPendingRename(profile)}
+                  onSelect={() => selectProfile(profile.name)}
+                  remoteHost={remoteOverrides[normalizeProfileKey(profile.name)]?.host ?? null}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+    </>
   )
 
   return (
-    <div aria-label={p.title} className="flex items-center gap-0.5" data-slot="profile-rail" role="tablist">
+    // `data-tour` as well as `data-slot`: only the former is identity to the
+    // tour collector and the tip catalog, and the rail's one other durable
+    // handle is a TRANSLATED aria-label, which stops matching the moment the
+    // app isn't in English.
+    <div
+      aria-label={p.title}
+      className="flex min-w-0 items-center gap-0.5"
+      data-slot="profile-rail"
+      data-tip-region=""
+      data-tour="profile-rail"
+      role="group"
+    >
+      {/* Fleet: every gateway carries its own home square inside its group, so
+          the pinned pill is purely the "all profiles on this gateway" toggle. */}
+      {fleet && (
+        <ProfilePill
+          active={isAll}
+          glyph="layers"
+          label={p.fleet.allOnGateway}
+          onSelect={() => setShowAllProfiles(true)}
+        />
+      )}
+
       {/* One button toggles default ↔ all: home face when scoped to a profile,
           layers face when showing everything. Pinned left like Manage is right.
           Hidden until a second profile exists. */}
-      {multiProfile &&
+      {!fleet &&
+        multiProfile &&
         (defaultProfile ? (
           // On default → toggle to all. Anywhere else (all view or a named
           // profile) → return to default. So leaving a profile never lands on all.
           <ProfilePill
             active={isAll || onDefault}
+            connectionId={activeConnectionId ?? undefined}
             glyph={isAll ? 'layers' : 'home'}
             label={onDefault ? p.showAllProfiles : p.switchToProfile(profileLabel(defaultProfile))}
             onSelect={() => (onDefault ? setShowAllProfiles(true) : selectProfile(defaultProfile.name))}
+            profile={defaultProfile.name}
           />
         ) : (
           <ProfilePill active={isAll} glyph="layers" label={p.allProfiles} onSelect={() => setShowAllProfiles(true)} />
         ))}
 
       {/* Single-profile: the active default's home icon next to the create +. */}
-      {!multiProfile && defaultProfile && (
+      {!fleet && !multiProfile && defaultProfile && (
         <ProfilePill
           active
+          connectionId={activeConnectionId ?? undefined}
           glyph="home"
           label={profileLabel(defaultProfile)}
           onSelect={() => selectProfile(defaultProfile.name)}
+          profile={defaultProfile.name}
         />
       )}
 
-      {multiProfile ? (
-        // Renders no DOM, so it can also span the overflow picker without
-        // disturbing the flex row — and React context reaches the popover
-        // through Radix's portal, putting both grids in one drag space.
-        <DndContext
-          collisionDetection={closestCenter}
-          // The axis lock belongs to rail reorders only: a drag out of the
-          // picker has to travel down onto the strip.
-          modifiers={dragFromOverflow ? [] : [stepThroughCells]}
-          onDragCancel={handleDragCancel}
-          onDragEnd={handleDragEnd}
-          onDragOver={handleDragOver}
-          onDragStart={handleDragStart}
-          sensors={sensors}
-        >
-          {/* Only the inline squares are reorder cells — the hoisted one is a
-              stand-in for a profile that lives in the overflow menu. */}
-          <SortableContext items={inline.map(profile => profile.name)} strategy={horizontalListSortingStrategy}>
-            <div
-              className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              ref={scrollRef}
-            >
-              {/* relative → the strip is the dragged square's offsetParent, so the
-                  clamp modifier bounds drags to the occupied cells. */}
-              <div className="relative flex items-center gap-1">{inline.map(profile => renderSquare(profile))}</div>
-            </div>
-
-            {hoisted && renderSquare(hoisted, { hoisted: true })}
-          </SortableContext>
-
-          {overflowing && (
-            <ProfileOverflowMenu
-              dragging={dragging}
-              names={hidden.map(entry => entry.name)}
-              onOpenChange={setOverflowOpen}
-              open={overflowOpen}
-            >
-              {hidden.map(entry => renderSquare(entry, { overflow: true }))}
-            </ProfileOverflowMenu>
-          )}
-        </DndContext>
+      {condensed ? (
+        // Condensed path: one compact dropdown instead of N squares. No drag
+        // reorder or long-press recolor; right-click rows keeps launch actions
+        // available, while Manage covers rename/delete at this scale.
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <ProfileDropdown
+            activeKey={isAll ? null : activeKey}
+            colors={colors}
+            connectionId={namedProfileConnectionId}
+            onCreate={() => setCreateOpen(true)}
+            onImport={() => void runImportProfileFlow()}
+            onSelect={selectProfile}
+            onSelectRest={switchToRest}
+            profiles={named}
+            restGroups={restGroups}
+          />
+        </div>
       ) : (
-        // No strip to grow: an empty spacer keeps + and Manage pinned right.
-        <div className="min-w-0 flex-1" />
-      )}
+        <div
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          ref={scrollRef}
+        >
+          {/* The active gateway's squares. In fleet mode they sit in the
+              gateway's registry slot with a home square at their head, so the
+              strip keeps one shape whichever gateway is active. */}
+          {fleet
+            ? fleetSequence.map((entry, index) =>
+                entry.kind === 'active' ? (
+                  <Fragment key="active">
+                    <FleetDivider
+                      connection={activeConnection}
+                      first={index === 0}
+                      label={activeConnection ? p.fleet.gateway(activeConnection.label) : null}
+                      reachable
+                    />
+                    <span
+                      aria-label={activeConnection ? p.fleet.gateway(activeConnection.label) : undefined}
+                      className="flex shrink-0 items-center gap-1"
+                      data-active="true"
+                      data-connection-id={activeConnection?.id}
+                      data-slot="profile-rail-gateway"
+                      role="group"
+                    >
+                      {defaultProfile && (
+                        <ProfilePill
+                          active={onDefault}
+                          connectionId={activeConnectionId ?? undefined}
+                          glyph="home"
+                          label={profileLabel(defaultProfile)}
+                          onSelect={() => selectProfile(defaultProfile.name)}
+                          profile={defaultProfile.name}
+                        />
+                      )}
+                      {activeStrip}
+                    </span>
+                  </Fragment>
+                ) : (
+                  <FleetRestGroup
+                    colors={colors}
+                    first={index === 0}
+                    group={entry.group}
+                    key={entry.group.connectionId}
+                    onDelete={setPendingRestDelete}
+                    onEditSoul={setPendingRestSoul}
+                    onRecolor={(agent, color) => setProfileColor(agent.profile, color)}
+                    onRename={setPendingRestRename}
+                    onSelect={switchToRest}
+                    pendingRoute={pendingRoute}
+                  />
+                )
+              )
+            : activeStrip}
 
-      <AddProfileButton label={p.newProfile} onClick={() => setCreateOpen(true)} />
+          <AddProfileButton label={p.newProfile} onClick={() => setCreateOpen(true)} />
+          <ImportProfileButton label={p.importProfile} />
+        </div>
+      )}
 
       {/* Always reachable, even with only the default profile: the manage
           overlay is the only place to edit a profile's SOUL.md, and a
@@ -410,11 +539,24 @@ export function ProfileRail() {
           without first creating a throwaway second profile. */}
       <ProfilePill active={false} glyph="ellipsis" label={p.manageProfiles} onSelect={() => navigate(PROFILES_ROUTE)} />
 
-      {/* Land in the new profile, not stuck on the session you were just in. */}
+      {/* Multi-gateway discoverability: before a second source exists, a plug
+          pinned beside Manage deep-links to the unified Gateways page. Once
+          there are several sources, the same action lives in their selector. */}
+      {!multipleConnections && (
+        <ProfilePill
+          active={false}
+          glyph="plug"
+          label={p.connectGateway}
+          onSelect={() => navigate(`${SETTINGS_ROUTE}?tab=gateway`)}
+        />
+      )}
+
+      {/* Land in the new profile on a fresh chat (selectProfile triggers the
+          new-session reset), not stuck on the session you were just in. */}
       <CreateProfileDialog
         onClose={() => setCreateOpen(false)}
         onCreated={async name => {
-          await reloadProfiles()
+          await refreshActiveProfile()
           selectProfile(name)
         }}
         open={createOpen}
@@ -425,26 +567,64 @@ export function ProfileRail() {
         currentName={pendingRename?.name ?? ''}
         isDefault={pendingRename?.is_default ?? false}
         onClose={() => setPendingRename(null)}
-        onRenamed={reloadProfiles}
+        onRenamed={refreshActiveProfile}
         open={pendingRename !== null}
       />
 
       <DeleteProfileDialog
         onClose={() => setPendingDelete(null)}
-        onDeleted={reloadProfiles}
+        onDeleted={refreshActiveProfile}
         open={pendingDelete !== null}
         profile={pendingDelete}
       />
 
       <EditSoulDialog onClose={() => setPendingSoul(null)} profileName={pendingSoul} />
+
+      {/* Fleet-side dialogs: scoped to the at-rest square's owning gateway, and
+          they refresh the roster (not the active profile list) on success. */}
+      <RenameProfileDialog
+        currentName={pendingRestRename?.profile ?? ''}
+        onClose={() => setPendingRestRename(null)}
+        onRenamed={() => refreshFleetRoster({ force: true })}
+        open={pendingRestRename !== null}
+        scope={pendingRestRename ? restScope(pendingRestRename) : undefined}
+      />
+
+      <DeleteProfileDialog
+        gatewayLabel={pendingRestDelete?.connectionLabel}
+        onClose={() => setPendingRestDelete(null)}
+        onDeleted={() => refreshFleetRoster({ force: true })}
+        open={pendingRestDelete !== null}
+        profile={pendingRestDelete ? { name: pendingRestDelete.profile, path: pendingRestDelete.handle } : null}
+        scope={pendingRestDelete ? restScope(pendingRestDelete) : undefined}
+      />
+
+      <EditSoulDialog
+        gatewayLabel={pendingRestSoul?.connectionLabel}
+        onClose={() => setPendingRestSoul(null)}
+        profileName={pendingRestSoul?.profile ?? null}
+        scope={pendingRestSoul ? restScope(pendingRestSoul) : undefined}
+      />
+
+      <ProfileRemoteOverrideDialog profileNames={profileNames} />
     </div>
   )
 }
 
 // Right-click → Edit SOUL.md for a sidebar profile — the same in-app markdown
-// editor as the Profiles overlay, so a profile's persona is editable without
-// opening it.
-function EditSoulDialog({ onClose, profileName }: { onClose: () => void; profileName: null | string }) {
+// editor as the memory-graph node edit, so a profile's persona is editable
+// without opening the Manage overlay.
+function EditSoulDialog({
+  gatewayLabel,
+  onClose,
+  profileName,
+  scope
+}: {
+  gatewayLabel?: string
+  onClose: () => void
+  profileName: null | string
+  scope?: ProfileScope
+}) {
   const { t } = useI18n()
   const p = t.profiles
   const [content, setContent] = useState('')
@@ -460,13 +640,13 @@ function EditSoulDialog({ onClose, profileName }: { onClose: () => void; profile
     setLoading(true)
     setContent('')
 
-    getProfileSoul(profileName)
+    getProfileSoul(profileName, scope)
       .then(soul => !cancelled && setContent(soul.content))
       .catch(err => !cancelled && notifyError(err, p.failedLoadSoul))
       .finally(() => !cancelled && setLoading(false))
 
     return () => void (cancelled = true)
-  }, [p, profileName])
+  }, [p, profileName, scope])
 
   const save = async () => {
     if (!profileName) {
@@ -476,7 +656,7 @@ function EditSoulDialog({ onClose, profileName }: { onClose: () => void; profile
     setSaving(true)
 
     try {
-      await updateProfileSoul(profileName, content)
+      await updateProfileSoul(profileName, content, scope)
       notify({ kind: 'success', title: p.soulSaved, message: profileName })
       onClose()
     } catch (err) {
@@ -490,7 +670,9 @@ function EditSoulDialog({ onClose, profileName }: { onClose: () => void; profile
     <Dialog onOpenChange={open => !open && !saving && onClose()} open={profileName !== null}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{profileName} · SOUL.md</DialogTitle>
+          <DialogTitle>
+            {gatewayLabel && profileName ? p.fleet.onGateway(profileName, gatewayLabel) : profileName} · SOUL.md
+          </DialogTitle>
         </DialogHeader>
         <div className="h-80">
           {!loading && profileName && (
@@ -524,10 +706,7 @@ function AddProfileButton({ label, onClick }: { label: string; onClick: () => vo
     <Tip label={label}>
       <button
         aria-label={label}
-        className={cn(
-          RAIL_CONTROL,
-          'grid size-5 shrink-0 place-items-center text-(--ui-text-tertiary) opacity-55 transition hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100'
-        )}
+        className="grid size-5 shrink-0 place-items-center rounded-[3px] text-(--ui-text-tertiary) opacity-55 transition hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100"
         onClick={onClick}
         type="button"
       >
@@ -537,65 +716,174 @@ function AddProfileButton({ label, onClick }: { label: string; onClick: () => vo
   )
 }
 
-// The rail's tail, once it no longer fits: a chevron that opens the profiles
-// that spilled off the strip as the same colored squares, laid out like the
-// long-press color picker's swatch grid — so the rail keeps reading as colors
-// rather than degrading into a list of names. The squares are the rail's own
-// `ProfileSquare`, so every gesture (select, recolor, context menu, drag)
-// survives the spill; the grid is a second sortable container in the rail's
-// DndContext, which is what lets a square be dragged back onto the strip.
-function ProfileOverflowMenu({
-  children,
-  dragging,
-  names,
-  onOpenChange,
-  open
+// Import-archive door beside the "+": adopt a shared profile bundle (theme,
+// skills, layout) as a new profile. Same chrome as AddProfileButton; the whole
+// flow (picker → import → apply overlay → switch) lives in the store.
+function ImportProfileButton({ label }: { label: string }) {
+  return (
+    <Tip label={label}>
+      <button
+        aria-label={label}
+        className="grid size-5 shrink-0 place-items-center rounded-[3px] text-(--ui-text-tertiary) opacity-55 transition hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100"
+        onClick={() => void runImportProfileFlow()}
+        type="button"
+      >
+        <Codicon name="cloud-download" size="0.75rem" />
+      </button>
+    </Tip>
+  )
+}
+
+// The condensed rail: every named profile in one compact menu. The trigger
+// shows the active profile (tinted initial + name); on default/all scope it
+// falls back to the placeholder since the left toggle pill carries that state.
+function ProfileDropdown({
+  activeKey,
+  colors,
+  connectionId,
+  onCreate,
+  onImport,
+  onSelect,
+  onSelectRest,
+  profiles,
+  restGroups
 }: {
-  children: ReactNode
-  dragging: boolean
-  names: string[]
-  onOpenChange: (open: boolean) => void
-  open: boolean
+  activeKey: null | string
+  colors: Record<string, string>
+  connectionId: null | string
+  onCreate: () => void
+  onImport: () => void
+  onSelect: (name: string) => void
+  onSelectRest: (agent: FleetAgent) => void
+  profiles: ProfileInfo[]
+  // Fleet: the other gateways' agents, each under its own section header.
+  restGroups: readonly FleetGroup[]
 }) {
   const { t } = useI18n()
   const p = t.profiles
 
-  return (
-    <Popover onOpenChange={onOpenChange} open={open}>
-      {/* Tip renders a provider tree, not a ref-forwarding element, so it wraps
-          the trigger rather than being wrapped by it. */}
-      <Tip label={p.moreProfiles}>
-        <PopoverTrigger asChild>
-          <button
-            aria-label={p.moreProfiles}
-            className={cn(
-              RAIL_CONTROL,
-              'grid size-5 shrink-0 place-items-center text-(--ui-text-tertiary) opacity-55 transition hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100 data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground data-[state=open]:opacity-100'
-            )}
-            type="button"
-          >
-            <Codicon name="chevron-down" size="0.75rem" />
-          </button>
-        </PopoverTrigger>
-      </Tip>
+  const value = activeKey ? (profiles.find(profile => normalizeProfileKey(profile.name) === activeKey)?.name ?? '') : ''
+  const activeProfile = profiles.find(profile => profile.name === value)
 
-      {/* The rail sits at the very bottom, so pad off the chrome (esp. the
-          statusbar) — Radix then flips the grid up instead of squishing it. */}
-      <PopoverContent
-        align="end"
-        aria-label={p.moreProfiles}
-        className="w-auto p-2"
-        collisionPadding={{ bottom: 44, left: 8, right: 8, top: 8 }}
-        // A square dragged onto the rail is released well outside the popover;
-        // without this the drop would dismiss the grid mid-gesture.
-        onInteractOutside={event => dragging && event.preventDefault()}
-        side="top"
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          aria-label={p.title}
+          className="min-w-0 flex-1 justify-between overflow-hidden px-1 text-(--ui-text-secondary) data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground"
+          data-slot="profile-dropdown"
+          size="xs"
+          type="button"
+          variant="ghost"
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+            {activeProfile ? (
+              <>
+                <ProfileGlyph
+                  aria-hidden="true"
+                  color={resolveProfileColor(activeProfile.name, colors)}
+                  isDefault={false}
+                  name={activeProfile.name}
+                />
+                <span className="truncate">{profileLabel(activeProfile)}</span>
+              </>
+            ) : (
+              <span className="truncate">{p.title}</span>
+            )}
+          </span>
+          <Codicon aria-hidden="true" className="shrink-0 opacity-60" name="chevron-down" size="0.875rem" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-48 max-w-72" collisionPadding={8} side="top">
+        <DropdownMenuItem onSelect={onCreate}>
+          <Codicon aria-hidden="true" name="add" size="0.875rem" />
+          <span className="truncate">{p.newProfile}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onImport}>
+          <Codicon aria-hidden="true" name="cloud-download" size="0.875rem" />
+          <span className="truncate">{p.importProfile}</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup onValueChange={name => name && onSelect(name)} value={value}>
+          {profiles.map(profile => (
+            <ProfileDropdownItem
+              color={resolveProfileColor(profile.name, colors)}
+              connectionId={connectionId}
+              key={profile.name}
+              label={profileLabel(profile)}
+              name={profile.name}
+            />
+          ))}
+        </DropdownMenuRadioGroup>
+        {restGroups.map(group => (
+          <div data-connection-id={group.connectionId} data-slot="profile-dropdown-gateway" key={group.connectionId}>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className={cn(dropdownMenuSectionLabel, 'flex items-center gap-1.5')}>
+              <ConnectionGlyph connection={group} />
+              <span className="truncate">{group.label}</span>
+              {!group.reachable && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-amber-500" />}
+            </DropdownMenuLabel>
+            {[group.defaultAgent, ...group.named].map(agent => (
+              <ProfileLaunchContextMenu
+                connectionId={agent.connectionId}
+                key={agent.profile}
+                label={p.fleet.onGateway(agent.profile, group.label)}
+                profile={agent.profile}
+              >
+                <DropdownMenuItem
+                  aria-label={p.fleet.onGateway(agent.profile, group.label)}
+                  className="min-w-0"
+                  onSelect={() => onSelectRest(agent)}
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <ProfileGlyph
+                      aria-hidden="true"
+                      color={resolveProfileColor(agent.profile, colors)}
+                      isDefault={agent.isDefault}
+                      name={agent.profile}
+                    />
+                    <span className="truncate">{agent.profile}</span>
+                  </span>
+                </DropdownMenuItem>
+              </ProfileLaunchContextMenu>
+            ))}
+          </div>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+// One dropdown row per profile — its own component so each row can own a
+// hover-intent prewarm timer (see useProfilePrewarm).
+function ProfileDropdownItem({
+  color,
+  connectionId,
+  label,
+  name
+}: {
+  color: null | string
+  connectionId: null | string
+  label: string
+  name: string
+}) {
+  const { cancelPrewarm, notePointerMove, startPrewarm } = useProfilePrewarm(name)
+
+  return (
+    <ProfileLaunchContextMenu connectionId={connectionId} label={label} profile={name}>
+      <DropdownMenuRadioItem
+        className="min-w-0"
+        onPointerEnter={startPrewarm}
+        onPointerLeave={cancelPrewarm}
+        onPointerMove={notePointerMove}
+        value={name}
       >
-        <SortableContext items={names} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-6 gap-1.5">{children}</div>
-        </SortableContext>
-      </PopoverContent>
-    </Popover>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <ProfileGlyph aria-hidden="true" color={color} isDefault={false} name={name} />
+          <span className="truncate">{label}</span>
+        </span>
+      </DropdownMenuRadioItem>
+    </ProfileLaunchContextMenu>
   )
 }
 
@@ -605,134 +893,199 @@ interface ProfilePillProps {
   glyph: string
   label: string
   onSelect: () => void
+  // Fleet at-rest: dimmed until hovered, like the at-rest squares beside it.
+  muted?: boolean
+  pending?: boolean
+  slot?: string
+  connectionId?: string
+  profile?: string
 }
 
-function ProfilePill({ active, glyph, label, onSelect }: ProfilePillProps) {
-  return (
+function ProfilePill({
+  active,
+  connectionId,
+  glyph,
+  label,
+  muted = false,
+  onSelect,
+  pending = false,
+  profile,
+  slot
+}: ProfilePillProps) {
+  const button = (
     <Tip label={label}>
       <Button
+        aria-busy={pending || undefined}
         aria-label={label}
         aria-pressed={active}
         className={cn(
-          RAIL_CONTROL,
           'bg-transparent text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground',
-          active && 'bg-(--ui-control-active-background) text-foreground'
+          active && 'bg-(--ui-control-active-background) text-foreground',
+          muted && 'opacity-40 hover:opacity-100'
         )}
+        data-connection-id={connectionId}
+        data-slot={slot}
         onClick={onSelect}
         size="icon-xs"
         type="button"
         variant="ghost"
       >
-        <Codicon name={glyph} size="0.875rem" />
+        {pending ? (
+          <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+        ) : (
+          <Codicon name={glyph} size="0.875rem" />
+        )}
       </Button>
     </Tip>
   )
+
+  return profile ? (
+    <ProfileLaunchContextMenu connectionId={connectionId ?? null} label={profile} profile={profile}>
+      {button}
+    </ProfileLaunchContextMenu>
+  ) : (
+    button
+  )
 }
 
-interface ProfileSquareProps {
-  active: boolean
-  color: null | string
-  label: string
-  onSelect: () => void
-  onRecolor: (color: null | string) => void
-  onRename: () => void
-  onEditSoul: () => void
-  onDelete: () => void
-  // Overflow-grid squares drag free-form (down onto the rail) rather than
-  // snapping cell to cell, so they must track the pointer with no easing.
-  freeDrag?: boolean
-  // The hoisted active square stands in for a profile that lives in the
-  // overflow menu, so it is not one of the strip's reorder cells.
-  sortDisabled?: boolean
-}
-
-// The hard-press duration is `LONG_PRESS_MS` — the app's ONE number, which
-// `lib/long-press.ts` says the hand-rolled copies "should eventually collapse
-// into". This surface held its own 450 until MJXHRM-478 gave the app an
-// app-wide long press: two competing durations on one finger is a gesture the
-// user cannot learn.
-
-// A profile *is* its colored square — no icon-button chrome. Soft profile-tint
-// fill + the initial in the full color; the active one pops to full opacity with
-// a color ring. These pack tightly so the rail reads as a strip of profiles,
-// drag-sort to reorder (a tap below the drag threshold still selects), and
-// right-click (or, on touch, a long press) to rename/delete. The button carries both the tooltip and
-// context-menu triggers via nested asChild Slots, so a single element keeps the
-// dnd listeners, hover tip, and right-click menu.
-function ProfileSquare({
-  active,
-  color,
-  freeDrag,
+// The gateway marker that heads every group on the fleet rail: its kind glyph
+// (device / network / terminal / cloud — the same glyph the statusbar readout
+// uses), an amber dot when the roster last found it unreachable, and a hairline
+// separating it from the previous group. The first group gets no hairline.
+function FleetDivider({
+  connection,
+  first,
   label,
+  reachable
+}: {
+  connection: null | Pick<FleetGroup, 'connectionId' | 'kind'> | Pick<DesktopRegistryConnection, 'id' | 'kind'>
+  first: boolean
+  label: null | string
+  reachable: boolean
+}) {
+  if (!connection) {
+    return null
+  }
+
+  const connectionId = 'connectionId' in connection ? connection.connectionId : connection.id
+
+  const marker = (
+    <span
+      aria-hidden="true"
+      className={cn('flex h-5 shrink-0 items-center gap-0.5', first ? 'me-0.5' : 'mx-0.5')}
+      data-connection-id={connectionId}
+      data-reachable={reachable}
+      data-slot="profile-rail-divider"
+    >
+      {!first && <span className="h-3 w-px bg-(--ui-stroke-tertiary)" />}
+      <ConnectionGlyph connection={connection} />
+      {!reachable && <span className="size-1.5 rounded-full bg-amber-500" data-slot="profile-rail-unreachable" />}
+    </span>
+  )
+
+  return label ? <Tip label={label}>{marker}</Tip> : marker
+}
+
+// One at-rest gateway on the fleet rail: hairline + kind glyph (amber dot when
+// the roster last found it unreachable — never hidden, a sleeping box is still
+// yours), then its home square and named squares, dimmed. Clicking any of
+// them re-homes onto that exact (gateway, profile).
+function FleetRestGroup({
+  colors,
+  first,
+  group,
   onDelete,
   onEditSoul,
   onRecolor,
   onRename,
   onSelect,
-  sortDisabled
-}: ProfileSquareProps) {
+  pendingRoute
+}: {
+  colors: Record<string, string>
+  first: boolean
+  group: FleetGroup
+  onDelete: (agent: FleetAgent) => void
+  onEditSoul: (agent: FleetAgent) => void
+  onRecolor: (agent: FleetAgent, color: null | string) => void
+  onRename: (agent: FleetAgent) => void
+  onSelect: (agent: FleetAgent) => void
+  pendingRoute: null | string
+}) {
+  const { t } = useI18n()
+  const p = t.profiles
+  const dividerLabel = group.reachable ? p.fleet.gateway(group.label) : p.fleet.gatewayUnreachable(group.label)
+  const defaultKey = fleetRouteKey(group.connectionId, group.defaultAgent.profile)
+
+  return (
+    <>
+      <FleetDivider connection={group} first={first} label={dividerLabel} reachable={group.reachable} />
+      <span
+        aria-label={p.fleet.gateway(group.label)}
+        className="flex shrink-0 items-center gap-1"
+        data-active="false"
+        data-connection-id={group.connectionId}
+        data-reachable={group.reachable}
+        data-slot="profile-rail-gateway"
+        role="group"
+      >
+        <ProfilePill
+          active={false}
+          connectionId={group.connectionId}
+          glyph="home"
+          label={p.fleet.onGateway(group.defaultAgent.profile, group.label)}
+          muted
+          onSelect={() => onSelect(group.defaultAgent)}
+          pending={pendingRoute === defaultKey}
+          profile={group.defaultAgent.profile}
+          slot="profile-rail-rest-home"
+        />
+        {group.named.map(agent => (
+          <RestSquare
+            agent={agent}
+            color={resolveProfileColor(agent.profile, colors)}
+            key={agent.profile}
+            onDelete={() => onDelete(agent)}
+            onEditSoul={() => onEditSoul(agent)}
+            onRecolor={color => onRecolor(agent, color)}
+            onRename={() => onRename(agent)}
+            onSelect={() => onSelect(agent)}
+            pending={pendingRoute === fleetRouteKey(agent.connectionId, agent.profile)}
+          />
+        ))}
+      </span>
+    </>
+  )
+}
+
+// An at-rest square: the same tile as ProfileSquare, minus drag-reorder and
+// hold-to-recolor (the strip it lives in is not sortable across machines).
+// Tooltip and accessible name carry the gateway so two same-named profiles on
+// different machines never read alike; the right-click actions run against
+// the square's owning gateway.
+function RestSquare({
+  agent,
+  color,
+  onDelete,
+  onEditSoul,
+  onRecolor,
+  onRename,
+  onSelect,
+  pending
+}: {
+  agent: FleetAgent
+  color: null | string
+  onDelete: () => void
+  onEditSoul: () => void
+  onRecolor: (color: null | string) => void
+  onRename: () => void
+  onSelect: () => void
+  pending: boolean
+}) {
   const { t } = useI18n()
   const p = t.profiles
   const hue = color ?? 'var(--ui-text-quaternary)'
   const [pickerOpen, setPickerOpen] = useState(false)
-  const suppressClick = useRef(false)
-  const squareRef = useRef<HTMLButtonElement | null>(null)
-  // Which pointer armed the current hold — a mouse and a finger want different
-  // things out of it (see below).
-  const pressPointer = useRef<string>('mouse')
-
-  const { attributes, isDragging, isOver, listeners, setNodeRef, transform, transition } = useSortable({
-    disabled: sortDisabled,
-    id: label,
-    transition: RAIL_TRANSITION
-  })
-
-  // A hold means "more than a tap", but the two pointers reach different things
-  // by other means, so it resolves differently:
-  //
-  //   mouse — right-click already opens the full menu, so the hold stays the
-  //           recolor shortcut it has always been.
-  //   touch — there is no right-click, so rename / edit soul / delete had no
-  //           path at all. The hold opens the context menu instead, and colour
-  //           is its first item, so nothing is lost — it costs one more tap.
-  //
-  // Radix's ContextMenu has no controlled `open`, so the menu is opened the way
-  // a mouse opens it: by dispatching the event its trigger listens for, at the
-  // point the finger is actually holding.
-  const press = useRef(
-    createLongPress({
-      onFire: ({ x, y }) => {
-        suppressClick.current = true
-        triggerHaptic('success')
-
-        if (pressPointer.current === 'mouse') {
-          setPickerOpen(true)
-
-          return
-        }
-
-        squareRef.current?.dispatchEvent(
-          new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y })
-        )
-      }
-    })
-  ).current
-
-  // A real drag (movement past the dnd threshold) cancels the pending hold, so a
-  // reorder never doubles as a color pick. Also tidy up on unmount.
-  useEffect(() => {
-    if (isDragging) {
-      press.cancel()
-    }
-  }, [isDragging, press])
-  useEffect(() => () => press.cancel(), [press])
-
-  const base = CSS.Transform.toString(transform)
-  const ring = active ? `inset 0 0 0 1.5px ${hue}` : ''
-  const lift = isDragging ? '0 6px 16px -4px rgb(0 0 0 / 0.4)' : ''
-  // Cross-container drags (out of the overflow grid) don't open a gap on the
-  // strip, so the cell under the pointer says "drop here" itself.
-  const dropTarget = isOver && !isDragging ? 'inset 0 0 0 1.5px var(--ui-text-secondary)' : ''
+  const label = p.fleet.onGateway(agent.profile, agent.connectionLabel)
 
   const pickColor = (next: null | string) => {
     onRecolor(next)
@@ -743,91 +1096,46 @@ function ProfileSquare({
   return (
     <Popover onOpenChange={setPickerOpen} open={pickerOpen}>
       <ContextMenu>
-        <TooltipScope>
+        <TooltipProvider delayDuration={0}>
           <Tooltip>
             <PopoverAnchor asChild>
               <ContextMenuTrigger asChild>
                 <TooltipTrigger asChild>
                   <button
-                    className={cn(
-                      RAIL_CONTROL,
-                      'grid size-5 shrink-0 cursor-grab touch-none select-none place-items-center text-[0.5625rem] font-semibold uppercase leading-none transition-opacity hover:opacity-100',
-                      active ? 'opacity-100' : 'opacity-55',
-                      sortDisabled && 'cursor-pointer',
-                      isOver && !isDragging && 'opacity-100',
-                      isDragging && 'z-10 cursor-grabbing opacity-100'
-                    )}
-                    ref={node => {
-                      setNodeRef(node)
-                      squareRef.current = node
-                    }}
-                    style={{
-                      backgroundColor: profileColorSoft(hue, active ? 30 : 22),
-                      boxShadow: [ring, dropTarget, lift].filter(Boolean).join(', ') || undefined,
-                      color: color ?? undefined,
-                      // Glide the dragged square between snapped cells with a little
-                      // overshoot (no scale — the overflow-x strip would clip it).
-                      // A free drag has no cells to glide between, so it tracks the
-                      // pointer directly instead of trailing it.
-                      transform: base,
-                      transition: isDragging ? (freeDrag ? 'none' : DRAG_TRANSITION) : transition
-                    }}
-                    type="button"
-                    {...attributes}
-                    {...listeners}
+                    aria-busy={pending || undefined}
                     aria-label={label}
-                    aria-pressed={active}
-                    // Hold-to-recolor rides alongside the dnd pointer listener (call
-                    // it first so drag tracking still arms), then a timer opens the
-                    // picker and flags the trailing click so it doesn't also select.
-                    onClick={() => {
-                      if (suppressClick.current) {
-                        suppressClick.current = false
-
-                        return
-                      }
-
-                      onSelect()
-                    }}
-                    onPointerCancel={() => press.cancel()}
-                    onPointerDown={event => {
-                      listeners?.onPointerDown?.(event)
-
-                      if (event.button !== 0) {
-                        return
-                      }
-
-                      suppressClick.current = false
-                      pressPointer.current = event.pointerType || 'mouse'
-                      press.down(event.clientX, event.clientY)
-                    }}
-                    // The hold now carries a movement tolerance of its own
-                    // rather than relying solely on dnd to cancel it — a finger
-                    // that drifts is not holding still.
-                    onPointerLeave={() => press.cancel()}
-                    onPointerMove={event => press.move(event.clientX, event.clientY)}
-                    onPointerUp={() => press.up()}
+                    className="relative grid size-5 shrink-0 select-none place-items-center rounded-[3px] text-[0.5625rem] font-semibold uppercase leading-none opacity-35 transition-opacity hover:opacity-100 aria-busy:opacity-100"
+                    data-connection-id={agent.connectionId}
+                    data-profile={agent.profile}
+                    data-slot="profile-rail-rest-square"
+                    onClick={onSelect}
+                    style={{ backgroundColor: profileColorSoft(hue, 22), color: color ?? undefined }}
+                    type="button"
                   >
-                    {profileInitial(label)}
+                    {pending ? (
+                      <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+                    ) : (
+                      agent.profile.replace(/[^a-z0-9]/gi, '').charAt(0) || '?'
+                    )}
                   </button>
                 </TooltipTrigger>
               </ContextMenuTrigger>
             </PopoverAnchor>
             <TooltipContent>{label}</TooltipContent>
           </Tooltip>
-        </TooltipScope>
+        </TooltipProvider>
 
-        {/* The rail sits at the very bottom, so pad off the chrome (esp. the
-            statusbar) — Radix then flips the menu up instead of squishing it. */}
         <ContextMenuContent
-          aria-label={p.actionsFor(label)}
-          className="w-40"
+          aria-label={p.actions}
+          className="min-w-52"
           collisionPadding={{ bottom: 44, left: 8, right: 8, top: 8 }}
-          // Menu close refocuses the trigger — which doubles as the popover
-          // anchor — so the picker reads it as focus-outside and dies on open.
-          // Suppress the refocus and the picker survives.
           onCloseAutoFocus={event => event.preventDefault()}
         >
+          <ProfileLaunchMenuSection connectionId={agent.connectionId} label={label} profile={agent.profile} />
+          <ContextMenuItem onSelect={onSelect}>
+            <Codicon name="arrow-right" size="0.875rem" />
+            <span className="truncate">{p.fleet.switchTo(agent.profile, agent.connectionLabel)}</span>
+          </ContextMenuItem>
           <ContextMenuItem onSelect={() => setPickerOpen(true)}>
             <Codicon name="symbol-color" size="0.875rem" />
             <span>{p.color}</span>
@@ -852,7 +1160,242 @@ function ProfileSquare({
       </ContextMenu>
 
       <PopoverContent
-        aria-label={p.colorFor(label)}
+        aria-label={p.colorFor}
+        className="w-auto p-2"
+        collisionPadding={{ bottom: 44, left: 8, right: 8, top: 8 }}
+        side="top"
+      >
+        <ColorSwatches
+          clearIcon="sync"
+          clearLabel={p.autoColor}
+          onChange={pickColor}
+          swatches={PROFILE_SWATCHES}
+          swatchLabel={p.setColor}
+          value={color}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+interface ProfileSquareProps {
+  active: boolean
+  color: null | string
+  connectionId: null | string
+  label: string
+  name: string
+  onSelect: () => void
+  onRecolor: (color: null | string) => void
+  onRename: () => void
+  onEditSoul: () => void
+  // Absent on multi-gateway setups: the legacy per-profile remote override
+  // is superseded by the fleet rail there.
+  onConnectRemote?: () => void
+  onDelete: () => void
+  // hostname[:port] of this profile's remote override, or null when the
+  // profile runs locally. Drives the "remote" badge on the square.
+  remoteHost: null | string
+}
+
+// Hold this long without moving (a drag would have started first) to open the
+// color picker — the "hard press" gesture, distinct from tap-to-select.
+const LONG_PRESS_MS = 450
+
+// A profile *is* its colored square — no icon-button chrome. Soft profile-tint
+// fill + the initial in the full color; the active one pops to full opacity with
+// a color ring. These pack tightly so the rail reads as a strip of profiles,
+// drag-sort to reorder (a tap below the drag threshold still selects), and
+// right-click to rename/delete. The button carries both the tooltip and
+// context-menu triggers via nested asChild Slots, so a single element keeps the
+// dnd listeners, hover tip, and right-click menu.
+function ProfileSquare({
+  active,
+  color,
+  connectionId,
+  label,
+  name,
+  onConnectRemote,
+  onDelete,
+  onEditSoul,
+  onRecolor,
+  onRename,
+  onSelect,
+  remoteHost
+}: ProfileSquareProps) {
+  const { t } = useI18n()
+  const p = t.profiles
+  const hue = color ?? 'var(--ui-text-quaternary)'
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const pressTimer = useRef<null | number>(null)
+  const suppressClick = useRef(false)
+  // Hovering a square telegraphs the switch — start that profile's backend
+  // spawn now so a cold click doesn't pay the full boot.
+  const { cancelPrewarm, notePointerMove, startPrewarm } = useProfilePrewarm(name)
+
+  const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
+    id: name,
+    transition: RAIL_TRANSITION
+  })
+
+  const clearPress = () => {
+    if (pressTimer.current != null) {
+      clearTimeout(pressTimer.current)
+      pressTimer.current = null
+    }
+  }
+
+  // A real drag (movement past the dnd threshold) cancels the pending hold, so a
+  // reorder never doubles as a color pick. Also tidy up on unmount.
+  useEffect(() => {
+    if (isDragging) {
+      clearPress()
+    }
+  }, [isDragging])
+  useEffect(() => clearPress, [])
+
+  const base = CSS.Transform.toString(transform)
+  const ring = active ? `inset 0 0 0 1.5px ${hue}` : ''
+  const lift = isDragging ? '0 6px 16px -4px rgb(0 0 0 / 0.4)' : ''
+
+  const pickColor = (next: null | string) => {
+    onRecolor(next)
+    setPickerOpen(false)
+    triggerHaptic('selection')
+  }
+
+  return (
+    <Popover onOpenChange={setPickerOpen} open={pickerOpen}>
+      <ContextMenu>
+        <TooltipProvider delayDuration={0}>
+          <Tooltip>
+            <PopoverAnchor asChild>
+              <ContextMenuTrigger asChild>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      'relative grid size-5 shrink-0 cursor-grab touch-none select-none place-items-center rounded-[3px] text-[0.5625rem] font-semibold uppercase leading-none transition-opacity hover:opacity-100',
+                      active ? 'opacity-100' : 'opacity-55',
+                      isDragging && 'z-10 cursor-grabbing opacity-100'
+                    )}
+                    ref={setNodeRef}
+                    style={{
+                      backgroundColor: profileColorSoft(hue, active ? 30 : 22),
+                      boxShadow: [ring, lift].filter(Boolean).join(', ') || undefined,
+                      color: color ?? undefined,
+                      // Glide the dragged square between snapped cells with a little
+                      // overshoot (no scale — the overflow-x strip would clip it).
+                      transform: base,
+                      transition: isDragging ? DRAG_TRANSITION : transition
+                    }}
+                    type="button"
+                    {...attributes}
+                    {...listeners}
+                    aria-label={remoteHost ? `${label} — ${p.remoteOverride.badge(remoteHost)}` : label}
+                    aria-pressed={active}
+                    // Hold-to-recolor rides alongside the dnd pointer listener (call
+                    // it first so drag tracking still arms), then a timer opens the
+                    // picker and flags the trailing click so it doesn't also select.
+                    onClick={() => {
+                      if (suppressClick.current) {
+                        suppressClick.current = false
+
+                        return
+                      }
+
+                      onSelect()
+                    }}
+                    onPointerCancel={clearPress}
+                    onPointerDown={event => {
+                      listeners?.onPointerDown?.(event)
+
+                      if (event.button !== 0) {
+                        return
+                      }
+
+                      suppressClick.current = false
+                      clearPress()
+                      pressTimer.current = window.setTimeout(() => {
+                        suppressClick.current = true
+                        triggerHaptic('success')
+                        setPickerOpen(true)
+                      }, LONG_PRESS_MS)
+                    }}
+                    onPointerEnter={startPrewarm}
+                    onPointerLeave={() => {
+                      clearPress()
+                      cancelPrewarm()
+                    }}
+                    onPointerMove={notePointerMove}
+                    onPointerUp={clearPress}
+                  >
+                    {label.replace(/[^a-z0-9]/gi, '').charAt(0) || '?'}
+                    {/* The "remote" badge: a tiny globe pinned to the corner of an
+                        overridden profile's square, so which profiles leave this
+                        machine is visible at a glance (#91349). */}
+                    {remoteHost && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-0.5 -top-0.5 grid size-2 place-items-center rounded-full bg-(--ui-panel-background)"
+                        data-slot="profile-remote-badge"
+                      >
+                        <Codicon name="globe" size="0.5rem" />
+                      </span>
+                    )}
+                  </button>
+                </TooltipTrigger>
+              </ContextMenuTrigger>
+            </PopoverAnchor>
+            <TooltipContent>{remoteHost ? `${label} · ${p.remoteOverride.badge(remoteHost)}` : label}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        {/* The rail sits at the very bottom, so pad off the chrome (esp. the
+            statusbar) — Radix then flips the menu up instead of squishing it. */}
+        <ContextMenuContent
+          aria-label={p.actions}
+          className="min-w-52"
+          collisionPadding={{ bottom: 44, left: 8, right: 8, top: 8 }}
+          // Menu close refocuses the trigger — which doubles as the popover
+          // anchor — so the picker reads it as focus-outside and dies on open.
+          // Suppress the refocus and the picker survives.
+          onCloseAutoFocus={event => event.preventDefault()}
+        >
+          <ProfileLaunchMenuSection connectionId={connectionId} label={label} profile={name} />
+          <ContextMenuItem onSelect={() => setPickerOpen(true)}>
+            <Codicon name="symbol-color" size="0.875rem" />
+            <span>{p.color}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={onRename}>
+            <Codicon name="text-size" size="0.875rem" />
+            <span>{p.renameMenu}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={onEditSoul}>
+            <Codicon name="edit" size="0.875rem" />
+            <span>{p.editSoul}</span>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => void runExportProfileFlow(name)}>
+            <Codicon name="package" size="0.875rem" />
+            <span>{p.exportMenu}</span>
+          </ContextMenuItem>
+          {onConnectRemote && (
+            <ContextMenuItem onSelect={onConnectRemote}>
+              <Codicon name="globe" size="0.875rem" />
+              <span>{remoteHost ? p.remoteOverride.badge(remoteHost) : p.remoteOverride.menuItem}</span>
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={onDelete}
+            variant="destructive"
+          >
+            <Codicon name="trash" size="0.875rem" />
+            <span>{t.common.delete}</span>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      <PopoverContent
+        aria-label={p.colorFor}
         className="w-auto p-2"
         collisionPadding={{ bottom: 44, left: 8, right: 8, top: 8 }}
         side="top"

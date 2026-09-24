@@ -1,83 +1,51 @@
-/**
- * A plugin identifier → the links a consent dialog must be able to show.
- *
- * PURE string work (rule 35). Nothing here clones, fetches or probes: the
- * gateway does the install, and this only answers "what am I about to trust,
- * and where can I go read it first" — which is the whole content of an informed
- * consent prompt.
- *
- * Ported from `apps/desktop/src/lib/plugin-source-urls.ts`, plus one field
- * universal needs: `insecure`. Desktop's dialog is reached from its own UI; here
- * a `hermes://plugin/install` link can put ANY identifier in front of the user,
- * including an `http://` or `file://` git URL, and a dialog that renders those
- * as ordinary sources is the one that gets someone.
- */
-
-const GITHUB_BROWSER_SEGMENTS = new Set(['blob', 'commit', 'tree'])
-const GITHUB_PREFIX = 'https://github.com/'
+const GITHUB_BROWSER_SEGMENTS = new Set(['tree', 'blob', 'commit'])
 
 export interface PluginSourceLinks {
-  /** What the gateway will clone. */
   gitUrl: string
-  /** A human-readable page for the same source, when one can be derived. */
-  browseUrl: null | string
-  /** Monorepo sub-path, when the identifier named one. */
-  subdir: null | string
-  /**
-   * The transport carries no authentication of the source: plain `http://` (a
-   * network attacker chooses the code) or `file://` (a path the link author
-   * chose). Not a refusal — a LAN git server over http is a real setup — but the
-   * dialog must say so before the user consents.
-   */
-  insecure: boolean
+  browseUrl: string | null
+  subdir: string | null
 }
 
-function resolvePluginGitUrl(identifier: string): { gitUrl: string; subdir: null | string } {
+function resolvePluginGitUrl(identifier: string): { gitUrl: string; subdir: string | null } {
   const trimmed = identifier.trim()
 
   if (!trimmed) {
     throw new Error('Plugin identifier is required.')
   }
 
-  // Case-INSENSITIVE, unlike desktop's: a URL scheme is case-insensitive per
-  // RFC 3986, and desktop's anchored lowercase test sends `HTTP://host/x.git`
-  // down the `owner/repo` branch instead — turning a cleartext URL the dialog
-  // would have warned about into a github.com identifier it would not.
-  if (/^(file:\/\/|git@|https?:\/\/|ssh:\/\/)/i.test(trimmed)) {
-    if (trimmed.toLowerCase().startsWith(GITHUB_PREFIX)) {
-      const rest = (trimmed.slice(GITHUB_PREFIX.length).split(/[#?]/)[0] ?? '').replace(/\/+$/, '')
+  if (/^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/.test(trimmed)) {
+    if (trimmed.startsWith('https://github.com/')) {
+      const rest = trimmed.slice('https://github.com/'.length).split(/[?#]/)[0].replace(/\/+$/, '')
       const parts = rest.split('/').filter(Boolean)
 
-      // `…/owner/repo/tree/<ref>/<subdir>` — the URL a user copies out of the
-      // GitHub file browser, which is not a clone URL.
       if (parts.length >= 3 && parts[2] && GITHUB_BROWSER_SEGMENTS.has(parts[2])) {
-        const repo = (parts[1] ?? '').replace(/\.git$/, '')
+        const repo = parts[1].replace(/\.git$/, '')
+        let subdir: string | null = null
 
-        const subdir =
-          parts[2] === 'tree' && parts.length >= 5 ? parts.slice(4).join('/').replace(/\/+$/, '') || null : null
+        if (parts[2] === 'tree' && parts.length >= 5) {
+          subdir = parts.slice(4).join('/').replace(/\/+$/, '') || null
+        }
 
-        return { gitUrl: `${GITHUB_PREFIX}${parts[0]}/${repo}.git`, subdir }
+        return { gitUrl: `https://github.com/${parts[0]}/${repo}.git`, subdir }
       }
     }
 
     if (trimmed.includes('#')) {
-      const at = trimmed.indexOf('#')
+      const hashIdx = trimmed.indexOf('#')
+      const gitUrl = trimmed.slice(0, hashIdx)
+      const subdir = trimmed.slice(hashIdx + 1).replace(/^\/+|\/+$/g, '') || null
 
-      return {
-        gitUrl: trimmed.slice(0, at),
-        subdir: trimmed.slice(at + 1).replace(/^\/+|\/+$/g, '') || null
-      }
+      return { gitUrl, subdir }
     }
 
     const marker = '.git/'
 
     if (trimmed.includes(marker)) {
-      const at = trimmed.indexOf(marker)
+      const idx = trimmed.indexOf(marker)
+      const gitUrl = trimmed.slice(0, idx + marker.length - 1)
+      const subdir = trimmed.slice(idx + marker.length).replace(/^\/+|\/+$/g, '') || null
 
-      return {
-        gitUrl: trimmed.slice(0, at + marker.length - 1),
-        subdir: trimmed.slice(at + marker.length).replace(/^\/+|\/+$/g, '') || null
-      }
+      return { gitUrl, subdir }
     }
 
     return { gitUrl: trimmed, subdir: null }
@@ -87,21 +55,20 @@ function resolvePluginGitUrl(identifier: string): { gitUrl: string; subdir: null
 
   if (parts.length >= 2) {
     const [owner, repo, ...rest] = parts
+    const gitUrl = `https://github.com/${owner}/${repo}.git`
+    const subdir = rest.join('/').replace(/\/+$/, '') || null
 
-    return {
-      gitUrl: `${GITHUB_PREFIX}${owner}/${repo}.git`,
-      subdir: rest.join('/').replace(/\/+$/, '') || null
-    }
+    return { gitUrl, subdir }
   }
 
   throw new Error('Invalid plugin identifier.')
 }
 
-function githubBrowseBase(gitUrl: string): null | string {
-  const ssh = /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i.exec(gitUrl)
+function githubBrowseBase(gitUrl: string): string | null {
+  const sshMatch = gitUrl.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i)
 
-  if (ssh) {
-    return `${GITHUB_PREFIX}${ssh[1]}/${(ssh[2] ?? '').replace(/\.git$/, '')}`
+  if (sshMatch) {
+    return `https://github.com/${sshMatch[1]}/${sshMatch[2].replace(/\.git$/, '')}`
   }
 
   try {
@@ -111,7 +78,7 @@ function githubBrowseBase(gitUrl: string): null | string {
       const parts = url.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
 
       if (parts.length >= 2) {
-        return `${GITHUB_PREFIX}${parts[0]}/${(parts[1] ?? '').replace(/\.git$/, '')}`
+        return `https://github.com/${parts[0]}/${parts[1].replace(/\.git$/, '')}`
       }
     }
   } catch {
@@ -121,16 +88,14 @@ function githubBrowseBase(gitUrl: string): null | string {
   return null
 }
 
-function browseUrlFromGitUrl(gitUrl: string, subdir: null | string): null | string {
-  const github = githubBrowseBase(gitUrl)
+function browseUrlFromGitUrl(gitUrl: string, subdir: string | null): string | null {
+  const githubBase = githubBrowseBase(gitUrl)
 
-  if (github) {
-    return subdir ? `${github}/tree/HEAD/${subdir}` : github
+  if (githubBase) {
+    return subdir ? `${githubBase}/tree/HEAD/${subdir}` : githubBase
   }
 
-  // Only an https source gets a browse link. An `http://` one would put a link
-  // the app is warning about into the dialog as something to click.
-  if (/^https:\/\//i.test(gitUrl)) {
+  if (/^https?:\/\//.test(gitUrl)) {
     const base = gitUrl.replace(/\.git$/, '')
 
     return subdir ? `${base}/tree/HEAD/${subdir}` : base
@@ -139,15 +104,13 @@ function browseUrlFromGitUrl(gitUrl: string, subdir: null | string): null | stri
   return null
 }
 
-/** Resolve an identifier, or null when it is not one. */
-export function resolvePluginSourceLinks(identifier: string): null | PluginSourceLinks {
+export function resolvePluginSourceLinks(identifier: string): PluginSourceLinks | null {
   try {
     const { gitUrl, subdir } = resolvePluginGitUrl(identifier)
 
     return {
-      browseUrl: browseUrlFromGitUrl(gitUrl, subdir),
       gitUrl,
-      insecure: /^(file|http):\/\//i.test(gitUrl),
+      browseUrl: browseUrlFromGitUrl(gitUrl, subdir),
       subdir
     }
   } catch {

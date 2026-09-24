@@ -1,7 +1,8 @@
-import { type Codec, persistentAtom } from '@/lib/persisted'
+import { atom } from 'nanostores'
 
-// Selected turn-end completion cue. Ported from apps/desktop/src/store/completion-sound.ts,
-// adapted to universal's persistentAtom seam.
+import { persistString, storedString } from '@/lib/storage'
+
+const STORAGE_KEY = 'hermes.desktop.completionSoundVariantId'
 
 export const DEFAULT_COMPLETION_SOUND_VARIANT_ID = 1
 
@@ -16,16 +17,15 @@ export function resolveCompletionSoundVariantId(variantId: number): number {
     : DEFAULT_COMPLETION_SOUND_VARIANT_ID
 }
 
-const variantCodec: Codec<number> = {
-  decode: raw => resolveCompletionSoundVariantId(Number.parseInt(raw, 10)),
-  encode: value => String(value)
+function load(): number {
+  const stored = storedString(STORAGE_KEY)
+
+  return stored ? resolveCompletionSoundVariantId(Number.parseInt(stored, 10)) : DEFAULT_COMPLETION_SOUND_VARIANT_ID
 }
 
-export const $completionSoundVariantId = persistentAtom<number>(
-  'hermes.completionSoundVariantId',
-  DEFAULT_COMPLETION_SOUND_VARIANT_ID,
-  variantCodec
-)
+export const $completionSoundVariantId = atom(load())
+
+$completionSoundVariantId.subscribe(id => persistString(STORAGE_KEY, String(id)))
 
 export function setCompletionSoundVariantId(variantId: number) {
   $completionSoundVariantId.set(resolveCompletionSoundVariantId(variantId))

@@ -29,11 +29,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PALETTE_AREA } from '@/app/command-palette/contrib'
-import { STATUSBAR_AREAS } from '@/app/contrib/surfaces'
 import { ROUTES_AREA, SIDEBAR_NAV_AREA } from '@/app/routes'
 import type * as Hermes from '@/hermes'
 import { I18nProvider } from '@/i18n'
+import { __resetNotifications, notificationsBridge } from '@/lib/hermes-desktop/notifications'
 import { KEYBINDS_AREA } from '@/lib/keybinds/actions'
+import { STATUSBAR_AREAS } from '@/sdk'
+import { __resetNativeNotifyBaselineForTests } from '@/store/notify-baseline'
 
 import kanbanPlugin from '../../../../packages/hermes-sample-plugins/kanban/plugin'
 
@@ -63,6 +65,8 @@ vi.mock('@/hermes', async importOriginal => ({
     return Promise.resolve(restFixture(path))
   }
 }))
+
+const desktopWindow = window as unknown as { hermesDesktop?: Window['hermesDesktop'] }
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 // Deliberately DISAGREEING with the assertions' defaults: the card is in
@@ -162,6 +166,12 @@ function renderContribution(area: string, localId: string) {
 beforeEach(() => {
   restCalls.length = 0
   sendNotification.mockClear()
+  __resetNotifications()
+  __resetNativeNotifyBaselineForTests()
+  // jsdom has no Tauri runtime, so `installHermesDesktopBridge` omits `notify`.
+  // Pin the shipping notifications bridge so the chain under test still reaches
+  // the mocked `@tauri-apps/plugin-notification` edge.
+  desktopWindow.hermesDesktop = { ...notificationsBridge } as Window['hermesDesktop']
   registerKanban()
 })
 
@@ -169,6 +179,7 @@ afterEach(() => {
   cleanup()
   dispose?.()
   dispose = null
+  delete desktopWindow.hermesDesktop
 })
 
 describe('the kanban sample registers into universal’s real registry', () => {

@@ -1,11 +1,15 @@
-// Session routing for gateway events, ported verbatim from
-// apps/desktop/src/lib/gateway-events.ts (the desktop file also carries
-// statusbar log helpers, which universal builds elsewhere).
-//
-// Universal keeps ONE transcript ($messages) for the focused chat, so without
-// this a background session's tool/message events render in whatever chat
-// happens to be open, and switching chats mid-turn drags the previous turn's
-// remaining tool events into the new transcript.
+import type { StatusbarMenuItem } from '@/app/shell/statusbar-controls'
+
+const LOG_TAIL = 5
+
+interface RpcEventLike {
+  payload?: unknown
+  type?: string
+}
+
+function asRecord(payload: unknown): Record<string, unknown> {
+  return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
+}
 
 /**
  * Unscoped stream events that must stay pinned to the session that received
@@ -13,14 +17,19 @@
  * Without this, ``explicitSid || activeSessionId`` reattributes live deltas to
  * the newly focused chat.
  */
-const UNSCOPED_STREAM_EVENT_TYPES = new Set([
-  'approval.request',
+/** Unscoped stream events that must stay pinned to the session that received
+ * ``message.start`` after the user switches chats mid-turn (#47709 / #48281).
+ * Without this, ``explicitSid || activeSessionId`` reattributes live deltas to
+ * the newly focused chat. Exported so the event handler can tell which events
+ * are pin-eligible when deciding whether an unpinned straggler is legitimate. */
+export const UNSCOPED_STREAM_EVENT_TYPES = new Set([
   'browser.progress',
   'clarify.request',
+  'connection.request',
   'error',
-  'mcp.setup.request',
   'message.complete',
   'message.delta',
+  'message.interim',
   'message.start',
   'reasoning.available',
   'reasoning.delta',
@@ -30,8 +39,13 @@ const UNSCOPED_STREAM_EVENT_TYPES = new Set([
   'thinking.delta',
   'tool.complete',
   'tool.generating',
-  'tool.progress',
-  'tool.start'
+  'tool.start',
+  'vault.code.expire',
+  'vault.code.request',
+  'vault.save_login.expire',
+  'vault.save_login.request',
+  'vault.unlock.expire',
+  'vault.unlock.request'
 ])
 
 const UNSCOPED_STREAM_END_EVENT_TYPES = new Set(['error', 'message.complete'])
@@ -62,7 +76,42 @@ export interface GatewayEventSessionRouteInput {
 export interface GatewayEventSessionRoute {
   drop: boolean
   nextUnscopedStreamSessionId: null | string
+  /** True when the event was attributed via the pinned stream session rather
+   *  than the active-session fallback. The caller uses this to drop late
+   *  stragglers: an unpinned stream event landing on a session that has no
+   *  live turn belongs to a turn that already ended elsewhere. */
+  pinned: boolean
   sessionId: null | string
+}
+
+/** Which session (if any) to re-pull `approval.pending` for after `eventType`.
+ *
+ *  `gateway.ready` and `session.info` are the two rehydration points. An
+ *  UNSCOPED `session.info` (the approvals-loop / broadcast fan-out, no
+ *  `session_id` on the frame) reaches here attributed to the active session by
+ *  the routing fallback; when `isGone(activeSessionId)` — the gateway already
+ *  answered 4001 for that runtime — replaying would only re-send the dead id
+ *  on every fan-out tick (#100639), so return null. A frame that names the
+ *  session explicitly is the runtime speaking for itself and is never gone. */
+export function approvalReplaySessionId(
+  eventType: string | undefined,
+  activeSessionId: null | string,
+  routedSessionId: null | string,
+  options?: { explicit?: boolean; isGone?: (sessionId: string) => boolean }
+): null | string {
+  let target: null | string = null
+
+  if (eventType === 'gateway.ready') {
+    target = activeSessionId
+  } else if (eventType === 'session.info') {
+    target = routedSessionId
+  }
+
+  if (target && !options?.explicit && options?.isGone?.(target)) {
+    return null
+  }
+
+  return target
 }
 
 /**
@@ -87,6 +136,7 @@ export function resolveGatewayEventSessionId({
     return {
       drop: false,
       nextUnscopedStreamSessionId,
+      pinned: true,
       sessionId: explicitSessionId
     }
   }
@@ -95,6 +145,7 @@ export function resolveGatewayEventSessionId({
     return {
       drop: true,
       nextUnscopedStreamSessionId: unscopedStreamSessionId,
+      pinned: false,
       sessionId: null
     }
   }
@@ -119,6 +170,37 @@ export function resolveGatewayEventSessionId({
   return {
     drop: false,
     nextUnscopedStreamSessionId,
+    pinned: streamEvent && eventType !== 'message.start' && Boolean(unscopedStreamSessionId),
     sessionId
   }
+}
+
+export function gatewayEventCompletedFileDiff(event: RpcEventLike): boolean {
+  if (event.type !== 'tool.complete') {
+    return false
+  }
+
+  const diff = asRecord(event.payload).inline_diff
+
+  return typeof diff === 'string' && diff.trim().length > 0
+}
+
+export function buildGatewayLogItems(lines: readonly string[]): readonly StatusbarMenuItem[] {
+  if (lines.length === 0) {
+    return [
+      {
+        className: 'text-muted-foreground',
+        disabled: true,
+        id: 'gateway-log-empty',
+        label: 'No recent gateway log lines'
+      }
+    ]
+  }
+
+  return lines.slice(-LOG_TAIL).map((line, index) => ({
+    className: 'font-mono text-[0.68rem] text-muted-foreground',
+    disabled: true,
+    id: `gateway-log:${index}`,
+    label: line.trim().slice(0, 120) || '(blank log line)'
+  }))
 }

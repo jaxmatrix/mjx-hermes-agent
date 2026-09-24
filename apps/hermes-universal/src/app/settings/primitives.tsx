@@ -1,40 +1,85 @@
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
+import { createContext, useContext } from 'react'
 
-import { PAGE_INSET_X } from '@/app/layout-constants'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
+import { triggerHaptic } from '@/lib/haptics'
+import type { IconComponent } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
-// Ported to match apps/desktop/src/app/settings/primitives.tsx: the settings
-// page scroll wrapper, section heading, and the canonical labeled-control row —
-// keyed to the desktop `--conversation-*` typography + `--ui-*` tokens so every
-// section reads identically to desktop.
+import { PAGE_INSET_X } from '../layout-constants'
 
-export function SettingsContent({ children }: { children: ReactNode }) {
-  return <div className={cn('min-h-0 flex-1 overflow-y-auto pb-20', PAGE_INSET_X)}>{children}</div>
+// The settings shell owns page titles; embedded callers retain their headings.
+export const SettingsBreadcrumbContext = createContext(false)
+
+// `bare` drops the page gutters + tall bottom pad for embedding in a tighter
+// surface (e.g. the boot-failure recovery card owns its own padding).
+export function SettingsContent({ children, bare = false }: { children: ReactNode; bare?: boolean }) {
+  return (
+    <section className="min-h-0 overflow-hidden">
+      <div className={cn('h-full min-h-0 overflow-y-auto', bare ? 'px-5 pb-6' : cn('pb-20', PAGE_INSET_X))}>
+        {children}
+      </div>
+    </section>
+  )
 }
 
-export function Pill({ tone = 'muted', children }: { tone?: 'muted' | 'primary'; children: ReactNode }) {
-  return <Badge variant={tone === 'primary' ? 'default' : 'muted'}>{children}</Badge>
+const PILL_VARIANT = {
+  muted: 'muted',
+  primary: 'default',
+  success: 'success',
+  warn: 'warn',
+  destructive: 'destructive'
+} as const
+
+// Rest props spread through to the Badge's DOM node — REQUIRED for Radix
+// `asChild` composition (wrapping a Pill in `Tip` clones it with the hover
+// handlers and ref as props; swallowing them left every tooltip on a Pill
+// silently dead).
+export function Pill({
+  tone = 'muted',
+  children,
+  ...props
+}: { tone?: keyof typeof PILL_VARIANT; children: ReactNode } & Omit<ComponentProps<typeof Badge>, 'variant'>) {
+  return (
+    <Badge variant={PILL_VARIANT[tone]} {...props}>
+      {children}
+    </Badge>
+  )
 }
 
 export function SectionHeading({
+  aside,
   icon: Icon,
-  title,
   meta,
-  aside
+  page = false,
+  title
 }: {
-  icon: ComponentType<{ className?: string }>
-  title: string
-  meta?: string
   // Right-aligned trailing content on the heading row (e.g. a compact status +
   // action), so a single-item section needn't repeat its own label as a row.
   aside?: ReactNode
+  icon: IconComponent
+  meta?: string
+  page?: boolean
+  title: string
 }) {
+  const hasBreadcrumb = useContext(SettingsBreadcrumbContext)
+  const showTitle = !page || !hasBreadcrumb
+
+  if (!showTitle && !aside && !meta) {
+    return null
+  }
+
   return (
     <div className="mb-2.5 flex items-center gap-2 pt-2 text-[length:var(--conversation-text-font-size)] font-medium">
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      <span>{title}</span>
+      {showTitle && (
+        <>
+          <Icon className="size-4 shrink-0 text-muted-foreground" />
+          <span>{title}</span>
+        </>
+      )}
       {meta && <Pill>{meta}</Pill>}
       {aside && <div className="ms-auto flex min-w-0 items-center">{aside}</div>}
     </div>
@@ -44,9 +89,6 @@ export function SectionHeading({
 // A titled section: heading + body with the shared vertical rhythm. Keeps the
 // heading and its content welded together so pages stop hand-rolling
 // `<div className="mb-…"><SectionHeading/>…</div>` at every call site.
-//
-// NOTE: distinct from the `SettingsSection` exported by ./settings-section —
-// that one is the routed page wrapper. This is the in-page section primitive.
 export function SettingsSection({
   aside,
   children,
@@ -56,7 +98,7 @@ export function SettingsSection({
 }: {
   aside?: ReactNode
   children: ReactNode
-  icon: ComponentType<{ className?: string }>
+  icon: IconComponent
   meta?: string
   title: string
 }) {
@@ -68,14 +110,44 @@ export function SettingsSection({
   )
 }
 
+export function NavLink({
+  icon: Icon,
+  label,
+  active,
+  onClick
+}: {
+  icon: IconComponent
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <Button
+      className={cn(
+        'flex min-h-7 w-full justify-start gap-2 rounded-md px-2 text-start text-[length:var(--conversation-text-font-size)] transition',
+        active
+          ? 'bg-(--ui-bg-tertiary) text-foreground'
+          : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'
+      )}
+      onClick={onClick}
+      size="sm"
+      type="button"
+      variant="ghost"
+    >
+      <Icon className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </Button>
+  )
+}
+
 export function ListRow({
   title,
   description,
   hint,
   action,
   below,
-  id,
   'data-tour': dataTour,
+  id,
   wide = false,
   className
 }: {
@@ -84,18 +156,17 @@ export function ListRow({
   hint?: ReactNode
   action?: ReactNode
   below?: ReactNode
-  /** DOM id for ⌘K deep links — `settingRowElementId(...)` from settings-search.
-   *  Carrying one also opts the row into the scroll offset + flash target. */
-  id?: string
   /** Durable handle for tours (see lib/tour) — usually the field's schema key. */
   'data-tour'?: string
+  id?: string
   wide?: boolean
   className?: string
 }) {
   return (
-    // Container-queried (not viewport): the label/control split keys on the row's
-    // own pane width, so a narrow detail column stacks instead of squishing.
-    <div className={cn('@container', id && 'scroll-mt-6 rounded-lg', className)} data-tour={dataTour} id={id}>
+    // Container-queried, not viewport-queried: the label/control split keys on
+    // the row's own pane width, so a narrow detail column (messaging, split
+    // views) stacks instead of squishing the label against minmax(15rem,…).
+    <div className={cn('@container', className)} data-tour={dataTour} id={id}>
       <div
         className={cn(
           'grid gap-3 py-3',
@@ -118,8 +189,41 @@ export function ListRow({
   )
 }
 
+// A labelled on/off row — the canonical device-pref switch (haptic baked in).
+export function ToggleRow({
+  checked,
+  description,
+  disabled,
+  label,
+  onChange
+}: {
+  checked: boolean
+  description?: string
+  disabled?: boolean
+  label: string
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <ListRow
+      action={
+        <Switch
+          aria-label={label}
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={on => {
+            triggerHaptic('selection')
+            onChange(on)
+          }}
+        />
+      }
+      description={description}
+      title={label}
+    />
+  )
+}
+
 // Skeleton primitives mirroring the settings layout rhythm — a loading page keeps
-// its shape instead of collapsing to a centered spinner.
+// its shape (like ModelSettings) instead of collapsing to a centered spinner.
 export function SectionHeadingSkeleton() {
   return (
     <div className="mb-2.5 flex items-center gap-2 pt-2">
@@ -150,28 +254,23 @@ export function ListRowSkeleton({ wide = false }: { wide?: boolean }) {
 
 // A full settings page in its loading shape: an optional leading search field
 // over one or more sections, each an optional heading above a run of rows.
-// `<SettingsSkeleton search sections={[{ heading, rows }]} />`. `children` is
-// for real content that already renders its own loading shape and should stay
-// mounted (the Model page's header slot).
+// `<SettingsSkeleton search sections={[{ heading, rows }]} />`.
 export function SettingsSkeleton({
-  children,
   search = false,
   sections = [{ rows: 4 }]
 }: {
-  children?: ReactNode
   search?: boolean
   sections?: { heading?: boolean; rows: number }[]
 }) {
   return (
     <SettingsContent>
-      {children}
       {search && <Skeleton className="mb-3 h-8 w-full" />}
-      {sections.map((section, index) => (
-        <section className={cn(index > 0 && 'mt-6')} key={index}>
+      {sections.map((section, i) => (
+        <section className={cn(i > 0 && 'mt-6')} key={i}>
           {section.heading && <SectionHeadingSkeleton />}
           <div className="grid gap-1">
-            {Array.from({ length: section.rows }, (_, row) => (
-              <ListRowSkeleton key={row} />
+            {Array.from({ length: section.rows }, (_, r) => (
+              <ListRowSkeleton key={r} />
             ))}
           </div>
         </section>
@@ -180,11 +279,6 @@ export function SettingsSkeleton({
   )
 }
 
-export function EmptyState({ title, description }: { title: string; description?: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1 px-6 py-16 text-center">
-      <div className="text-sm font-medium text-foreground">{title}</div>
-      {description && <div className="text-xs text-muted-foreground">{description}</div>}
-    </div>
-  )
-}
+// Canonical implementation lives in components/ui; re-exported so the many
+// settings call sites keep their import path.
+export { EmptyState } from '@/components/ui/empty-state'

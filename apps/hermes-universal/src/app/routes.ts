@@ -1,36 +1,62 @@
-import { atom } from 'nanostores'
+import { atom, onMount } from 'nanostores'
 import type { ReactNode } from 'react'
 
+import {
+  AGENTS_ROUTE,
+  ARTIFACTS_ROUTE,
+  CAPABILITIES_ROUTE,
+  COMMAND_CENTER_ROUTE,
+  CRON_ROUTE,
+  GATEWAY_SETTINGS_ROUTE,
+  mcpServerRoute,
+  MESSAGING_ROUTE,
+  NEW_CHAT_ROUTE,
+  PROFILES_ROUTE,
+  SESSION_IMPORT_ROUTE,
+  SESSION_ROUTE_PREFIX,
+  SETTINGS_ROUTE,
+  SKILLS_ROUTE,
+  STARMAP_ROUTE,
+  WEBHOOKS_ROUTE
+} from '@/app/route-paths'
+import { noteActiveTreeGroup, revealTreePane } from '@/components/pane-shell/tree/store'
 import { registry } from '@/contrib/registry'
 import type { Contribution } from '@/contrib/types'
+import type { InterfaceTier } from '@/store/interface-mode'
 
-export const SESSION_ROUTE_PREFIX = '/'
-export const NEW_CHAT_ROUTE = '/'
-export const SETTINGS_ROUTE = '/settings'
-/** Settings drill-in for the gateway configurator — the phone's "Change gateway"
- *  target (the drawer popover is too cramped for the connect form). */
-export const GATEWAY_SETTINGS_ROUTE = '/settings/gateway'
-/** Settings drill-in for the pet gallery + generator (`/hatch`, `/pet list`). */
-export const PET_SETTINGS_ROUTE = '/settings/pet'
-/** Settings drill-in for the plugin inventory (MJX-53). */
-export const PLUGINS_SETTINGS_ROUTE = '/settings/plugins'
-export const COMMAND_CENTER_ROUTE = '/command-center'
-export const SKILLS_ROUTE = '/skills'
-export const MESSAGING_ROUTE = '/messaging'
-export const ARTIFACTS_ROUTE = '/artifacts'
-export const CRON_ROUTE = '/cron'
-export const PROFILES_ROUTE = '/profiles'
-export const AGENTS_ROUTE = '/agents'
-export const STARMAP_ROUTE = '/starmap'
-export const WEBHOOKS_ROUTE = '/webhooks'
+export {
+  AGENTS_ROUTE,
+  ARTIFACTS_ROUTE,
+  CAPABILITIES_ROUTE,
+  COMMAND_CENTER_ROUTE,
+  CRON_ROUTE,
+  GATEWAY_SETTINGS_ROUTE,
+  mcpServerRoute,
+  MESSAGING_ROUTE,
+  NEW_CHAT_ROUTE,
+  PROFILES_ROUTE,
+  SESSION_IMPORT_ROUTE,
+  SESSION_ROUTE_PREFIX,
+  SETTINGS_ROUTE,
+  SKILLS_ROUTE,
+  STARMAP_ROUTE,
+  WEBHOOKS_ROUTE
+}
+
+type NavigateLike = (to: string, options?: { replace?: boolean }) => void
 
 export type AppView =
+  | 'session-import'
   | 'agents'
   | 'artifacts'
+  | 'capabilities'
   | 'chat'
   | 'command-center'
   | 'cron'
-  /** A contributed (plugin) page — see ROUTES_AREA below. */
+  // A contributed (plugin) full page at its own route — NOT chat. Without this
+  // distinction contributed paths fell through appViewForPath's 'chat' default,
+  // so the sidebar kept a session highlighted and the titlebar kept the
+  // session-title dropdown while a plugin page was showing.
   | 'extension'
   | 'messaging'
   | 'profiles'
@@ -40,8 +66,10 @@ export type AppView =
   | 'webhooks'
 
 export type AppRouteId =
+  | 'session-import'
   | 'agents'
   | 'artifacts'
+  | 'capabilities'
   | 'command-center'
   | 'cron'
   | 'messaging'
@@ -59,29 +87,29 @@ export interface AppRoute {
 }
 
 export const APP_ROUTES = [
+  { id: 'session-import', path: SESSION_IMPORT_ROUTE, view: 'session-import' },
   { id: 'new', path: NEW_CHAT_ROUTE, view: 'chat' },
   { id: 'settings', path: SETTINGS_ROUTE, view: 'settings' },
   { id: 'command-center', path: COMMAND_CENTER_ROUTE, view: 'command-center' },
-  { id: 'skills', path: SKILLS_ROUTE, view: 'skills' },
+  { id: 'capabilities', path: CAPABILITIES_ROUTE, view: 'capabilities' },
   { id: 'messaging', path: MESSAGING_ROUTE, view: 'messaging' },
+  { id: 'webhooks', path: WEBHOOKS_ROUTE, view: 'webhooks' },
   { id: 'artifacts', path: ARTIFACTS_ROUTE, view: 'artifacts' },
   { id: 'cron', path: CRON_ROUTE, view: 'cron' },
+  { id: 'skills', path: SKILLS_ROUTE, view: 'skills' },
   { id: 'profiles', path: PROFILES_ROUTE, view: 'profiles' },
   { id: 'agents', path: AGENTS_ROUTE, view: 'agents' },
-  { id: 'starmap', path: STARMAP_ROUTE, view: 'starmap' },
-  { id: 'webhooks', path: WEBHOOKS_ROUTE, view: 'webhooks' }
+  { id: 'starmap', path: STARMAP_ROUTE, view: 'starmap' }
 ] as const satisfies readonly AppRoute[]
 
 const APP_VIEW_BY_PATH = new Map<string, AppView>(APP_ROUTES.map(route => [route.path, route.view]))
 const RESERVED_PATHS: ReadonlySet<string> = new Set(APP_ROUTES.map(route => route.path))
 
-// ── Routes — the `routes` registry area ──────────────────────────────────────
-// EVERY workspace page is a contribution: the app's own pages (Capabilities /
-// Messaging / Artifacts, registered as `source: 'core'` in app/contrib/panes.tsx)
-// and plugin pages alike, so the route table has exactly one shape. A plugin
-// pairs a `render` with an absolute one-segment path. Contributed paths are
-// reserved exactly like APP_ROUTES so the session-id parser below never mistakes
-// `/kanban` for a session route. Navigate with `host.navigate(path)`.
+// ── Contributed routes — the `routes` registry area ─────────────────────────
+// A contribution mounts a FULL PAGE in the workspace pane at `data.path`
+// (`render` on the contribution itself, like every other area). Contributed
+// paths are reserved exactly like APP_ROUTES so the session-id parser never
+// mistakes them for a session route. Navigate with `host.navigate(path)`.
 
 export const ROUTES_AREA = 'routes'
 
@@ -91,109 +119,80 @@ export interface RouteContribution {
   path: string
 }
 
-export interface ResolvedRoute {
-  key: string
-  path: string
-  render: () => ReactNode
-  source: string
-  title?: string
-}
+/** Bumps whenever the `routes` area mutates. For non-React consumers that
+ *  derive from `contributedRoutes()` outside a render (paneMirror titles):
+ *  hand it to `also` so a plugin route registering after its tile opened
+ *  re-syncs the tab title. Subscribes to the registry only while listened to. */
+export const $routesVersion = atom(0)
+onMount($routesVersion, () => registry.subscribeArea(ROUTES_AREA, () => $routesVersion.set($routesVersion.get() + 1)))
 
-/** Validated pages, core + contributed. Pass the area's contributions when you
- *  already have them from a `useContributions(ROUTES_AREA)` subscription, so the
- *  React path derives from the same snapshot it re-rendered for. */
-export function contributedRoutes(items: readonly Contribution[] = registry.getArea(ROUTES_AREA)): ResolvedRoute[] {
-  return items
+// React consumers must pass their `useContributions(ROUTES_AREA)` snapshot in:
+// with React Compiler enabled, an independently-called `contributedRoutes()`
+// can stay memoized across a late registration the subscription DID deliver.
+export function contributedRoutes(
+  contributions: readonly Contribution[] = registry.getArea(ROUTES_AREA)
+): Array<{ key: string; path: string; title?: string; render: () => ReactNode }> {
+  return contributions
     .map(c => ({
       key: `${c.source ?? 'core'}:${c.id}`,
       path: (c.data as RouteContribution | undefined)?.path ?? '',
-      render: c.render!,
-      source: c.source ?? 'core',
-      title: c.title
+      title: c.title,
+      render: c.render!
     }))
-    .filter(
-      route =>
-        Boolean(route.render) &&
-        route.path.startsWith('/') &&
-        // One segment only. A `*`/`:param` path would shadow the workspace
-        // route table's own catch-all and swallow every unmatched route.
-        !route.path.slice(1).includes('/') &&
-        !/[*:]/.test(route.path) &&
-        // Core registers the built-in pages AT their reserved paths (that's what
-        // makes them routes); a plugin may not squat on one.
-        (route.source === 'core' || !RESERVED_PATHS.has(route.path))
-    )
+    .filter(route => Boolean(route.path.startsWith('/') && route.render) && !RESERVED_PATHS.has(route.path))
 }
 
-/**
- * The first path segment, with its leading slash.
- *
- * A contributed page REGISTERS one segment (`contributedRoutes` still refuses a
- * multi-segment registration — that invariant is what protects the session
- * parser), but it RENDERS at `<path>/*`, so `/index-network/intent/1` belongs to
- * the `/index-network` page. Matching on the head is what makes a
- * desktop-portable plugin deep link (`hermes://index-network/intent/1`) mean the
- * same thing here.
- */
-export function routeHead(pathname: string): string {
-  const path = pathname.split(/[?#]/)[0] ?? pathname
-
-  return `/${path.replace(/^\/+/, '').split('/')[0] ?? ''}`
-}
-
-/** A page that is NOT one of the app's own — i.e. a plugin page, which has no
- *  AppView of its own and classifies as `'extension'`. A core page keeps its
- *  APP_ROUTES view (`/skills` is `skills`, never `extension`). */
 function isContributedPath(pathname: string): boolean {
-  const head = routeHead(pathname)
-
-  return !RESERVED_PATHS.has(head) && contributedRoutes().some(route => route.path === head)
+  return contributedRoutes().some(route => route.path === pathname)
 }
 
-/**
- * Does this path lead to a page that EXISTS?
- *
- * The guard `store/deep-link.ts` needs and desktop does not: universal's session
- * route is `/<id>` at the root (`SESSION_ROUTE_PREFIX`), so an unrecognised path
- * is not a harmless 404 — it is read as a session id and the app tries to
- * hydrate a conversation by that name. Anything turning untrusted text into a
- * navigation asks this first.
- */
-export function isKnownRoutePath(pathname: string): boolean {
-  const head = routeHead(pathname)
-
-  return RESERVED_PATHS.has(head) || contributedRoutes().some(route => route.path === head)
-}
-
-// ── Sidebar nav — the `sidebar.nav` registry area ────────────────────────────
-// The rail renders this area and nothing else: the built-in rows register as
-// `source: 'core'` with negative `order` (app/shell/nav-contrib.ts), contributed
-// rows land after them. Pair a plugin row with a ROUTES_AREA page — it navigates
-// to `path` and lights up while the app is there.
+// ── Contributed sidebar nav — the `sidebar.nav` registry area ────────────────
+// A DATA contribution adds a row to the sidebar's top nav (below Artifacts).
+// Pair with a ROUTES_AREA page: the row navigates to `path` and lights up
+// while the app is there.
 
 export const SIDEBAR_NAV_AREA = 'sidebar.nav'
 
 /** Payload of a `sidebar.nav` data contribution. */
 export interface SidebarNavContribution {
-  /** Codicon name, e.g. `'project'`. Defaults to `plug`. */
-  codicon?: string
-  /** Literal row label. Plugins set this; core rows use `labelKey` instead. */
+  /** Codicon name, e.g. `'project'`. */
+  codicon: string
+  /** Static label when set; otherwise `labelKey` indexes `sidebar.nav`. */
   label?: string
-  /** CORE ONLY: key into `t.sidebar.nav`, so the row follows the active locale. */
   labelKey?: string
   /** Route to navigate to (usually a contributed page's path). */
   path?: string
-  /** CORE ONLY: an action row (e.g. New session) instead of / before navigating. */
+  /** Action row (e.g. New session) instead of navigation. */
   run?: () => void
-  /** CORE ONLY: light the row up for this view rather than an exact path match —
-   *  a session route still reads as `chat`, so New session stays lit. */
   view?: AppView
+  /** `'advanced'` keeps the row out of Simple mode; unset shows it everywhere. */
+  tier?: InterfaceTier
+}
+
+// ── Contributed profile-group header — the `sidebar.profileGroup.header` area ─
+// A RENDER contribution mounted at the top of each gateway/profile group in the
+// Sessions sidebar (above its session rows) while the group is expanded. The
+// contribution's `data` is a `ProfileGroupHeaderContribution`; core calls
+// `render(route)` with the group's connection + profile so one contribution
+// serves every group. First consumer: the Bots plugin's Screen portal.
+
+export const SIDEBAR_PROFILE_GROUP_HEADER_AREA = 'sidebar.profileGroup.header'
+
+export interface ProfileGroupRoute {
+  connectionId: null | string
+  profile: string
+}
+
+/** Payload of a `sidebar.profileGroup.header` data contribution. */
+export interface ProfileGroupHeaderContribution {
+  render: (route: ProfileGroupRoute) => ReactNode
 }
 
 // Views that render as a full-screen modal card (OverlayView) over the shell.
 // While one is open the app's titlebar control clusters must hide so they don't
 // bleed over the overlay (they sit at a higher z-index than the overlay card).
 export const OVERLAY_VIEWS: ReadonlySet<AppView> = new Set([
+  'session-import',
   'agents',
   'command-center',
   'cron',
@@ -207,90 +206,151 @@ export function isOverlayView(view: AppView): boolean {
   return OVERLAY_VIEWS.has(view)
 }
 
+/** True when TitlebarControls may hide the app's fixed tool clusters.
+ *  Overlays already own the window (clusters AND titleBar slots unmount).
+ *  Contributed full pages (`extension`) hide the app clusters only while the
+ *  page actually mounts `titleBar.*` chrome — those slots are mount-scoped, so
+ *  a plugin page with no titlebar contribution keeps the app controls.
+ *  First-party workspace pages (capabilities/messaging/artifacts) keep the clusters. */
+export function hidesFixedTitlebarClusters(view: AppView): boolean {
+  return isOverlayView(view) || view === 'extension'
+}
+
+/** The pathname of a router target. Every classifier below reasons about a
+ *  PATH, but callers navigate to full targets (`/capabilities?tab=connectors`), and an
+ *  unstripped query reaches the session-id parser — `/capabilities?tab=connectors` reads
+ *  as the session `skills?tab=connectors`, so Capabilities classifies as a chat.
+ *  `sessionRoute` percent-encodes ids, so `?`/`#` can only start a query or a
+ *  hash. */
+export function routePathname(to: string): string {
+  const cut = to.search(/[?#]/)
+
+  return cut === -1 ? to : to.slice(0, cut)
+}
+
 export function isNewChatRoute(pathname: string): boolean {
-  return pathname === NEW_CHAT_ROUTE
+  return routePathname(pathname) === NEW_CHAT_ROUTE
 }
 
 export function routeSessionId(pathname: string): string | null {
-  if (!pathname.startsWith(SESSION_ROUTE_PREFIX) || RESERVED_PATHS.has(pathname) || isContributedPath(pathname)) {
+  const path = routePathname(pathname)
+
+  if (!path.startsWith(SESSION_ROUTE_PREFIX) || RESERVED_PATHS.has(path) || isContributedPath(path)) {
     return null
   }
 
-  const id = pathname.slice(SESSION_ROUTE_PREFIX.length)
+  const id = path.slice(SESSION_ROUTE_PREFIX.length)
 
   return id && !id.includes('/') ? decodeURIComponent(id) : null
 }
 
-/** The Capabilities MCP tab, scrolled to and focused on one server — the
- *  destination of both the health-check nudge and a confirmed
- *  `hermes://mcp/install` (MJXHRM-454). `useDeepLinkHighlight` reads `server`. */
-export function mcpServerRoute(name: string): string {
-  return `${SKILLS_ROUTE}?tab=mcp&server=${encodeURIComponent(name)}`
+/**
+ * The primary composer's durable scope key candidate: the route is the source
+ * of truth for which chat is on screen, so prefer its (stable) stored session
+ * id over a store selection that can be momentarily null/stale mid-switch
+ * (#59305). A genuine new-chat route always wins with `null`, never falling
+ * back to a leftover selection from the chat just left. A non-chat route
+ * (settings, an overlay) has no session opinion, so the store selection passes
+ * through unchanged.
+ */
+export function primaryRouteSelectedSessionId(pathname: string, storeSelectedSessionId: string | null): string | null {
+  if (isNewChatRoute(pathname)) {
+    return null
+  }
+
+  return routeSessionId(pathname) ?? storeSelectedSessionId
 }
 
 export function sessionRoute(sessionId: string): string {
   return `${SESSION_ROUTE_PREFIX}${encodeURIComponent(sessionId)}`
 }
 
-/**
- * Deep link to the cron surface with ONE job selected — what "Manage" on a cron
- * row opens.
- *
- * The id rides in the URL rather than in a module atom because on Android the
- * cron surface opens as a native screen activity: a SECOND WebView with its own
- * JS heap (`store/windows.ts` → `open_screen_window`). Nothing an atom holds
- * crosses that boundary, so an atom-carried selection is dropped on the one
- * platform this affordance was filed for. The route IS the carrier both WebViews
- * read, and `activity_route` (src-tauri/src/window.rs) forwards a query string
- * verbatim.
- */
+/** Open the cron overlay focused on one job (sidebar kebab → Manage). */
 export function cronJobRoute(jobId: string): string {
-  return `${CRON_ROUTE}?job=${encodeURIComponent(jobId)}`
-}
+  const params = new URLSearchParams({ job: jobId })
 
-/** The job a `/cron` route asks to select, read from `location.search`. */
-export function routeCronJobId(search: string): null | string {
-  return new URLSearchParams(search).get('job') || null
+  return `${CRON_ROUTE}?${params.toString()}`
 }
 
 export function appViewForPath(pathname: string): AppView {
-  if (isNewChatRoute(pathname) || routeSessionId(pathname)) {
+  const path = routePathname(pathname)
+
+  if (isNewChatRoute(path) || routeSessionId(path)) {
     return 'chat'
   }
 
-  if (isContributedPath(pathname)) {
+  if (isContributedPath(path)) {
     return 'extension'
   }
 
-  return APP_VIEW_BY_PATH.get(pathname) ?? 'chat'
+  return APP_VIEW_BY_PATH.get(path) ?? 'chat'
 }
 
-/** Does this route show a FULL PAGE (skills/messaging/artifacts) rather than the
- *  chat? Overlays (settings/command-center/…) don't count — the chat stays
- *  beneath them. Pure, so a caller can ask about a path without the atom below:
- *  only the desktop controller keeps that in sync, and the phone shell needs the
- *  same answer to decide whether its top-left button is a way out. */
-export function isWorkspacePagePath(pathname: string): boolean {
-  const view = appViewForPath(pathname)
+/** Does `to` land on a full page rendered INSIDE the workspace pane
+ *  (skills/messaging/artifacts/contributed routes)? Overlays don't count —
+ *  they float over whatever the workspace is already showing. */
+export function isWorkspacePageRoute(to: string): boolean {
+  const view = appViewForPath(to)
 
   return view !== 'chat' && !isOverlayView(view)
 }
 
-/** The full page the workspace pane currently shows — its TITLE, which the
- *  workspace tile puts on its tab so the strip says "Capabilities" rather than
- *  the chat's name. `null` while the pane shows the chat. */
-export const $workspacePage = atom<null | string>(null)
+/** True while the workspace pane shows a FULL PAGE (skills/messaging/
+ *  artifacts/plugin routes) instead of the chat. Published by the wiring
+ *  (which owns the router location); the workspace pane contribution mirrors
+ *  it as `headerVeto` so the zone tab bar stands down on pages. Overlays
+ *  (settings/…) don't count — the chat stays beneath them. */
+export const $workspaceIsPage = atom(false)
 
-/** Tab title for a page path: the route contribution's own, else the path
- *  itself (a plugin page that registered no title still needs a tab label). */
-function workspacePageTitle(pathname: string): string {
-  return contributedRoutes().find(route => route.path === pathname)?.title || pathname.replace(/^\//, '')
+/** Page-owned controls (kanban's board switcher) projected into the workspace
+ *  panel's tab-header space while `$workspaceIsPage` holds — the page's title
+ *  row, not the native band. Distinct from `titleBar.*`, whose slots stay
+ *  mounted on every route so plugin components never remount on navigation. */
+export const WORKSPACE_PAGE_HEADER_AREA = 'workspace.pageHeader'
+
+function revealWorkspacePane(): void {
+  noteActiveTreeGroup(null)
+  revealTreePane('workspace')
 }
 
-export function syncWorkspacePage(pathname: string): void {
-  const page = isWorkspacePagePath(pathname) ? workspacePageTitle(pathname) : null
+/**
+ * Point the workspace at `pathname`: mirror "showing a full page" into
+ * `$workspaceIsPage`, and FRONT the pane when it is one.
+ *
+ * A page renders inside `workspace`, so a main zone parked on a session tile
+ * keeps the tile on screen while the route and the page content change behind
+ * it — the navigation looks dead (#72602). Session switches already front the
+ * pane in `store/session-states.ts`; pages had no equivalent.
+ *
+ * The router location drives this, so every entry point gets it without opting
+ * in: sidebar, keybinds, command palette, Command Center, contributed
+ * statusbar/titlebar `to` targets, back/forward, and cold-start restore.
+ */
+export function syncWorkspaceRoute(pathname: string): void {
+  const isPage = isWorkspacePageRoute(pathname)
 
-  if (page !== $workspacePage.get()) {
-    $workspacePage.set(page)
+  if (isPage !== $workspaceIsPage.get()) {
+    $workspaceIsPage.set(isPage)
+  }
+
+  if (isPage) {
+    revealWorkspacePane()
+  }
+}
+
+/**
+ * Navigate to `to`, fronting the workspace pane when it is a page route.
+ *
+ * `syncWorkspaceRoute` covers route CHANGES; this covers the RE-CLICK, the one
+ * case it can't see — hitting Capabilities while already on `/capabilities` with a
+ * tile focused leaves the location untouched, so no effect fires and only an
+ * imperative reveal brings the page back. Use it wherever a nav affordance can
+ * be triggered from the page it targets.
+ */
+export function navigateToWorkspacePage(navigate: NavigateLike, to: string, options?: { replace?: boolean }): void {
+  navigate(to, options)
+
+  if (isWorkspacePageRoute(to)) {
+    revealWorkspacePane()
   }
 }

@@ -1,8 +1,21 @@
 import { ComposerPrimitive } from '@assistant-ui/react'
 import { useStore } from '@nanostores/react'
-import { type ClipboardEvent, type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef } from 'react'
+import {
+  type ClipboardEvent,
+  type FormEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef
+} from 'react'
 
-import { composerFill, composerFloatingStrip, composerSurfaceGlass } from '@/components/chat/composer-dock'
+import { useTourMarker } from '@/app/chat/tour-marker'
+import { useHudComposerDrag } from '@/app/hud/composer-drag'
+import { composerFloatingStrip, composerInputBacking } from '@/components/chat/composer-dock'
+import { $chatOnboardingSolo, $chatOnboardingThreadIds } from '@/components/onboarding-chat/assembly'
+import { OnboardingSkip } from '@/components/onboarding-chat/skip'
 import { Button } from '@/components/ui/button'
 import { Slot as ContribSlot } from '@/contrib/react/slot'
 import { useI18n } from '@/i18n'
@@ -10,29 +23,40 @@ import { chatMessageText } from '@/lib/chat-messages'
 import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
 import { DATA_IMAGE_URL_RE } from '@/lib/embedded-images'
 import { triggerHaptic } from '@/lib/haptics'
-import { isImeCommitEnter, reconcileCompositionFlag } from '@/lib/ime-composition'
-import { IS_MOBILE } from '@/lib/platform'
+import { isMacPlatform } from '@/lib/platform'
+import { useStoreSelector, useStoresSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
+import { interceptsTypedVoiceStop } from '@/lib/voice-stop-word'
 import { sessionCompacting } from '@/store/compaction'
-import { isSessionDraftRekey } from '@/store/composer'
 import { browseBackward, browseForward, deriveUserHistory, isBrowsingHistory } from '@/store/composer-input-history'
 import { POPOUT_WIDTH_REM } from '@/store/composer-popout'
 import { parkQueuedPrompts, removeQueuedPrompt, unparkQueuedPrompts } from '@/store/composer-queue'
-import { $gatewayState } from '@/store/gateway'
+import { $hudMode } from '@/store/hud'
+import { $showsAdvancedChrome } from '@/store/interface-mode'
+import { sessionBlockingPrompt } from '@/store/prompts'
 import { toggleReview } from '@/store/review'
-import { sessionThreadScrolledUp } from '@/store/thread-scroll'
+import { $gatewayState } from '@/store/session'
+import { $botChatSessionIds, $sessionStates, $sessionTiles, isBotChatSession } from '@/store/session-states'
+import { $threadScrolledUpBySession } from '@/store/thread-scroll'
 import { $autoSpeakReplies } from '@/store/voice-prefs'
 import { useTheme } from '@/themes'
 
 import { AttachmentList } from './attachments'
-import { BubbleRow } from './bubble-row'
-import { composerEnterIntent, type QueueEditState, slashArgStage, swallowsTriggerTab } from './composer-utils'
+import {
+  acceptsTriggerCompletion,
+  COMPOSER_FADE_BACKGROUND,
+  implicitSlashAcceptIndex,
+  liveComposerDraft,
+  type QueueEditState,
+  shouldDisableComposerInput,
+  slashArgStage
+} from './composer-utils'
 import { ContextMenu } from './context-menu'
 import { COMPOSER_AREAS, runComposerMiddleware } from './contrib'
 import { ComposerControls } from './controls'
 import { ComposerDirectiveActions } from './directive-actions'
 import { COMPOSER_DROP_ACTIVE_CLASS, COMPOSER_DROP_FADE_CLASS } from './drop-affordance'
-import { markActiveComposer } from './focus'
+import { markActiveComposer, onComposerAttachImagesRequest } from './focus'
 import { HelpHint } from './help-hint'
 import { useAtCompletions } from './hooks/use-at-completions'
 import { useComposerBranch } from './hooks/use-composer-branch'
@@ -43,94 +67,49 @@ import { useComposerMetrics } from './hooks/use-composer-metrics'
 import { useComposerPlaceholder } from './hooks/use-composer-placeholder'
 import { useComposerPopout } from './hooks/use-composer-popout'
 import { useComposerQueue } from './hooks/use-composer-queue'
+import { useComposerScreenshot } from './hooks/use-composer-screenshot'
 import { useComposerSubmit } from './hooks/use-composer-submit'
-import { useComposerTrigger } from './hooks/use-composer-trigger'
+import { triggerKeyUpHandler, useComposerTrigger } from './hooks/use-composer-trigger'
 import { useComposerUndo } from './hooks/use-composer-undo'
 import { useComposerUrlDialog } from './hooks/use-composer-url-dialog'
 import { useComposerVoice } from './hooks/use-composer-voice'
 import { useEmojiCompletions } from './hooks/use-emoji-completions'
 import { useComposerMicroActions } from './hooks/use-micro-actions'
 import { useSlashCompletions } from './hooks/use-slash-completions'
+import { useStatusDrawer } from './hooks/use-status-drawer'
 import { useSessionStatusPresence } from './hooks/use-status-presence'
+import { shouldConvertPasteToAttachment } from './large-paste'
 import { ActionBadges } from './micro-actions'
 import { chipTypedPathOnSpace, pathifyRefs } from './path-refs'
 import { QueuePanel } from './queue-panel'
+import { RestoredDraftNotice } from './restored-draft-notice'
 import {
+  beginComposerComposition,
   composerPlainText,
   deleteChipBeforeCaret,
   deleteSelectionInEditor,
   insertComposerContentsAtCaret,
-  insertComposerLineBreak,
   normalizeComposerEditorDom,
   RICH_INPUT_SLOT
 } from './rich-editor'
-import { useComposerScope } from './scope'
+import { useComposerScope, useComposerSurfaceId } from './scope'
 import { ComposerStatusStack } from './status-stack'
 import { CodingStatusRow } from './status-stack/coding-row'
+import { StatusDrawerContent, StatusDrawerToggle } from './status-stack/drawer'
 import { SuggestionPills } from './suggestion-pills'
 import { extractClipboardImageBlobs, openDirectiveScope } from './text-utils'
 import { ComposerTriggerPopover } from './trigger-popover'
 import type { ChatBarProps } from './types'
 import { isRedoShortcut, isUndoShortcut } from './undo-history'
 import { UrlDialog } from './url-dialog'
-import { chipTypedUrlOnSpace, linkifyUrls } from './url-refs'
+import {
+  chipTypedUrlOnSpace,
+  linkifyUrls,
+  markdownLinkFor,
+  resolveExactLinkPaste,
+  selectionLinkLabel
+} from './url-refs'
 import { VoiceActivity, VoicePlaybackActivity } from './voice-activity'
-
-/**
- * Refuse the caret for a tap that is not on the text.
- *
- * The editor is a `contenteditable` filling the composer's first row, and a tap
- * on the surface padding still raised the soft keyboard over half the screen for
- * a tap the user never meant as typing.
- *
- * WHY THE TARGET IS NOT ENOUGH, which is the whole reason this is fiddly.
- * Chrome and WebKit apply TOUCH ADJUSTMENT on a phone: a tap that misses an
- * editable by a few pixels is snapped onto it, so the event arrives with the
- * editor as its target even though `elementFromPoint` for the same coordinates
- * returns the padding. Filtering on `event.target` therefore sees a normal tap
- * on the text and lets every one of these through — measured, before this: taps
- * on the padding reported `target=composer-rich-input`.
- *
- * So the test is GEOMETRIC. The pointer's own coordinates are compared against
- * the editor's box; a real tap on the text is inside it, a snapped one is not.
- *
- * Everything else is left alone: interactive elements keep their press, and on
- * desktop this does not run at all — clicking the padding to land in the
- * composer is a real affordance there, and there is no keyboard to raise.
- */
-function keepKeyboardClosed(event: {
-  clientX: number
-  clientY: number
-  currentTarget: EventTarget | null
-  preventDefault: () => void
-  target: EventTarget | null
-}) {
-  const target = event.target as HTMLElement | null
-
-  // A real control must still take the press.
-  if (target?.closest('a, button, input, textarea, select, [role="button"]')) {
-    return
-  }
-
-  const editor = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>(
-    `[data-slot="${RICH_INPUT_SLOT}"]`
-  )
-
-  if (!editor) {
-    return
-  }
-
-  const box = editor.getBoundingClientRect()
-
-  const insideText =
-    event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom
-
-  if (insideText) {
-    return
-  }
-
-  event.preventDefault()
-}
 
 export function ChatBar({
   busy,
@@ -146,22 +125,52 @@ export function ChatBar({
   onAddUrl,
   onAttachDroppedItems,
   onAttachImageBlob,
+  onAttachPastedText,
   onPasteClipboardImage,
   onPickFiles,
   onPickFolders,
   onPickImages,
-  onPickRemoteFiles,
-  onPickRemoteFolders,
   onRemoveAttachment,
   onSteer,
+  onSteerHidden,
   onSubmit: onSubmitProp,
   onTranscribeAudio
 }: ChatBarProps) {
+  const hudMode = useStore($hudMode)
+  const hudWindowing = window.hermesDesktop?.hud?.windowing
+  const hudNativeDrag = hudMode && hudWindowing?.nativeDrag === true
+
+  const { grabbing: hudGrabbing, onPointerDown: onHudDragPointerDown } = useHudComposerDrag(hudMode && !hudNativeDrag, {
+    controlDrag: hudWindowing?.controlDrag === true,
+    workspaceTransfer: hudWindowing?.workspaceTransfer === true
+  })
+
+  // Typed stop phrase during an active voice conversation ends it — same
+  // semantics as SAYING "stop" (voice-stop-word.ts) or clicking the pill's
+  // end control. Populated after useComposerVoice below (the submit wrapper
+  // is created first); render-time assignment keeps the ref current.
+  const voiceStopRef = useRef<{ active: boolean; end: () => void }>({ active: false, end: () => {} })
+
   // Every send (typed, queued, voice) passes through the contributed
   // middleware chain first — rewrite / pass-through / cancel. Empty chain =
   // exact pass-through, so surfaces without contributions are byte-identical.
   const onSubmit = useCallback<ChatBarProps['onSubmit']>(
     async (value, options) => {
+      // Bare stop phrase typed while the voice conversation is live: end the
+      // conversation (mic off, pill dismissed) instead of sending "stop" to
+      // the agent. Spoken transcripts are already stop-checked inside
+      // use-voice-conversation, so this only catches typed/queued sends.
+      // Outside a voice conversation, typed "stop" is a normal message.
+      const voiceStop = voiceStopRef.current
+
+      if (interceptsTypedVoiceStop(voiceStop.active, value, options?.attachments?.length ?? 0)) {
+        voiceStop.end()
+
+        // Consumed (not rejected): report accepted so the submit engine
+        // clears the draft instead of restoring "stop" into the composer.
+        return true
+      }
+
       const draft = await runComposerMiddleware({ text: value, attachments: options?.attachments })
 
       if (!draft) {
@@ -177,31 +186,59 @@ export function ChatBar({
   // focus-bus key, and awaiting-input edge. Main scope = the legacy globals.
   const scope = useComposerScope()
   const attachments = useStore(scope.attachments.$attachments)
-  // THIS session's thread, not "a" thread: the flag is keyed per session now
-  // (MJXHRM-381), so scrolling up in one tile no longer dims — or re-renders —
-  // every other tile's composer.
-  const scrolledUp = useStore(sessionThreadScrolledUp(sessionId))
+  const compacting = useStore(useMemo(() => sessionCompacting(sessionId ?? null), [sessionId]))
+  const surfaceId = useComposerSurfaceId()
+  const scrollSessionId = sessionId ?? surfaceId
+
+  const scrolledUp = useStoreSelector($threadScrolledUpBySession, map =>
+    Boolean(scrollSessionId && map[scrollSessionId])
+  )
+
   const autoSpeak = useStore($autoSpeakReplies)
   // The turn is parked on the user (clarify / approval / sudo / secret). Esc must
   // not interrupt it — there's nothing actively running to stop, and stopping
   // would discard a question the user may want to come back to. The blocking
   // prompt owns its own dismissal (Skip, Reject, dialog close).
   const awaitingInput = useStore(scope.$awaitingInput)
+  // Parked on an approval/sudo/secret prompt: typing can't answer those, so the
+  // busy submit routes text to the queue instead of a steer (which would sit
+  // undelivered behind the blocked tool batch). Drives the button affordance.
+  const blockingPrompt = useStore(useMemo(() => sessionBlockingPrompt(sessionId ?? null), [sessionId]))
   const activeQueueSessionKey = queueSessionKey || sessionId || null
-  // The turn is summarizing its own context. It has no live model request to
-  // redirect, so every correction queues while this is true (store/compaction.ts).
-  const compacting = useStore(sessionCompacting(activeQueueSessionKey))
+  const { collapsed: statusDrawerCollapsed, toggle: toggleStatusDrawer } = useStatusDrawer(activeQueueSessionKey)
+  const statusDrawerId = useId()
+  const codingDrawerId = useId()
 
   // Status items (subagents, background processes) are keyed by the RUNTIME
   // session id — gateway events and process.list both speak that id. Only the
   // queue uses the stored-session fallback key (prompts can queue pre-resume).
   const statusSessionId = sessionId ?? null
 
+  // The guide uses the setup profile's inference route; the model pill and
+  // git controls would expose settings unrelated to its conversational steps.
+  // Solo covers startup before the guide's session ids are known.
+  const onboardingThreadIds = useStore($chatOnboardingThreadIds)
+  const chatOnboardingSolo = useStore($chatOnboardingSolo)
+  const guidedChat = chatOnboardingSolo || (sessionId != null && onboardingThreadIds.includes(sessionId))
+  // The git row (branch / worktree / PR / review) is the coding instrument the
+  // guide already hides; Simple mode hides it for the same reason, everywhere.
+  const showsAdvancedChrome = useStore($showsAdvancedChrome)
+  const codingRowShown = !guidedChat && showsAdvancedChrome
+
+  const composerTourMarker = useTourMarker('composer')
+
   // Coarse edge: re-renders ChatBar only when the stack shows/hides, NOT on
   // every per-item status mutation or other sessions' churn (see the hook).
   const statusPresent = useSessionStatusPresence(statusSessionId)
 
+  // Publishes contributed micro actions for this session; the status stack
+  // renders them as the pill strip at the top of the overlay lane.
+  useComposerMicroActions(statusSessionId, busy)
+
   const composerRef = useRef<HTMLFormElement | null>(null)
+  // The dock wraps the strips + status stack + composer; the thread's bottom
+  // clearance measures this, while the pop-out drag still tracks the composer.
+  const composerDockRef = useRef<HTMLDivElement | null>(null)
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null)
 
   // Pop-out engine: docked↔floating state, dock/float/toggle, drag gestures, and
@@ -221,19 +258,36 @@ export function ChatBar({
   // engine writes it — an explicit shared handle, not a back-reference.
   const queueEditRef = useRef<QueueEditState | null>(null)
   const composingRef = useRef(false) // true during IME composition (CJK input)
-  // Whether this engine has been observed stamping `isComposing` during a
-  // composition — see lib/ime-composition.ts.
-  const imeFlagTrustedRef = useRef(false)
+  // The blur-close timer must not outlive the composer: an unmounted editor's
+  // deferred closeTrigger() would setState after teardown (vitest reported it as
+  // an unhandled "window is not defined" from paste-url-is-text.test.tsx).
+  const blurCloseTimer = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (blurCloseTimer.current !== null) {
+        window.clearTimeout(blurCloseTimer.current)
+      }
+    },
+    []
+  )
 
   const { availableThemes, themeName } = useTheme()
   const at = useAtCompletions({ gateway: gateway ?? null, sessionId: sessionId ?? null, cwd: cwd ?? null })
-  const slash = useSlashCompletions({ activeSkin: themeName, gateway: gateway ?? null, skinThemes: availableThemes })
+
+  const slash = useSlashCompletions({
+    activeSkin: themeName,
+    gateway: gateway ?? null,
+    sessionId: sessionId ?? null,
+    skinThemes: availableThemes
+  })
+
   const emoji = useEmojiCompletions()
 
   const { t } = useI18n()
   const gatewayState = useStore($gatewayState)
-  const reconnecting = gatewayState === 'closed' || gatewayState === 'error'
-  const inputDisabled = disabled && !reconnecting
+  const reconnecting = gatewayState !== 'open'
+  const inputDisabled = shouldDisableComposerInput(disabled, gatewayState)
 
   // The draft engine — detached source of truth (DOM + draftRef + edge
   // selectors); typing never re-renders the chrome. ChatBar owns `queueEditRef`
@@ -251,45 +305,48 @@ export function ChatBar({
     isSteerableText,
     loadIntoComposer,
     requestMainFocus,
+    sessionIdRef,
     setComposerText,
     stashAt,
     syncDraftFromEditor
   } = useComposerDraft({ activeQueueSessionKey, focusKey, inputDisabled, queueEditRef, sessionId })
 
-  // Undo/redo. The rich editor bypasses the webview's editing pipeline for
-  // speed, which also bypasses its undo stack — so we own the stack and every
-  // edit path below banks its pre-edit state through `recordUndoPoint`.
+  useComposerScreenshot({ sessionKey: activeQueueSessionKey, focusKey, onAttachImageBlob })
+
+  // Undo/redo. The rich editor bypasses Chromium's editing pipeline for speed,
+  // which also bypasses its undo stack — so we own the stack and every edit
+  // path below banks its pre-edit state through `recordUndoPoint`.
   const { recordUndoPoint, redo, resetUndoHistory, undo, withUndoPoint } = useComposerUndo({
     editorRef,
     syncDraftFromEditor
   })
 
-  // Prior history belongs to the draft that just left — undoing into another
-  // conversation's text is worse than having none.
-  //
-  // A REKEY is not that. `session.create` moves a chat off its `draft:N` key the
-  // first time it needs a backend (dropping a file on an unsent chat is the
-  // shortest path to it), and a sleep/wake resume moves a live one — same
-  // conversation, same text still on screen, so the steps that produced it are
-  // still the user's to undo. Throwing them away on an id change was the same
-  // mistake the draft stash was making one layer down.
-  const previousUndoScopeRef = useRef(activeQueueSessionKey)
-
+  // Paste-to-focus: clipboard images from an unfocused ⌘V ride the bus (the
+  // window dispatcher has no handle on this composer's attachment scope).
+  // Same ingestion as a focused paste's image branch.
   useEffect(() => {
-    const previousScope = previousUndoScopeRef.current
-    previousUndoScopeRef.current = activeQueueSessionKey
-
-    if (isSessionDraftRekey(previousScope, activeQueueSessionKey)) {
-      return
+    if (!onAttachImageBlob) {
+      return undefined
     }
 
+    return onComposerAttachImagesRequest(({ blobs, target }) => {
+      if (target !== scope.target) {
+        return
+      }
+
+      triggerHaptic('selection')
+
+      for (const blob of blobs) {
+        void onAttachImageBlob(blob)
+      }
+    })
+  }, [onAttachImageBlob, scope.target])
+
+  // Prior history belongs to the draft that just left — undoing into another
+  // conversation's text is worse than having none.
+  useEffect(() => {
     resetUndoHistory()
   }, [activeQueueSessionKey, resetUndoHistory])
-
-  // Publish this session's micro-action badges from every registered
-  // `composer.microActions` provider. Core registers none, so the strip is
-  // empty until a plugin contributes.
-  useComposerMicroActions(statusSessionId, busy)
 
   // "Add URL" dialog — open/value state, autofocus, and submit (host onAddUrl or
   // an @url: directive into the draft).
@@ -310,6 +367,7 @@ export function ChatBar({
     queueParked,
     queuedPrompts,
     sendQueuedNow,
+    steerQueuedNow,
     stepQueuedEdit
   } = useComposerQueue({
     activeQueueSessionKey,
@@ -320,6 +378,7 @@ export function ChatBar({
     focusInput,
     loadIntoComposer,
     onCancel,
+    onSteer,
     onSubmit,
     queueEditRef,
     queueSessionKey,
@@ -328,53 +387,54 @@ export function ChatBar({
 
   const statusStackVisible = queuedPrompts.length > 0 || statusPresent
 
-  // Halt vs. reach-the-queue: every interrupt lands on `onCancel`, but only the
-  // ones that mean "stop what you are doing" (Stop button, Esc, a spoken
-  // barge-in) park the queue. Interrupts that exist to advance the queue
-  // (send-now-while-busy) call the raw `onCancel` and keep draining on settle.
-  // Without this, a Stop pressed right after mod+Enter fires the very prompt the
-  // user just lined up (upstream a85df69c06).
+  // Halt vs. reach-the-queue: every interrupt lands on onCancel, but only the
+  // gestures that MEAN "stop working" (Stop button, Esc) go through this
+  // wrapper, which parks the queue first — an explicit halt must not roll
+  // straight into the next queued prompt (that read as Stop not working; the
+  // queued text also seemed to vanish, since the collapsed panel row was its
+  // only trace). Interrupts that exist to advance the queue (send-now-while-
+  // busy) call the raw onCancel and keep draining on settle. Parked entries
+  // stay in the panel until resumed, sent, edited, or deleted.
   const haltRun = useCallback(() => {
     parkQueuedPrompts(activeQueueSessionKeyRef.current)
 
     return onCancel()
   }, [activeQueueSessionKeyRef, onCancel])
 
-  useComposerMetrics({ composerRef, composerSurfaceRef, editorRef, poppedOut })
+  const { compactPill, foldVoice, minimal, stacked } = useComposerMetrics({
+    composerDockRef,
+    composerRef,
+    composerSurfaceRef,
+    editorRef,
+    poppedOut
+  })
+
   const hasComposerPayload = hasText || attachments.length > 0
   const canSubmit = busy || hasComposerPayload
 
   // Steer only makes sense mid-turn, text-only (the gateway can't carry images
   // into a tool result) and never for a slash command (those execute inline).
-  // A COMPACTING turn is excluded too: it is inside a summarize call, so there
-  // is no live model request to redirect — the words have to queue for the next
-  // turn instead of being dropped on the floor (MJXHRM-78).
-  const canSteer = busy && !compacting && !!onSteer && attachments.length === 0 && isSteerableText
+  // A blocking prompt (approval/sudo/secret) also rules it out: the tool batch
+  // is parked on the user, so a steer can't reach the model — text queues.
+  const canSteer = busy && !compacting && !blockingPrompt && !!onSteer && attachments.length === 0 && isSteerableText
 
-  // A compacting turn OCCUPIES the composer even when the turn flag says
-  // otherwise — a manual `/compress` summarizes an IDLE session — and
-  // `useComposerSubmit` has always submitted on that basis (its own
-  // `turnOccupied`). The controls did not: they branched on `busy` alone, so
-  // during a compaction the primary button showed the Send arrow and was
-  // labelled "Send" while pressing it QUEUED the words for the next turn. The
-  // one affordance that could have told the user a compaction was under way said
-  // the opposite instead (MJXHRM-357).
-  const turnOccupied = busy || compacting
-
-  // Enter is the primary action and steers a running turn, so that is what the
-  // primary button must show. Attachments and a compacting turn cannot ride a
-  // redirect, which is the only reason it falls back to queueing.
-  const busyAction = canSteer ? 'steer' : turnOccupied && hasComposerPayload ? 'queue' : 'stop'
+  // While busy: text redirects the live turn (Cursor-style stop-and-correct),
+  // attachments queue for the next turn, an empty composer stops.
+  const busyAction: 'steer' | 'queue' | 'stop' = canSteer
+    ? 'steer'
+    : compacting || hasComposerPayload
+      ? 'queue'
+      : 'stop'
 
   // The submit engine — the orchestration seam where draft + queue meet. Owns
   // the submit decision tree, the send-with-restore primitive, and steer.
-  const { queueDraft, submitDraft } = useComposerSubmit({
+  const { queueDraft, steerDraft, submitDraft } = useComposerSubmit({
     activeQueueSessionKey,
     activeQueueSessionKeyRef,
     attachments,
     busy,
-    clearDraft,
     compacting,
+    clearDraft,
     disabled,
     draftRef,
     drainNextQueued,
@@ -387,6 +447,7 @@ export function ChatBar({
     // empty composer) — an explicit halt, so it parks the queue.
     onCancel: haltRun,
     onSteer,
+    onSteerHidden,
     onSubmit,
     queueCurrentDraft,
     queueEdit,
@@ -408,25 +469,18 @@ export function ChatBar({
     ascendTriggerPath,
     closeTrigger,
     commitTypedSlashDirective,
+    moveTriggerActive,
     refreshTrigger,
     replaceTriggerWithChip,
     setTriggerActive,
+    slashFreeTextArgStage,
     trigger,
     triggerActive,
+    triggerActiveExplicit,
     triggerItems,
     triggerKeyConsumedRef,
     triggerLoading
-  } = useComposerTrigger({
-    at,
-    composingRef,
-    draftRef,
-    editorRef,
-    emoji,
-    recordUndoPoint,
-    requestMainFocus,
-    setComposerText,
-    slash
-  })
+  } = useComposerTrigger({ at, draftRef, editorRef, emoji, recordUndoPoint, requestMainFocus, setComposerText, slash })
 
   // Pull the live contentEditable text into draftRef + the AUI composer state
   // (which drives `hasComposerPayload` → the send button). Shared by the input
@@ -491,11 +545,11 @@ export function ChatBar({
     scheduleFlushEditorToDraft(event.currentTarget)
   }
 
-  // Native typing/deleting mutates the DOM through the webview's editing
-  // pipeline, whose undo stack we've taken over — so bank the pre-edit state
-  // here, before the change lands. `beforeinput` is the only hook that still
-  // sees the old text. Consecutive keystrokes coalesce into one entry, so ⌘Z
-  // steps back by a burst rather than a character.
+  // Native typing/deleting mutates the DOM through Chromium's editing pipeline,
+  // whose undo stack we've taken over — so bank the pre-edit state here, before
+  // the change lands. `beforeinput` is the only hook that still sees the old
+  // text. Consecutive keystrokes coalesce into one entry, so ⌘Z steps back by a
+  // burst rather than a character.
   const handleEditorBeforeInput = (event: FormEvent<HTMLDivElement>) => {
     const inputType = (event.nativeEvent as InputEvent).inputType
 
@@ -508,21 +562,24 @@ export function ChatBar({
     recordUndoPoint({ coalesce: inputType === 'insertText' || inputType === 'deleteContentBackward' })
   }
 
+  // Cut never reaches the handler above: React's onBeforeInput is a
+  // keypress/textInput polyfill and does not observe the native
+  // `beforeinput` event, so Chromium's deleteByCut input type is invisible to
+  // it. The native `cut` clipboard event still fires before the DOM mutation,
+  // which is where the pre-edit snapshot has to be banked or ⌘Z skips the cut.
+  const handleCut = () => {
+    recordUndoPoint()
+  }
+
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
     const imageBlobs = extractClipboardImageBlobs(event.clipboardData)
 
-    if (imageBlobs.length > 0) {
-      event.preventDefault()
+    if (imageBlobs.length > 0 && onAttachImageBlob) {
+      triggerHaptic('selection')
 
-      if (onAttachImageBlob) {
-        triggerHaptic('selection')
-
-        for (const blob of imageBlobs) {
-          void onAttachImageBlob(blob)
-        }
+      for (const blob of imageBlobs) {
+        void onAttachImageBlob(blob)
       }
-
-      return
     }
 
     // Trim surrounding whitespace so a copy that dragged along leading/trailing
@@ -533,6 +590,10 @@ export function ChatBar({
 
     if (!pastedText) {
       event.preventDefault()
+
+      if (imageBlobs.length > 0) {
+        return
+      }
 
       // Under WSL2/WSLg the Windows host clipboard doesn't bridge *images* to
       // the Linux clipboard the DOM paste event reads, so a host screenshot
@@ -554,28 +615,74 @@ export function ChatBar({
     }
 
     event.preventDefault()
+
+    // Pasting exactly one link while composer text is selected turns that text
+    // into a markdown link instead of replacing it — the behavior every rich
+    // editor ships (ported from block/buzz#6684). Selections that span chips
+    // or lines fall through to the normal replace-with-chip path.
+    const exactLink = resolveExactLinkPaste(pastedText)
+
+    if (exactLink) {
+      const label = selectionLinkLabel(event.currentTarget)
+
+      if (label) {
+        recordUndoPoint()
+        insertComposerContentsAtCaret(event.currentTarget, markdownLinkFor(label, exactLink))
+        scheduleFlushEditorToDraft(event.currentTarget)
+
+        return
+      }
+    }
+
+    // A paste past the large-paste threshold becomes a `.txt` attachment chip
+    // instead of flooding the composer.
+    // The instruction the user types stays in the input; the pasted source
+    // material rides along as a file. Falls back to inline insertion if the
+    // attachment can't be created (missing bridge, write failure) so the
+    // paste is never lost.
+    if (onAttachPastedText && shouldConvertPasteToAttachment(pastedText)) {
+      const editor = event.currentTarget
+
+      void Promise.resolve(onAttachPastedText(pastedText)).then(attached => {
+        if (attached) {
+          triggerHaptic('selection')
+
+          return
+        }
+
+        recordUndoPoint()
+        insertComposerContentsAtCaret(editor, pathifyRefs(linkifyUrls(pastedText)), openDirectiveScope(editor))
+        scheduleFlushEditorToDraft(editor)
+      })
+
+      return
+    }
+
+    // Links in the paste land as `@url:` chips rather than a wall of URL text —
+    // the same reference the "Add URL" dialog inserts, parsed in place so a link
+    // mid-sentence keeps its position. Bare `@path` tokens promote the same way.
+    // A paste into an open `@url:`/`@file:` scope CONSUMES that scope instead of
+    // stacking on it — the scope is the browse mode the user is pasting into,
+    // not text they typed and want to keep (`@url:@url:\`https://…\``).
+    const scope = openDirectiveScope(event.currentTarget)
+
     recordUndoPoint()
-    // Bare links and bare `@paths` are promoted to their typed directive form
-    // on the way in, so a pasted URL lands as one `@url:` chip instead of a
-    // wall of URL text — the same shape the "+ → Add URL" dialog inserts.
-    //
-    // A paste into an open `@url:` browse scope CONSUMES that scope, rather
-    // than leaving it in front of the chip as leftover syntax
-    // (`@url:@url:\`https://…\``).
-    insertComposerContentsAtCaret(
-      event.currentTarget,
-      pathifyRefs(linkifyUrls(pastedText)),
-      openDirectiveScope(event.currentTarget)
-    )
+    insertComposerContentsAtCaret(event.currentTarget, pathifyRefs(linkifyUrls(pastedText)), scope)
     scheduleFlushEditorToDraft(event.currentTarget)
   }
 
   const handleEditorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    // Self-heal a composition flag wedged by a missed `compositionend`, before
-    // the guard below reads it. Engine-adaptive on purpose — see
-    // lib/ime-composition.ts for why universal cannot copy desktop's
-    // unconditional heal onto WebKitGTK.
-    reconcileCompositionFlag(composingRef, imeFlagTrustedRef, event.nativeEvent.isComposing)
+    // Self-heal a stale composition flag before the guard below reads it.
+    // compositionend can be missed (focus jumps, input-source switches, or a
+    // programmatic DOM swap mid-preedit abort the composition without the
+    // event reaching us), and a wedged composingRef silently swallows every
+    // Enter — and, via the form onSubmit guard, the Send button — until the
+    // component remounts (#44135). Chromium stamps isComposing on every
+    // keydown of a genuine composition, so when the native flag says we're
+    // not composing, trust it and recover.
+    if (composingRef.current && !event.nativeEvent.isComposing) {
+      composingRef.current = false
+    }
 
     // IME composition: Enter confirms composed text, not a message submission.
     // We check both composingRef (set by compositionstart/compositionend, robust
@@ -586,16 +693,18 @@ export function ChatBar({
       return
     }
 
-    // The macOS Chinese IME (and some third-party Windows IMEs) emit Enter with
-    // the legacy keyCode 229 (VK_PROCESSKEY) after `compositionend` has already
-    // fired, so the guard above has nothing left to catch it with. Letting it
-    // through sends before the committed text is fully in the DOM.
-    if (isImeCommitEnter(event)) {
+    // macOS Chinese IME (and some 3rd-party IMEs on Windows) emit Enter with
+    // keyCode 229 (legacy VK_PROCESSKEY) while isComposing is already false.
+    // The compositionend has fired but the keydown still carries 229, signalling
+    // "this Enter is an IME commit, not a user send".  If we let it through,
+    // the message fires before the committed text is fully in the DOM.
+    if (event.key === 'Enter' && event.keyCode === 229) {
       return
     }
 
     // Undo/redo before anything else — we own the stack (see useComposerUndo),
-    // because the Range-based edits below never reach the webview's own.
+    // so these never reach Chromium's native history, which has no record of
+    // the Range-based edits the rich editor makes.
     if (isUndoShortcut(event.nativeEvent)) {
       event.preventDefault()
       undo()
@@ -638,9 +747,8 @@ export function ChatBar({
       return
     }
 
-    // A plain space finishing a typed link or a typed `@path` commits it as a
-    // chip, so a hand-typed reference chips the way a picked one does. Both
-    // bail cheaply on the editor's text before paying for a caret walk.
+    // A typed link finished with a space chips like a pasted one — the space
+    // itself rides along inside the insert.
     if (withUndoPoint(() => chipTypedUrlOnSpace(event))) {
       event.preventDefault()
       flushEditorToDraft(event.currentTarget)
@@ -648,6 +756,9 @@ export function ChatBar({
       return
     }
 
+    // Same for a bare `@path` — a hand-typed or Tab-descended path chips into
+    // the `@file:`/`@folder:` ref it means, instead of submitting as plain text
+    // the backend never resolves.
     if (withUndoPoint(() => chipTypedPathOnSpace(event))) {
       event.preventDefault()
       flushEditorToDraft(event.currentTarget)
@@ -667,49 +778,11 @@ export function ChatBar({
       return
     }
 
-    // The Enter family, decided in one place (see `composerEnterIntent`) so the
-    // ORDER — line break beats the completion menu beats queue beats send — is
-    // one testable rule instead of the emergent property of four branches spread
-    // across 200 lines. The branches below still own what to DO; this only says
-    // which one owns the keystroke.
-    const enterIntent = composerEnterIntent({
-      completionOpen: Boolean(trigger) && triggerItems.length > 0,
-      ctrlKey: event.ctrlKey,
-      key: event.key,
-      metaKey: event.metaKey,
-      shiftKey: event.shiftKey
-    })
-
-    // Shift+Enter, owned rather than inferred. Letting the webview run its own
-    // `insertLineBreak` is what made this keystroke a no-op on macOS: WebKit
-    // represents the result as a trailing `<div><br></div>`, which
-    // `normalizeComposerEditorDom` could not tell from the phantom block
-    // Chromium leaves after a chip, so the newline was deleted on the very next
-    // flush. `insertComposerLineBreak` writes a TAGGED break, identical on every
-    // engine and never mistaken for junk.
-    //
-    // Ahead of the popover for the same reason it is first in `composerEnterIntent`.
-    if (enterIntent === 'line-break') {
-      event.preventDefault()
-      triggerKeyConsumedRef.current = true
-      withUndoPoint(() => insertComposerLineBreak(event.currentTarget))
-      flushEditorToDraft(event.currentTarget)
-
-      return
-    }
-
     // The popover is open but its items are still in flight (debounce + RPC).
     // Tab must not fall through to the browser — it would move focus out of
     // the composer mid-completion, which reads as the popover "eating" the
     // keypress. Swallow it; the refresh lands with the items.
-    if (
-      swallowsTriggerTab({
-        itemCount: triggerItems.length,
-        key: event.key,
-        loading: triggerLoading,
-        open: Boolean(trigger)
-      })
-    ) {
+    if (trigger && triggerLoading && triggerItems.length === 0 && event.key === 'Tab') {
       event.preventDefault()
       triggerKeyConsumedRef.current = true
 
@@ -720,7 +793,7 @@ export function ChatBar({
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         triggerKeyConsumedRef.current = true
-        setTriggerActive(idx => (idx + 1) % triggerItems.length)
+        moveTriggerActive(1)
 
         return
       }
@@ -728,41 +801,58 @@ export function ChatBar({
       if (event.key === 'ArrowUp') {
         event.preventDefault()
         triggerKeyConsumedRef.current = true
-        setTriggerActive(idx => (idx - 1 + triggerItems.length) % triggerItems.length)
+        moveTriggerActive(-1)
 
         return
       }
 
-      // Enter / Tab / Space all accept the highlighted item: a no-arg command
-      // commits its directive chip, an arg-taking command expands to its
-      // options step, and an arg option commits the full `/cmd arg` chip. Space
-      // is slash-only (an `@` mention takes a literal space) and gated to a
-      // non-empty query so a bare `/ ` still types a space.
-      //
-      // Shift+Enter is NOT an accept. It is already claimed above, so this guard
-      // is redundant today — and it stays anyway, because "the completion menu
-      // ate my line break" is a bug that comes back the moment someone moves a
-      // branch, and the cost of it never coming back is one boolean.
-      const acceptOnSpace = event.key === ' ' && trigger.kind === '/' && Boolean(trigger.query.trim())
-      const accept = (event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab' || acceptOnSpace
+      // Accepting a completion: a no-arg command commits its directive chip,
+      // an arg-taking command expands to its options step, and an arg option
+      // commits the full `/cmd arg` chip. Space/Enter resolve the pick so a
+      // leftover highlight does not replace a typed command; Tab still takes
+      // the highlight.
+      const accept = acceptsTriggerCompletion({
+        activeExplicit: triggerActiveExplicit,
+        freeTextArgStage: slashFreeTextArgStage,
+        key: event.key,
+        kind: trigger.kind,
+        query: trigger.query
+      })
 
       if (accept) {
-        event.preventDefault()
-        triggerKeyConsumedRef.current = true
-        const item = triggerItems[triggerActive]
+        const itemTexts = triggerItems.map(item => {
+          const meta = item.metadata as { command?: string; rawText?: string } | undefined
+
+          return meta?.command || meta?.rawText || item.label
+        })
+
+        const item =
+          trigger.kind === '/' && event.key !== 'Tab'
+            ? triggerItems[
+                implicitSlashAcceptIndex(trigger.query, itemTexts, triggerActive, triggerActiveExplicit) ?? -1
+              ]
+            : triggerItems[triggerActive]
 
         if (item) {
-          // Tab on a folder walks INTO it; Enter commits the folder itself.
-          // Two distinct intents, so two distinct keys.
+          event.preventDefault()
+          triggerKeyConsumedRef.current = true
+          // Tab means "go deeper" on a folder; Enter means "I want this one".
           replaceTriggerWithChip(item, { descend: event.key === 'Tab' })
+
+          return
         }
 
-        return
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          triggerKeyConsumedRef.current = true
+
+          return
+        }
       }
 
       // Backspace climbs out of an `@` path one segment at a time, mirroring
-      // Tab's one-key descent, and drops the browse scope whole rather than
-      // nibbling back through `:`, `r`, `e`, `d`.
+      // Tab's one-key descent. Only when the caret sits at the end of the
+      // token — mid-token editing keeps normal character deletion.
       if (event.key === 'Backspace' && !event.metaKey && !event.altKey && ascendTriggerPath()) {
         event.preventDefault()
         triggerKeyConsumedRef.current = true
@@ -790,18 +880,21 @@ export function ChatBar({
       slashArgStage(trigger.query) &&
       trigger.query.trim()
     ) {
-      event.preventDefault()
-      triggerKeyConsumedRef.current = true
-      commitTypedSlashDirective()
+      if (commitTypedSlashDirective()) {
+        event.preventDefault()
+        triggerKeyConsumedRef.current = true
 
-      return
+        return
+      }
     }
 
     // ArrowUp/ArrowDown navigate, in priority order: the queue (edit entries in
     // place) then sent-message history. The history ring is derived from live
     // session messages each press — single source of truth, no mirror.
     if (event.key === 'ArrowUp') {
-      const currentDraft = draftRef.current
+      // Decide from the live editor: the mirror is a frame behind typing or a
+      // paste, and this branch can replace what the user just wrote.
+      const currentDraft = liveComposerDraft(editorRef.current, draftRef.current)
 
       // Editing a queued turn → walk to the older entry.
       if (queueEdit && stepQueuedEdit(-1)) {
@@ -831,7 +924,7 @@ export function ChatBar({
 
       // $messages is read imperatively (not subscribed) so the composer
       // doesn't re-render on every streaming delta flush.
-      const history = deriveUserHistory(scope.readMessages(), chatMessageText)
+      const history = deriveUserHistory(scope.$messages.get(), chatMessageText)
       const entry = browseBackward(sessionId, currentDraft, history)
 
       if (entry !== null) {
@@ -856,7 +949,7 @@ export function ChatBar({
         event.preventDefault()
         triggerKeyConsumedRef.current = true
 
-        const history = deriveUserHistory(scope.readMessages(), chatMessageText)
+        const history = deriveUserHistory(scope.$messages.get(), chatMessageText)
         const result = browseForward(sessionId, history)
 
         if (result !== null) {
@@ -867,23 +960,28 @@ export function ChatBar({
       return
     }
 
-    // Cmd/Ctrl+Enter QUEUES a follow-up while a turn runs — the explicit
-    // "don't interrupt, just line this up next" gesture. Plain Enter steers
-    // (below), so both live-turn actions stay reachable from the keyboard and
-    // neither can be reached by accident. Swallowed when idle so it can't
-    // surprise-send.
-    //
-    // `queueDraft` re-reads the editor first: this branch consumes the keystroke
-    // with preventDefault, so queueing the render-lagged `draftRef` would drop
-    // whatever was typed since the last input event (upstream 406d7a67f0).
-    if (enterIntent === 'queue') {
+    // Cmd/Ctrl+Enter queues a follow-up while a turn runs. Plain Enter steers
+    // a text-only draft, so both live-turn actions stay reachable by keyboard.
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
       event.preventDefault()
-      queueDraft()
+
+      if (busy && !disabled) {
+        // As with plain Enter, source the just-typed content from the DOM so a
+        // fast keypress cannot queue a stale draft.
+        const editorText = liveComposerDraft(editorRef.current, draftRef.current)
+
+        if (editorText !== draftRef.current) {
+          draftRef.current = editorText
+          setComposerText(editorText)
+        }
+
+        queueDraft()
+      }
 
       return
     }
 
-    if (enterIntent === 'send') {
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
 
       // Decide from the DOM, not React state. `hasComposerPayload` is derived
@@ -892,7 +990,7 @@ export function ChatBar({
       // Without the live read, a real message typed while prompts are queued
       // would drain the queue instead of sending. submitDraft() re-syncs and
       // sends the live editor text.
-      const editorText = editorRef.current ? composerPlainText(editorRef.current) : draftRef.current
+      const editorText = liveComposerDraft(editorRef.current, draftRef.current)
       const hasLivePayload = editorText.trim().length > 0 || attachments.length > 0
 
       if (disabled) {
@@ -939,7 +1037,7 @@ export function ChatBar({
 
       // Otherwise Esc interrupts the running turn (Stop-button parity) — unless
       // the turn is parked waiting on the user, where Esc must not discard the
-      // pending prompt.
+      // pending prompt. An explicit halt, so it parks the queue too.
       if (busy && !awaitingInput) {
         event.preventDefault()
         triggerHaptic('cancel')
@@ -948,21 +1046,7 @@ export function ChatBar({
     }
   }
 
-  const handleEditorKeyUp = () => {
-    // If this keyup belongs to a key the open trigger popover already consumed
-    // in keydown (Arrow/Enter/Tab/Escape), skip the refresh. Those keys never
-    // edit text, and for Escape the keydown already closed the menu — a refresh
-    // here would re-detect the still-present `/` and instantly reopen it. We
-    // read a ref set during keydown rather than `trigger`, because by keyup
-    // time React has re-rendered and `trigger` may already be null.
-    if (triggerKeyConsumedRef.current) {
-      triggerKeyConsumedRef.current = false
-
-      return
-    }
-
-    window.setTimeout(refreshTrigger, 0)
-  }
+  const handleEditorKeyUp = triggerKeyUpHandler(triggerKeyConsumedRef, refreshTrigger)
 
   const {
     dragActive,
@@ -972,7 +1056,15 @@ export function ChatBar({
     handleDrop,
     handleInputDragOver,
     handleInputDrop
-  } = useComposerDrop({ cwd, insertInlineRefs, onAttachDroppedItems, requestMainFocus })
+  } = useComposerDrop({ cwd, insertInlineRefs, onAttachDroppedItems, recordUndoPoint, requestMainFocus })
+
+  // A bot chat is a companion conversation, not a working session, so it has no
+  // repo to speak of — see the blank repoPath handed to CodingStatusRow below.
+  // Three stores: the scope set records the answer, and resolving this runtime
+  // id to the stored one it is filed under reads the other two.
+  const botChat = useStoresSelector([$botChatSessionIds, $sessionStates, $sessionTiles], () =>
+    isBotChatSession(sessionId)
+  )
 
   // Branch / worktree hand-offs (CodingStatusRow). Owns the worktree open +
   // branch-off/convert/list/switch actions; draft travels into the new session.
@@ -980,6 +1072,7 @@ export function ChatBar({
     useComposerBranch({ clearDraft, cwd, draftRef })
 
   // Global Esc-to-cancel when the chat (not the composer input) has focus.
+  // Same explicit-halt semantics as the Stop button: park the queue.
   useComposerEscCancel({ awaitingInput, busy, onCancel: haltRun, target: scope.target })
 
   const {
@@ -998,11 +1091,18 @@ export function ChatBar({
     focusInput,
     insertText,
     maxRecordingSeconds,
+    // Voice barge-in mid-generation halts the run like the Stop button.
+    onInterrupt: haltRun,
     onSubmit,
     onTranscribeAudio,
     sessionId,
     target: scope.target
   })
+
+  // Keep the typed-stop interceptor (see onSubmit above) in sync with the
+  // live conversation state. Render-time ref assignment, same pattern as
+  // dispatchSubmitRef — no effect needed for a plain mirror.
+  voiceStopRef.current = { active: voiceConversationActive, end: endConversation }
 
   const contextMenu = (
     <ContextMenu
@@ -1012,8 +1112,6 @@ export function ChatBar({
       onPickFiles={onPickFiles}
       onPickFolders={onPickFolders}
       onPickImages={onPickImages}
-      onPickRemoteFiles={onPickRemoteFiles}
-      onPickRemoteFolders={onPickRemoteFolders}
       state={state}
     />
   )
@@ -1023,9 +1121,8 @@ export function ChatBar({
       autoSpeak={autoSpeak}
       busy={busy}
       busyAction={busyAction}
-      busyActionActive={turnOccupied}
       canSubmit={canSubmit}
-      compactModelPill={poppedOut}
+      compactModelPill={poppedOut || compactPill}
       conversation={{
         active: voiceConversationActive,
         level: conversation.level,
@@ -1037,7 +1134,10 @@ export function ChatBar({
         status: conversation.status
       }}
       disabled={disabled}
+      foldVoice={foldVoice}
       hasComposerPayload={hasComposerPayload}
+      hideModelPill={guidedChat}
+      minimal={minimal}
       onDictate={dictate}
       onQueue={queueDraft}
       onToggleAutoSpeak={handleToggleAutoSpeak}
@@ -1047,35 +1147,44 @@ export function ChatBar({
   )
 
   const input = (
-    <div className="relative w-full">
+    <div className={cn('relative', stacked ? 'w-full' : 'min-w-(--composer-input-inline-min-width) flex-1')}>
       <div
         aria-disabled={inputDisabled ? true : undefined}
         aria-label={t.composer.message}
         autoCapitalize="off"
-        autoCorrect="off"
+        // Chromium's macOS text-replacement path shares the autocorrect gate.
+        // Keeping spellcheck off below still excludes smart quotes and dashes.
+        autoCorrect={isMacPlatform() ? 'on' : 'off'}
         className={cn(
-          'min-h-(--composer-input-min-height) max-h-(--composer-input-max-height) cursor-text overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] bg-transparent pb-1 pe-1 pt-1 leading-normal text-foreground outline-none disabled:cursor-not-allowed',
-          'empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/60',
+          'min-h-[1.625rem] min-h-(--composer-input-min-height) max-h-(--composer-input-max-height) cursor-text overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] bg-transparent pb-1 pe-1 pt-1 leading-normal text-foreground outline-none disabled:cursor-not-allowed',
           '**:data-ref-text:cursor-default',
-          // Start inset is a token, not a literal — `--composer-input-pad-start`
-          // in styles.css, which defaults to 0 so the caret lines up with the
-          // "+" on the row below. It exists to be tuned without moving the
-          // controls row, which is what the surface padding would do.
-          'w-full ps-(--composer-input-pad-start)'
+          stacked && 'ps-3',
+          stacked ? 'w-full' : 'min-w-(--composer-input-inline-min-width) flex-1',
+          // Inside the native Wayland HUD drag region: a drag region swallows
+          // the page's mouse input whole, so the input must opt back out or it
+          // becomes unclickable. Buttons use the global no-drag rule.
+          hudNativeDrag && '[-webkit-app-region:no-drag]'
         )}
         contentEditable={!inputDisabled}
         data-placeholder={placeholder}
         data-slot={RICH_INPUT_SLOT}
         onBeforeInput={handleEditorBeforeInput}
         onBlur={() => {
-          // A composition never survives focus loss — the engine commits the
-          // preedit and fires `compositionend` — but when that event is missed
-          // the wedged flag would keep blocking Enter (and the Send button's
-          // submit guard) indefinitely. Clearing here needs no trust in
-          // `isComposing`: by the time blur runs, nothing is composing in this
-          // editor whatever the engine reports.
+          // A composition never survives focus loss (Chromium commits the
+          // preedit and fires compositionend on blur) — but if that event is
+          // missed, the wedged flag would block the Send button's form-submit
+          // guard forever (#44135). Clear unconditionally: by the time blur
+          // runs there is nothing left composing in this editor.
           composingRef.current = false
-          window.setTimeout(closeTrigger, 80)
+
+          if (blurCloseTimer.current !== null) {
+            window.clearTimeout(blurCloseTimer.current)
+          }
+
+          blurCloseTimer.current = window.setTimeout(() => {
+            blurCloseTimer.current = null
+            closeTrigger()
+          }, 80)
         }}
         onCompositionEnd={event => {
           composingRef.current = false
@@ -1089,9 +1198,15 @@ export function ChatBar({
           // until an unrelated edit forces a sync (#39614).
           flushEditorToDraft(event.currentTarget)
         }}
-        onCompositionStart={() => {
+        onCompositionStart={event => {
           composingRef.current = true
+
+          // Input events are skipped for the rest of the composition, so
+          // nothing else would clear the empty marker until it ends — and the
+          // hint would sit behind the preedit text the whole time (#75960).
+          beginComposerComposition(event.currentTarget)
         }}
+        onCut={handleCut}
         onDragOver={handleInputDragOver}
         onDrop={handleInputDrop}
         onFocus={() => markActiveComposer(scope.target)}
@@ -1158,44 +1273,27 @@ export function ChatBar({
         />
       )}
       <ComposerPrimitive.Unstable_TriggerPopoverRoot>
-        <ComposerPrimitive.Root
+        {/* Dock column: owns the composer's POSITION and stacks, bottom-up,
+            [micro actions] · [status stack] · [composer] · [underside].
+            Anchored at the bottom, so in-flow children grow upward and still
+            overlay the thread — no absolute lane needed.
+
+            The strips are siblings of the composer, not children: the pop-out
+            drag region is `absolute inset-0` INSIDE the composer, so anything
+            rendered in there is inside the grab area by construction. Keeping
+            them out here is what makes that impossible rather than excluded. */}
+        <div
           className={cn(
-            'group/composer z-30 overflow-visible rounded-(--composer-radius)',
-            poppedOut
-              ? // Floating: the composer (with its own border) floats with an even
-                // 5px transparent grab margin around it — drag that to move it.
-                'fixed w-[var(--composer-popout-width)] max-w-[calc(100vw-1.5rem)] bg-transparent p-[5px]'
-              : // Docked: horizontal padding creates a left/right grab margin (the
-                // surface insets via border-box, outer width unchanged) so the
-                // drag-region hatch is visible on the sides too, not just top/bottom.
-                // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left
-                'absolute bottom-0 left-1/2 w-[min(var(--composer-width),calc(100%-2rem))] max-w-full -translate-x-1/2 px-[6px] pt-2 pb-[var(--composer-shell-pad-block-end)]',
-            dragging && 'cursor-grabbing select-none touch-none'
+            'z-30 flex flex-col',
+            poppedOut ? 'fixed max-w-[calc(100vw-1.5rem)]' : 'absolute bottom-0 start-1/2 max-w-full -translate-x-1/2'
           )}
-          data-drag-active={dragActive ? '' : undefined}
           data-popped-out={poppedOut ? '' : undefined}
-          data-slot="composer-root"
-          data-status-stack={statusStackVisible ? '' : undefined}
+          data-slot="composer-dock"
           data-thread-scrolled-up={scrolledUp ? '' : undefined}
-          // Durable tour handle (see lib/tour). On the root rather than the
-          // textarea: a tour points at the composer as a THING (attachments,
-          // model pill, send), not at one input inside it.
-          data-tour="composer"
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          onPointerDown={popoutAllowed ? onComposerGesturePointerDown : undefined}
-          onSubmit={e => {
-            e.preventDefault()
-
-            if (composingRef.current) {
-              return
-            }
-
-            submitDraft()
-          }}
-          ref={composerRef}
+          // Measured for the thread's bottom clearance: the dock is the box
+          // that contains the strips, the status stack, AND the composer, so
+          // one measurement covers everything the thread must clear.
+          ref={composerDockRef}
           style={
             poppedOut
               ? {
@@ -1207,62 +1305,21 @@ export function ChatBar({
               : undefined
           }
         >
-          {isHelpHint && <HelpHint />}
-          {trigger && !argStageEmpty && (
-            <ComposerTriggerPopover
-              activeIndex={triggerActive}
-              items={triggerItems}
-              kind={trigger.kind}
-              loading={triggerLoading}
-              onHover={setTriggerActive}
-              onPick={replaceTriggerWithChip}
-              scope={trigger.scope}
-            />
-          )}
-          {/* Drag region: covers the transparent grab margin around the surface.
-              The surface sits on top (z-4) so only the exposed ring receives this
-              element's hover/cursor — grab cursor + a diagonal hatch (/////)
-              appear when you hover the draggable margin, never over the input.
-              The hatch pattern + opacity ladder live in styles.css. */}
-          {popoutAllowed && (
-            <div
-              aria-hidden
-              className={cn('pointer-events-auto absolute inset-0', dragging ? 'cursor-grabbing' : 'cursor-grab')}
-              data-dragging={dragging ? '' : undefined}
-              data-slot="composer-drag-region"
-              onDoubleClick={handleComposerToggle}
-            />
-          )}
-          {/* Mobile parallel-chat carousel — part of the composer package (so it
-              tracks the keyboard lift as one unit) but ABOVE the bordered surface
-              box. Self-hides below 2 chats; never renders on desktop. */}
-          {IS_MOBILE && <BubbleRow />}
-          {/* Micro-action pills — a chrome-free strip above the surface, filled
-              only by `composer.microActions` contributions. `relative z-4` puts
-              it in the same stacking layer as the surface, above the drag
-              region's `absolute inset-0`; without it a pill would be a grab
-              handle that floats the composer instead of a button. Collapses
-              away entirely when nothing contributes. */}
-          <div className={cn(composerFloatingStrip, 'relative z-4 pb-1.5 empty:hidden')}>
+          {/* Aligned to the composer SURFACE, which sits inside the composer's
+              5px transparent grab margin — so both strips carry the same inset
+              and share one left edge with it. */}
+          <div className={cn(composerFloatingStrip, 'px-[5px] pb-1.5 empty:hidden')}>
             <ActionBadges sessionId={statusSessionId} />
             <SuggestionPills sessionId={statusSessionId} />
+            <OnboardingSkip />
           </div>
-          <div className="relative w-full rounded-[inherit]">
-            {/* Session-scoped status stack (todos, subagents, background tasks,
-                preview artifacts, queue). Out of flow so it never inflates the
-                composer's measured height; it overlays the chat instead of
-                pushing it, and publishes its own
-                --status-stack-measured-height so the thread's clearance accounts
-                for it. Collapses to nothing when every status is empty.
-
-                It hangs off THIS box — the composer surface — and not the
-                composer root, because the root also contains the mobile bubble
-                rail. Anchored to the root, `bottom-full` put the stack above the
-                rail, so a file the agent had just made (a preview-artifact row)
-                pushed the parallel-chat strip down and took the top of the
-                composer package for itself. The rail is navigation and stays
-                outermost; the card belongs between it and the input. */}
+          {/* Session-scoped status stack (todos, subagents, background tasks,
+              queue). An in-flow dock child: the dock is bottom-anchored, so it
+              grows upward over the thread and the dock's own measurement covers
+              it. Collapses to nothing when every status is empty. */}
+          <StatusDrawerContent collapsed={statusDrawerCollapsed} id={statusDrawerId}>
             <ComposerStatusStack
+              onSubmit={onSubmit}
               queue={
                 activeQueueSessionKey && queuedPrompts.length > 0 ? (
                   <QueuePanel
@@ -1285,138 +1342,207 @@ export function ChatBar({
                       }
                     }}
                     onSendNow={id => void sendQueuedNow(id)}
+                    onSteerNow={id => void steerQueuedNow(id)}
                     parked={queueParked}
                   />
                 ) : null
               }
               sessionId={statusSessionId}
             />
-            <div
-              className={cn(
-                // grid-cols-[minmax(0,1fr)]: the implicit `auto` column sized
-                // itself to its items' min-content, so a status row whose
-                // content out-measured a narrow pane silently widened the
-                // track past the surface — and every `w-full` child (the fade,
-                // the input/controls row) laid out against that phantom width
-                // and got clipped by overflow-hidden, send button first.
-                'group/composer-surface relative z-4 isolate grid grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr] overflow-hidden rounded-[inherit] border border-[color-mix(in_srgb,var(--dt-composer-ring)_calc(18%*var(--composer-ring-strength)),var(--dt-input))]',
-                COMPOSER_DROP_FADE_CLASS,
-                dragActive && COMPOSER_DROP_ACTIVE_CLASS
-              )}
-              data-slot="composer-surface"
-              ref={composerSurfaceRef}
-            >
+          </StatusDrawerContent>
+          <ComposerPrimitive.Root
+            className={cn(
+              'group/composer relative w-full overflow-visible rounded-2xl',
+              poppedOut && 'bg-transparent',
+              dragging && 'cursor-grabbing select-none touch-none',
+              // Native Wayland HUD: setBounds cannot position a top-level
+              // surface, so the bar must ask the compositor to move it. X11
+              // stays out of app-region mode so the renderer receives its
+              // Ctrl+primary-button drag. pt-4 is the carved-out grab band.
+              hudNativeDrag && 'hud-native-drag pt-4 [-webkit-app-region:drag]'
+            )}
+            data-drag-active={dragActive ? '' : undefined}
+            data-hud-grabbing={hudGrabbing ? '' : undefined}
+            data-popped-out={poppedOut ? '' : undefined}
+            data-slot="composer-root"
+            data-status-stack={statusStackVisible && !statusDrawerCollapsed ? '' : undefined}
+            data-thread-scrolled-up={scrolledUp ? '' : undefined}
+            data-tip-region=""
+            data-tour={composerTourMarker}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onPointerDown={!hudMode && popoutAllowed ? onComposerGesturePointerDown : undefined}
+            onPointerDownCapture={hudMode ? onHudDragPointerDown : undefined}
+            onSubmit={e => {
+              e.preventDefault()
+
+              if (composingRef.current) {
+                return
+              }
+
+              submitDraft()
+            }}
+            ref={composerRef}
+          >
+            {isHelpHint && <HelpHint />}
+            {trigger && !argStageEmpty && (
+              <ComposerTriggerPopover
+                activeIndex={triggerActive}
+                items={triggerItems}
+                kind={trigger.kind}
+                loading={triggerLoading}
+                onHover={setTriggerActive}
+                onPick={replaceTriggerWithChip}
+                scope={trigger.scope}
+              />
+            )}
+            {!poppedOut && (
+              <div
+                className="pointer-events-none absolute inset-0 rounded-[inherit]"
+                style={{ background: COMPOSER_FADE_BACKGROUND }}
+              />
+            )}
+            {/* Drag region: covers the transparent grab margin around the surface.
+              The surface sits on top (z-4) so only the exposed ring receives this
+              element's hover/cursor — grab cursor + a diagonal hatch (/////)
+              appear when you hover the draggable margin, never over the input.
+              The hatch pattern + opacity ladder live in styles.css. */}
+            {popoutAllowed && (
               <div
                 aria-hidden
-                className={cn(
-                  'pointer-events-none absolute inset-0 -z-10 rounded-[inherit]',
-                  composerFill,
-                  composerSurfaceGlass
-                )}
+                className={cn('pointer-events-auto absolute inset-0', dragging ? 'cursor-grabbing' : 'cursor-grab')}
+                data-dragging={dragging ? '' : undefined}
+                data-slot="composer-drag-region"
+                onDoubleClick={handleComposerToggle}
               />
-              <CodingStatusRow
-                onBranchOff={handleBranchOff}
-                onConvertBranch={handleConvertBranch}
-                onListBranches={handleListBranches}
-                onOpen={toggleReview}
-                onOpenWorktree={openInWorktree}
-                onSwitchBranch={handleSwitchBranch}
-                repoPath={cwd}
-              />
+            )}
+            <div className="relative w-full rounded-[inherit]">
+              {!hudMode && !guidedChat && (
+                <StatusDrawerToggle
+                  collapsed={statusDrawerCollapsed}
+                  controls={`${statusDrawerId} ${codingDrawerId}`}
+                  onToggle={toggleStatusDrawer}
+                />
+              )}
+              {hudMode && busy && <span aria-hidden className="arc-border arc-composer" />}
               <div
                 className={cn(
-                  'relative z-1 flex min-h-0 w-full flex-col gap-(--composer-row-gap) overflow-hidden rounded-[inherit] px-(--composer-surface-pad-x) py-(--composer-surface-pad-y) transition-opacity duration-200 ease-out',
-                  scrolledUp
-                    ? 'opacity-30 group-hover/composer:opacity-100 group-focus-within/composer-surface:opacity-100'
-                    : 'opacity-100'
+                  // grid-cols-[minmax(0,1fr)]: the implicit `auto` column sized
+                  // itself to its items' min-content, so a status row whose
+                  // content out-measured a narrow pane silently widened the
+                  // track past the surface — and every `w-full` child (the fade,
+                  // the input/controls row) laid out against that phantom width
+                  // and got clipped by overflow-hidden, send button first.
+                  'group/composer-surface relative z-4 isolate grid grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr] overflow-hidden rounded-[inherit] border border-[color-mix(in_srgb,var(--dt-composer-ring)_calc(18%*var(--composer-ring-strength)),var(--dt-input))]',
+                  COMPOSER_DROP_FADE_CLASS,
+                  dragActive && COMPOSER_DROP_ACTIVE_CLASS
                 )}
-                data-slot="composer-fade"
-                // TOUCH: only the text raises the keyboard.
-                //
-                // The editor is a `contenteditable` filling the first row, and a
-                // tap on the surface PADDING or on the input's own wrapper — 8px
-                // of dead space that is not the text — still handed it the
-                // caret, so the keyboard came up over half the screen for a tap
-                // the user did not mean as typing. Cancelling the default on
-                // pointerdown is what stops the caret placement.
-                //
-                // Deliberately narrow. It bails for the editor itself (typing
-                // must work) and for anything interactive (a button must still
-                // take the press), so the only thing it cancels is the dead
-                // space. Mobile only: on desktop, clicking the padding to land
-                // in the composer is a real affordance and costs nothing,
-                // because there is no keyboard to raise.
-                //
-                // BOTH handlers, and that is not belt-and-braces. Cancelling
-                // `pointerdown` alone left the caret exactly where it was: what
-                // actually places it is the compatibility MOUSEDOWN the browser
-                // synthesises from the tap, and preventing default on that is
-                // the long-standing way to refuse focus without swallowing the
-                // click. `pointerdown` is kept because it is the one that
-                // suppresses the synthetic pair in the first place on engines
-                // that honour it.
-                onMouseDown={IS_MOBILE ? keepKeyboardClosed : undefined}
-                onPointerDown={IS_MOBILE ? keepKeyboardClosed : undefined}
+                data-slot="composer-surface"
+                ref={composerSurfaceRef}
               >
-                {/* Contribution seams: banners above, a row below, inline
+                <div aria-hidden className={composerInputBacking} />
+                {codingRowShown && (
+                  <StatusDrawerContent collapsed={statusDrawerCollapsed} id={codingDrawerId}>
+                    <CodingStatusRow
+                      onBranchOff={handleBranchOff}
+                      onConvertBranch={handleConvertBranch}
+                      onListBranches={handleListBranches}
+                      // A tile's rail reviews ITS worktree: pin the pane's scope to
+                      // this surface's cwd. Main keeps the classic follow-the-
+                      // active-session scope (null).
+                      onOpen={() => toggleReview(scope.target === 'main' ? null : (cwd ?? null), scope.target)}
+                      onOpenWorktree={openInWorktree}
+                      onSwitchBranch={handleSwitchBranch}
+                      // Blank in a bot chat: the row hides itself without a repo,
+                      // and stops probing git / GitHub for a surface that has no
+                      // branch to show. Cheaper than a second composer.
+                      repoPath={botChat ? undefined : cwd}
+                    />
+                  </StatusDrawerContent>
+                )}
+                <div
+                  className={cn(
+                    'relative z-1 flex min-h-0 w-full flex-col gap-(--composer-row-gap) overflow-hidden rounded-[inherit] px-(--composer-surface-pad-x) py-(--composer-surface-pad-y) transition-opacity duration-200 ease-out',
+                    scrolledUp
+                      ? 'opacity-30 group-hover/composer:opacity-100 group-focus-within/composer-surface:opacity-100'
+                      : 'opacity-100'
+                  )}
+                  data-slot="composer-fade"
+                >
+                  {/* Contribution seams: banners above, a row below, inline
                     additions beside the "+" menu and before the controls.
                     All four render nothing until something contributes. */}
-                <ContribSlot area={COMPOSER_AREAS.top} />
-                <VoiceActivity state={voiceActivityState} />
-                <VoicePlaybackActivity />
-                {queueEdit && editingQueuedPrompt && (
-                  <div className="flex items-center justify-between gap-2 rounded-lg border border-[color-mix(in_srgb,var(--dt-composer-ring)_32%,transparent)] bg-accent/18 px-2 py-1">
-                    <div className="min-w-0 text-[0.7rem] text-muted-foreground/88">
-                      {t.composer.editingQueuedInComposer}
+                  <ContribSlot area={COMPOSER_AREAS.top} />
+                  <RestoredDraftNotice
+                    freshDraft={activeQueueSessionKey === null}
+                    onUndone={clearDraft}
+                    readLiveText={syncDraftFromEditor}
+                  />
+                  <VoiceActivity state={voiceActivityState} />
+                  <VoicePlaybackActivity />
+                  {queueEdit && editingQueuedPrompt && (
+                    <div className="flex items-center justify-between gap-2 rounded-lg border border-[color-mix(in_srgb,var(--dt-composer-ring)_32%,transparent)] bg-accent/18 px-2 py-1">
+                      <div className="min-w-0 text-[0.7rem] text-muted-foreground/88">
+                        {t.composer.editingQueuedInComposer}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          className="h-6 rounded-md px-2 text-[0.68rem]"
+                          onClick={() => exitQueuedEdit('cancel')}
+                          type="button"
+                          variant="ghost"
+                        >
+                          {t.common.cancel}
+                        </Button>
+                        <Button
+                          className="h-6 rounded-md px-2 text-[0.68rem]"
+                          onClick={() => exitQueuedEdit('save')}
+                          type="button"
+                        >
+                          {t.common.save}
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <Button
-                        className="h-6 rounded-md px-2 text-[0.68rem]"
-                        onClick={() => exitQueuedEdit('cancel')}
-                        type="button"
-                        variant="ghost"
-                      >
-                        {t.common.cancel}
-                      </Button>
-                      <Button
-                        className="h-6 rounded-md px-2 text-[0.68rem]"
-                        onClick={() => exitQueuedEdit('save')}
-                        type="button"
-                      >
-                        {t.common.save}
-                      </Button>
+                  )}
+                  {attachments.length > 0 && <AttachmentList attachments={attachments} onRemove={onRemoveAttachment} />}
+                  <div
+                    className={cn(
+                      'grid w-full',
+                      stacked
+                        ? 'grid-cols-[auto_1fr] gap-(--composer-row-gap) [grid-template-areas:"input_input"_"menu_controls"]'
+                        : 'grid-cols-[auto_1fr_auto] items-center gap-(--composer-control-gap) [grid-template-areas:"menu_input_controls"]'
+                    )}
+                  >
+                    <div className="flex translate-y-[3px] items-start gap-(--composer-control-gap) self-start [grid-area:menu]">
+                      {contextMenu}
+                      <ContribSlot area={COMPOSER_AREAS.leading} />
+                    </div>
+                    <div className="min-w-0 [grid-area:input]">{input}</div>
+                    {/* `justify-end` packs contributed actions and the send cluster
+                      together on the right. The cluster must not carry its own
+                      `ml-auto`: in the stacked layout the auto margin absorbs the
+                      row's free space and pins a contributed action to the row
+                      start, detached from the cluster (#116332). */}
+                    <div className="flex min-w-0 items-center justify-end gap-(--composer-control-gap) [grid-area:controls]">
+                      <ContribSlot area={COMPOSER_AREAS.actions} />
+                      {controls}
                     </div>
                   </div>
-                )}
-                {attachments.length > 0 && <AttachmentList attachments={attachments} onRemove={onRemoveAttachment} />}
-                {/* TWO ROWS, ALWAYS — the input on its own line, then the
-                    attach menu, model pill and voice controls beneath it. This
-                    used to be a width ladder that inlined the controls beside
-                    the input above a breakpoint, which meant the chat screen,
-                    a phone and the HUD each showed a different arrangement of
-                    the same bar. One layout is the point. */}
-                <div className='grid w-full grid-cols-[auto_1fr] gap-(--composer-row-gap) [grid-template-areas:"input_input"_"menu_controls"]'>
-                  <div className="flex translate-y-[3px] items-start gap-(--composer-control-gap) self-start [grid-area:menu]">
-                    {contextMenu}
-                    <ContribSlot area={COMPOSER_AREAS.leading} />
-                  </div>
-                  <div className="min-w-0 [grid-area:input]">{input}</div>
-                  <div className="flex min-w-0 items-center justify-end gap-(--composer-control-gap) [grid-area:controls]">
-                    <ContribSlot area={COMPOSER_AREAS.actions} />
-                    {controls}
-                  </div>
+                  <ContribSlot area={COMPOSER_AREAS.bottom} />
                 </div>
-                <ContribSlot area={COMPOSER_AREAS.bottom} />
               </div>
             </div>
-          </div>
-          {/* Underside: chrome-free strip BELOW the composer surface. Same
-              stacking layer and inset as the micro-action strip above it, so
-              the two bracket the surface on one vertical line. */}
-          <div className={cn(composerFloatingStrip, 'relative z-4 pt-1.5 empty:hidden')}>
+          </ComposerPrimitive.Root>
+          {/* Underside: chrome-free strip BELOW the composer. Outside the root
+              for the same reason as the micro actions — it must not fall inside
+              the pop-out drag region. Same px as the strip above, so the two
+              bracket the composer on one vertical line. */}
+          <div className={cn(composerFloatingStrip, 'px-[5px] pt-1.5 empty:hidden')}>
             <ContribSlot area={COMPOSER_AREAS.underside} />
           </div>
-        </ComposerPrimitive.Root>
+        </div>
       </ComposerPrimitive.Unstable_TriggerPopoverRoot>
 
       <UrlDialog
@@ -1435,21 +1561,13 @@ export function ChatBarFallback() {
   return (
     <div
       className={cn(
-        // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left
-        'group/composer absolute bottom-0 left-1/2 z-30 w-[min(var(--composer-width),calc(100%-2rem))] max-w-full -translate-x-1/2 rounded-(--composer-radius) pt-2 pb-[var(--composer-shell-pad-block-end)]',
+        'group/composer absolute bottom-0 start-1/2 z-30 w-[min(var(--composer-width),calc(100%-2rem))] max-w-full -translate-x-1/2 rounded-2xl pt-2 pb-[var(--composer-shell-pad-block-end)]',
         'bg-linear-to-b from-transparent to-background/55'
       )}
       data-slot="composer-root"
     >
       <div className="composer-fallback-surface relative isolate h-(--composer-fallback-height) w-full rounded-[inherit] border border-[color-mix(in_srgb,var(--dt-composer-ring)_calc(18%*var(--composer-ring-strength)),var(--dt-input))]">
-        <div
-          aria-hidden
-          className={cn(
-            'pointer-events-none absolute inset-0 -z-10 rounded-[inherit]',
-            composerFill,
-            composerSurfaceGlass
-          )}
-        />
+        <div aria-hidden className={composerInputBacking} />
       </div>
     </div>
   )

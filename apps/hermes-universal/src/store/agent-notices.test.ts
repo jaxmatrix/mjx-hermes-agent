@@ -4,19 +4,12 @@ import {
   type AgentNoticePayload,
   clearAgentNotice,
   nativeNoticeInput,
-  noticeAccent,
   noticeToToast,
   showAgentNotice,
   splitMeta,
-  stripGlyph,
   usageFraction
 } from './agent-notices'
 import { $notifications, clearNotifications } from './notifications'
-
-// Ported from apps/desktop/src/store/agent-notices.test.ts. Only the last block
-// diverges: universal's NativeNotificationInput has no `global` flag (its
-// dispatch is already "fire only while backgrounded"), so the account-wide notice
-// carries no sessionId and uses the notice key as its throttle `tag` instead.
 
 function usage(overrides: Partial<AgentNoticePayload> = {}): AgentNoticePayload {
   return {
@@ -88,6 +81,7 @@ test('the leading severity glyph is stripped from the toast message', () => {
 })
 
 test('the trailing "· detail" is split off as a secondary meta line, not inlined', () => {
+  // Detail-carrying notices split on the first ` · `.
   const paused = noticeToToast({
     key: 'credits.depleted',
     level: 'error',
@@ -97,6 +91,7 @@ test('the trailing "· detail" is split off as a secondary meta line, not inline
   expect(paused?.message).toBe('Credit access paused')
   expect(paused?.meta).toBe('run /topup to top up')
 
+  // grant_spent carries a `· detail` tail too.
   const grant = noticeToToast({ key: 'credits.grant_spent', level: 'info', text: '• Grant spent · $12.00 top-up left' })
   expect(grant?.message).toBe('Grant spent')
   expect(grant?.meta).toBe('$12.00 top-up left')
@@ -118,16 +113,6 @@ test('splitMeta splits on the first space-middot-space only', () => {
   expect(splitMeta('a · b · c')).toEqual(['a', 'b · c'])
 })
 
-test('stripGlyph removes only a single leading severity glyph', () => {
-  expect(stripGlyph('• Credits 50% used')).toBe('Credits 50% used')
-  expect(stripGlyph('⚠ warn')).toBe('warn')
-  expect(stripGlyph('✕ paused')).toBe('paused')
-  expect(stripGlyph('✓ ok')).toBe('ok')
-  // No leading glyph → unchanged; interior glyphs are preserved.
-  expect(stripGlyph('Credits 50% used')).toBe('Credits 50% used')
-  expect(stripGlyph('spent · $12.00 • top-up left')).toBe('spent · $12.00 • top-up left')
-})
-
 // ── noticeAccent: severity color ramp keyed off $used / $cap ─────────────────
 
 test('usageFraction derives $used / $cap from the notice text', () => {
@@ -137,33 +122,6 @@ test('usageFraction derives $used / $cap from the notice text', () => {
   expect(usageFraction('Grant spent')).toBeNull()
   expect(usageFraction("You've used $5.00 of your $0.00 cap")).toBeNull()
   expect(usageFraction(undefined)).toBeNull()
-})
-
-test('usage accent stays muted below 75%, then ramps orange → red', () => {
-  expect(noticeAccent(usage({ text: "• You've used $10.00 of your $20.00 cap" }))).toBeUndefined() // 50%
-  expect(noticeAccent(usage({ text: "• You've used $14.80 of your $20.00 cap" }))).toBeUndefined() // 74%
-  expect(noticeAccent(usage({ level: 'warn', text: "⚠ You've used $15.00 of your $20.00 cap" }))).toBe(
-    'var(--ui-orange)'
-  ) // 75%
-  expect(noticeAccent(usage({ level: 'warn', text: "⚠ You've used $17.80 of your $20.00 cap" }))).toBe(
-    'var(--ui-orange)'
-  ) // 89%
-  expect(noticeAccent(usage({ level: 'warn', text: "⚠ You've used $18.00 of your $20.00 cap" }))).toBe('var(--ui-red)') // 90%
-  expect(noticeAccent(usage({ level: 'warn', text: "⚠ You've used $20.00 of your $20.00 cap" }))).toBe('var(--ui-red)') // 100%
-})
-
-test('terminal credit states carry their own accent; others stay default', () => {
-  expect(noticeAccent({ key: 'credits.depleted', text: '✕ paused' })).toBe('var(--ui-red)')
-  expect(noticeAccent({ key: 'credits.restored', text: '✓ restored' })).toBe('var(--ui-green)')
-  expect(noticeAccent({ key: 'credits.grant_spent', text: '• Grant spent' })).toBeUndefined()
-  expect(noticeAccent(undefined)).toBeUndefined()
-})
-
-test('noticeToToast attaches the band accent to the toast', () => {
-  expect(noticeToToast(usage({ level: 'warn', text: "⚠ You've used $15.00 of your $20.00 cap" }))?.accentColor).toBe(
-    'var(--ui-orange)'
-  )
-  expect(noticeToToast(usage({ text: "• You've used $10.00 of your $20.00 cap" }))?.accentColor).toBeUndefined()
 })
 
 // ── show / clear: rendered through the notifications store ────────────────────
@@ -211,7 +169,7 @@ test('only credits.depleted and credits.restored map to a native notification', 
   expect(nativeNoticeInput({ text: '', key: 'credits.depleted' }, 'Credits')).toBeNull()
 })
 
-test('the urgent pair maps to a session-less native input keyed by the notice', () => {
+test('the urgent pair maps to a global native input carrying the text as its body', () => {
   const depleted = nativeNoticeInput(
     { key: 'credits.depleted', kind: 'sticky', level: 'error', text: '✕ Credit access paused · run /topup to top up' },
     'Credits'
@@ -219,8 +177,8 @@ test('the urgent pair maps to a session-less native input keyed by the notice', 
 
   expect(depleted).toEqual({
     body: '✕ Credit access paused · run /topup to top up',
+    global: true,
     kind: 'credits',
-    tag: 'credits.depleted',
     title: 'Credits'
   })
 
@@ -231,6 +189,4 @@ test('the urgent pair maps to a session-less native input keyed by the notice', 
 
   expect(restored?.kind).toBe('credits')
   expect(restored?.body).toBe('✓ Credit access restored')
-  // Distinct tags: depleted and restored must not throttle each other out.
-  expect(restored?.tag).toBe('credits.restored')
 })

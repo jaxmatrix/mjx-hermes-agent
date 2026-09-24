@@ -43,12 +43,10 @@ describe('$anyToolDisclosureOpen', () => {
     expect(anyOpen.get()).toBe(false)
   })
 
-  // MJXHRM-223: this used to be memoized in a module Map keyed on the JOINED id
-  // list. A run gains one id per tool call, so an N-call run left N atoms behind
-  // keyed by N strings of growing length — O(N²) characters retained forever, in
-  // the very store a render-cost budget exists to bound. The caller scopes this
-  // to a useMemo, so nothing needed the cache.
-  it('retains nothing between calls', () => {
-    expect($anyToolDisclosureOpen(['row-a'])).not.toBe($anyToolDisclosureOpen(['row-a']))
+  // Same atom for the same id set — a render body can call this bare, like
+  // `$toolDisclosureOpen`. Desktop keeps the joined-id Map cache.
+  it('returns the SAME atom for an id list so a render body can call it directly', () => {
+    expect($anyToolDisclosureOpen(['row-a'])).toBe($anyToolDisclosureOpen(['row-a']))
+    expect($anyToolDisclosureOpen(['row-a'])).not.toBe($anyToolDisclosureOpen(['row-b']))
   })
 })

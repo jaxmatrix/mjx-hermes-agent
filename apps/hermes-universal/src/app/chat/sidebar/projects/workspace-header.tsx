@@ -5,6 +5,7 @@ import { Codicon } from '@/components/ui/codicon'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { isDesktopFsRemoteMode } from '@/lib/desktop-fs'
 import { cn } from '@/lib/utils'
 import { openWorktreeDialog } from '@/store/coding-status'
 import { copyPath, revealPath } from '@/store/projects'
@@ -22,7 +23,9 @@ function LaneLabel({ label, title }: { label: string; title?: string }) {
   const tail = label.slice(label.length - tailLen)
 
   return (
-    <span className="flex min-w-0" title={title}>
+    // overflow-hidden: the pinned tail is shrink-0, so at extreme narrow widths
+    // it must clip inside the label rather than push the trailing icons out.
+    <span className="flex min-w-0 overflow-hidden" title={title}>
       <span className="truncate">{head}</span>
       <span className="shrink-0 whitespace-pre">{tail}</span>
     </span>
@@ -30,13 +33,25 @@ function LaneLabel({ label, title }: { label: string; title?: string }) {
 }
 
 // "+" affordance shared by repo and worktree headers — reveals on header hover.
-export function WorkspaceAddButton({ label, onClick }: { label: string; onClick: () => void }) {
+// Also a drag source: dragging it starts the new-session drag pinned to the
+// project's path (`onPointerDown`), so the created session inherits the
+// project's cwd. A sub-threshold release stays an ordinary click (`onClick`).
+export function WorkspaceAddButton({
+  label,
+  onClick,
+  onPointerDown
+}: {
+  label: string
+  onClick: () => void
+  onPointerDown?: (event: React.PointerEvent<HTMLButtonElement>) => void
+}) {
   return (
     <Tip label={label}>
       <button
         aria-label={label}
-        className="grid size-4 shrink-0 place-items-center rounded-sm bg-transparent text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover/workspace:opacity-100 coarse:opacity-100 hover:bg-(--ui-control-hover-background) hover:text-foreground"
+        className="grid size-4 shrink-0 place-items-center rounded-sm bg-transparent text-(--ui-text-quaternary) opacity-0 coarse:opacity-100 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/workspace:opacity-100"
         onClick={onClick}
+        onPointerDown={onPointerDown}
         type="button"
       >
         <Codicon name="add" size="0.75rem" />
@@ -46,6 +61,8 @@ export function WorkspaceAddButton({ label, onClick }: { label: string; onClick:
 }
 
 // Reveals the next page of already-loaded rows within a workspace/worktree.
+// Hangs off the lane instead of sitting in a row, so it repeats the row's
+// trailing inset (SidebarRowShell's `pr-2`) to stay on the edge the rows stop at.
 export function WorkspaceShowMoreButton({
   count,
   label,
@@ -62,7 +79,7 @@ export function WorkspaceShowMoreButton({
     <Tip label={text}>
       <button
         aria-label={text}
-        className="ms-auto grid size-5 place-items-center rounded-sm bg-transparent text-(--ui-text-tertiary) transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground"
+        className="me-2 ms-auto grid size-5 place-items-center rounded-sm bg-transparent text-(--ui-text-tertiary) transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground"
         onClick={onClick}
         type="button"
       >
@@ -80,15 +97,20 @@ function useWorkspaceItems({ path, onRemove }: { path: null | string; onRemove: 
   const { t } = useI18n()
   const p = t.sidebar.projects
 
+  // The OS file manager needs the local filesystem; a remote backend's
+  // worktree is not on this computer (the file trees hide reveal the same way).
+  const localFs = !isDesktopFsRemoteMode()
+
   return (kit: MenuKit) => (
     <>
-      {renderActionItem(kit, {
-        disabled: !path,
-        icon: 'folder-opened',
-        key: 'reveal',
-        label: p.reveal,
-        onSelect: () => void revealPath(path)
-      })}
+      {localFs &&
+        renderActionItem(kit, {
+          disabled: !path,
+          icon: 'folder-opened',
+          key: 'reveal',
+          label: p.reveal,
+          onSelect: () => void revealPath(path)
+        })}
       {renderActionItem(kit, {
         disabled: !path,
         icon: 'copy',
@@ -117,7 +139,7 @@ export function WorkspaceMenu({ path, onRemove }: { path: null | string; onRemov
     <ActionsMenu ariaLabel={p.menu} contentClassName="w-48" items={items}>
       <button
         aria-label={p.menu}
-        className="grid size-4 shrink-0 place-items-center rounded-sm bg-transparent text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover/workspace:opacity-100 coarse:opacity-100 hover:bg-(--ui-control-hover-background) hover:text-foreground data-[state=open]:opacity-100"
+        className="grid size-4 shrink-0 place-items-center rounded-sm bg-transparent text-(--ui-text-quaternary) opacity-0 coarse:opacity-100 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/workspace:opacity-100 data-[state=open]:opacity-100"
         onClick={event => event.stopPropagation()}
         type="button"
       >
@@ -153,7 +175,7 @@ export function WorkspaceContextMenu({
 // for that branch under the repo (the lightest way) and we open a new session
 // inside it. Naming is explicit — no auto-generated `hermes/work-<ts>` trees.
 // The base branch defaults to the remote default (origin/HEAD); the user can
-// pick any local or remote-tracking branch.
+// pick any local or remote-tracking branch via a filterable combobox.
 export function StartWorkButton({ repoPath }: { repoPath: string }) {
   const { t } = useI18n()
   const p = t.sidebar.projects
@@ -162,8 +184,8 @@ export function StartWorkButton({ repoPath }: { repoPath: string }) {
     <Tip label={p.startWork}>
       <button
         aria-label={p.startWork}
-        className="grid size-4 shrink-0 place-items-center rounded-sm bg-transparent text-(--ui-text-quaternary) opacity-0 transition-opacity group-hover/section:opacity-100 coarse:opacity-100 hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:opacity-100"
-        // Publish the intent; the one WorktreeDialog in the sidebar renders it.
+        className="grid size-4 shrink-0 place-items-center rounded-sm bg-transparent text-(--ui-text-quaternary) opacity-0 coarse:opacity-100 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/section:opacity-100 focus-visible:opacity-100"
+        // Publish the intent. The one WorktreeDialog in the sidebar renders it.
         // This button pins its own repo, so it targets this section.
         onClick={() => void openWorktreeDialog({ repoPath })}
         type="button"

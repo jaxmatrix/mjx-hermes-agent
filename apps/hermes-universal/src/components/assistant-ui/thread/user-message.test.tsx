@@ -21,7 +21,11 @@ vi.mock('@assistant-ui/react', () => {
     MessagePrimitive: { Root: passthrough },
     useAuiState: (selector: (state: unknown) => unknown) =>
       selector({
-        message: { id: 'm1', content: [{ type: 'text', text: 'a very long prompt' }] },
+        message: {
+          id: 'm1',
+          content: [{ type: 'text', text: 'a very long prompt' }],
+          parts: [{ type: 'text', text: 'a very long prompt' }]
+        },
         thread: { isRunning: false, messages: [{ id: 'm1', role: 'user' }] }
       })
   }
@@ -86,7 +90,7 @@ describe('UserMessage', () => {
 
     act(() => screen.getByRole('button', { name: 'Restore checkpoint' }).click())
 
-    expect(onRequestRestoreConfirm).toHaveBeenCalledWith('m1', { text: 'a very long prompt' })
+    expect(onRequestRestoreConfirm).toHaveBeenCalledWith('m1', { text: 'a very long prompt', userOrdinal: 0 })
   })
 
   // MJXHRM-223: the bubble used to count its own user ordinal off
@@ -102,6 +106,6 @@ describe('UserMessage', () => {
     act(() => screen.getByRole('button', { name: 'Restore checkpoint' }).click())
 
     const [, target] = onRequestRestoreConfirm.mock.calls[0] as [string, Record<string, unknown>]
-    expect(Object.keys(target)).toEqual(['text'])
+    expect(Object.keys(target).sort()).toEqual(['text', 'userOrdinal'])
   })
 })

@@ -17,25 +17,34 @@ import { Tip } from '@/components/ui/tooltip'
 import type { HermesReviewFile } from '@/global'
 import { useI18n } from '@/i18n'
 import { isDesktopFsRemoteMode } from '@/lib/desktop-fs'
+import { displayPath } from '@/lib/display-path'
 import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { cn } from '@/lib/utils'
-import { useDisplayPath } from '@/store/display-home'
-import { $renamingPath, copyFilePath, revealFile, toRelativePath } from '@/store/file-actions'
+import {
+  $renamingPath,
+  copyFilePath,
+  downloadRemoteFile,
+  revealFile,
+  shouldOfferRemoteFileDownload,
+  toRelativePath
+} from '@/store/file-actions'
 import { $sidebarWorkspaceNodeOpen, revealFileInTree, toggleWorkspaceNodeCollapsed } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
-import { setCurrentSessionPreviewTarget } from '@/store/preview'
+import { openPreview } from '@/store/preview'
 import {
   $reviewFiles,
   $reviewLoading,
   $reviewOpen,
+  $reviewScopeCwd,
   $reviewSelectedPath,
   $reviewTreeMode,
   requestRevert,
+  reviewRepoCwd,
   selectReviewFile,
   stageReviewFile,
   unstageReviewFile
 } from '@/store/review'
-import { $effectiveCwd } from '@/store/workspace-events'
+import { $currentCwd } from '@/store/session'
 
 import { pickRevealLabel } from '../file-actions'
 
@@ -56,25 +65,20 @@ const STATUS_GLYPH: Record<string, { icon: string; tone: string }> = {
   A: { icon: 'diff-added', tone: 'text-(--ui-green)' },
   C: { icon: 'diff-added', tone: 'text-(--ui-green)' },
   D: { icon: 'diff-removed', tone: 'text-(--ui-red)' },
-  M: { icon: 'diff-modified', tone: 'text-(--ui-yellow)/85' },
-  R: { icon: 'diff-renamed', tone: 'text-(--ui-cyan)/85' },
+  M: { icon: 'diff-modified', tone: 'text-amber-500/85' },
+  R: { icon: 'diff-renamed', tone: 'text-sky-500/85' },
   U: { icon: 'warning', tone: 'text-(--ui-red)' },
   '?': { icon: 'diff-added', tone: 'text-muted-foreground/60' }
 }
 
 // Review paths are repo-relative; the composer drop expects absolute paths, so
-// join against the repo the pane probed (the focused chat's cwd, or the
-// workspace root). Exported for the
-// mobile review surface, which needs the same absolute path for preview/copy.
+// join against the pane's repo (its pinned scope, else the active session cwd).
 export function absolutePath(relative: string): string {
   if (/^([a-zA-Z]:[\\/]|\/)/.test(relative)) {
     return relative
   }
 
-  const cwd = $effectiveCwd
-    .get()
-    ?.trim()
-    .replace(/[\\/]+$/, '')
+  const cwd = reviewRepoCwd()?.replace(/[\\/]+$/, '')
 
   return cwd ? `${cwd}/${relative}` : relative
 }
@@ -139,6 +143,7 @@ export function ReviewFileTree() {
   const [animate, setAnimate] = useState(false)
   const armed = useRef(false)
 
+   
   useEffect(() => {
     if (!open) {
       armed.current = false
@@ -146,6 +151,7 @@ export function ReviewFileTree() {
     }
   }, [open])
 
+   
   useEffect(() => {
     if (open && !loading && !armed.current) {
       armed.current = true
@@ -311,10 +317,11 @@ function ReviewFileRow({ node, depth }: { node: ReviewTreeNode; depth: number })
   const selected = file.path === selectedPath
   const glyph = STATUS_GLYPH[file.status] ?? STATUS_GLYPH.M
   const dragPath = absolutePath(file.path)
-  const cwd = useStore($effectiveCwd)
-  // The row's own tooltip is the only ABSOLUTE path here (`file.path` and
-  // `node.dir` are repo-relative), and it lives on the gateway (MJXHRM-394).
-  const displayPath = useDisplayPath()
+  // Reactive mirror of reviewRepoCwd(): the pinned scope wins, else the
+  // active session's cwd (subscribing to both keeps the row live either way).
+  const scopeCwd = useStore($reviewScopeCwd)
+  const activeCwd = useStore($currentCwd)
+  const cwd = scopeCwd?.trim() || activeCwd
 
   // Single-click shows the inline diff; double-click opens the file in the main
   // preview pane (matching the file browser). They're mutually exclusive: defer
@@ -354,7 +361,7 @@ function ReviewFileRow({ node, depth }: { node: ReviewTreeNode; depth: number })
         const preview = await normalizeOrLocalPreviewTarget(dragPath)
 
         if (preview) {
-          setCurrentSessionPreviewTarget(preview, 'file-browser', dragPath)
+          openPreview(preview)
         }
       } catch (error) {
         notifyError(error, t.rightSidebar.previewUnavailable)
@@ -513,6 +520,12 @@ function ReviewFileContextMenu({
           <ContextMenuItem onSelect={() => void copyFilePath(toRelativePath(dragPath, cwd))}>
             {m.copyRelativePath}
           </ContextMenuItem>
+        )}
+        {shouldOfferRemoteFileDownload(false) && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => void downloadRemoteFile(dragPath)}>{m.download}</ContextMenuItem>
+          </>
         )}
       </ContextMenuContent>
     </ContextMenu>

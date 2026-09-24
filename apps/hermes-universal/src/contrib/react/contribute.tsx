@@ -13,9 +13,9 @@
  * without re-registering (which would churn every other slot).
  */
 
+import { useStore } from '@nanostores/react'
+import { atom, type WritableAtom } from 'nanostores'
 import { type ReactNode, useEffect, useRef } from 'react'
-
-import { atom, useStore, type WritableAtom } from '@/store/atom'
 
 import { registry } from '../registry'
 

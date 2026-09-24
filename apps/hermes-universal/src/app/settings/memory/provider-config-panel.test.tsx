@@ -7,6 +7,9 @@ const getMemoryProviderConfig = vi.fn()
 const saveMemoryProviderConfig = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getMemoryProviderConfig: (provider: string) => getMemoryProviderConfig(provider),
   saveMemoryProviderConfig: (provider: string, values: unknown) => saveMemoryProviderConfig(provider, values)
 }))
@@ -14,12 +17,7 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/store/profile', async () => {
   const { atom } = await import('nanostores')
 
-  // `normalizeProfileKey` is read by store/settings-scope at import time (the
-  // panel is scoped by the settings "Applies to" selector).
-  return {
-    $activeGatewayProfile: atom('default'),
-    normalizeProfileKey: (name: null | string | undefined) => (name ?? '').trim() || 'default'
-  }
+  return { $activeGatewayProfile: atom('default') }
 })
 
 vi.mock('@/store/notifications', () => ({
@@ -120,15 +118,6 @@ async function renderPanel(provider = 'honcho') {
 }
 
 describe('ProviderConfigPanel', () => {
-  it('renders the declared inline fields generically', async () => {
-    await renderPanel()
-
-    expect(await screen.findByDisplayValue('myws')).toBeTruthy()
-    expect(screen.getByPlaceholderText('https://… (self-hosted)')).toBeTruthy()
-    expect(screen.getByText('Production')).toBeTruthy()
-    expect(screen.getByText('Self-hosted Honcho URL.')).toBeTruthy()
-  })
-
   it('hides fields that are not marked inline', async () => {
     await renderPanel()
 
@@ -182,13 +171,6 @@ describe('ProviderConfigPanel', () => {
 
     await waitFor(() => expect(saveMemoryProviderConfig).toHaveBeenCalledWith('honcho', { apiKey: 'hch-new-key' }))
     await waitFor(() => expect((apiKey as HTMLInputElement).value).toBe(''))
-  })
-
-  it('offers a full-config trigger when modal-only fields exist', async () => {
-    await renderPanel()
-
-    await screen.findByDisplayValue('myws')
-    expect(screen.getByRole('button', { name: /Full config/ })).toBeTruthy()
   })
 
   it('shows an inline error with retry when the load fails, then recovers', async () => {

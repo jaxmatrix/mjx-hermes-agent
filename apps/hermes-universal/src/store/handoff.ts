@@ -2,7 +2,7 @@ import type { HandoffFailResponse, HandoffRequestResponse, HandoffStateResponse 
 import { translateNow } from '@/i18n'
 import { normalize } from '@/lib/text'
 import { $sessionId, appendSystemMessage } from '@/store/chat'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { notify } from '@/store/notifications'
 
 export interface HandoffResult {

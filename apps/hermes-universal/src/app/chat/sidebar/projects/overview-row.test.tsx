@@ -1,95 +1,150 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { $removedSessionIds } from '@/store/session'
-import type { SessionInfo } from '@/types/hermes'
+import type { SessionInfo } from '@/hermes'
+import type * as ProjectsStore from '@/store/projects'
 
-import type { SidebarProjectTree } from './model'
+import type * as Model from './model'
 import { ProjectOverviewRow } from './overview-row'
+import type { SidebarProjectTree } from './workspace-groups'
 
-// MJXHRM-414's second half. The project tree is a BACKEND SNAPSHOT — it only
-// changes when `projects.tree` is re-fetched — so a session deleted a moment ago
-// is still in it, and this preview list was the one sidebar surface that never
-// applied the tombstone overlay. A deleted chat kept appearing under its
-// project, and could be clicked.
+afterEach(cleanup)
 
-const session = (id: string): SessionInfo =>
-  ({ id, last_active: 1_000, message_count: 1, source: 'cli', started_at: 1_000, title: id }) as SessionInfo
+const workspaceOpen = vi.hoisted(() => ({ value: false }))
 
-const project = (sessions: SessionInfo[]): SidebarProjectTree =>
-  ({
-    id: 'p1',
-    label: 'repo',
-    path: '/work/repo',
-    repos: [
-      {
-        groups: [{ id: '/work/repo::branch::main', isMain: true, label: 'main', path: '/work/repo', sessions }],
-        id: '/work/repo',
-        label: 'repo',
-        path: '/work/repo',
-        sessionCount: sessions.length
+const projectsStore = vi.hoisted(() => ({
+  fetchProjectSessions:
+    vi.fn<(id: string, options?: { supersedable?: boolean }) => Promise<null | SidebarProjectTree>>(),
+  projectProfile: vi.fn<() => null | string>(() => 'default')
+}))
+
+vi.mock('@/i18n', () => ({
+  useI18n: () => ({
+    t: {
+      sidebar: {
+        newSessionIn: (label: string) => `New session in ${label}`,
+        projects: {
+          enter: (label: string) => `Enter ${label}`,
+          reorder: (label: string) => `Reorder ${label}`,
+          toggle: (label: string, open: boolean) => `${open ? 'Show' : 'Hide'} ${label} sessions`,
+          showAllCount: (count: number) => `Show all ${count} sessions`,
+          autoDiscovered: 'Auto-discovered'
+        }
       }
-    ],
-    sessionCount: sessions.length
-  }) as SidebarProjectTree
+    }
+  })
+}))
 
-const renderRows = (sessions: SessionInfo[]) => sessions.map(row => <div key={row.id}>{row.id}</div>)
+vi.mock('@/store/projects', async importOriginal => ({
+  ...(await importOriginal<typeof ProjectsStore>()),
+  ...projectsStore
+}))
 
-const renderRow = (sessions: SessionInfo[]) =>
-  render(<ProjectOverviewRow project={project(sessions)} renderRows={renderRows} />)
+// Keep the pure helpers real (they are the logic under test); stub only the
+// persisted open/collapse hook and the in-memory fallback preview.
+vi.mock('./model', async () => ({
+  ...(await vi.importActual<typeof Model>('./model')),
+  latestProjectSessions: () => [],
+  useWorkspaceNodeOpen: () => [workspaceOpen.value, vi.fn()]
+}))
 
-/** The previews are behind a hover-revealed caret; open it. */
-const expandPreviews = () => fireEvent.click(screen.getByRole('button', { name: '' }))
+// ProjectMenu (the kebab) has its own dedicated test file — stub it here so
+// this file only exercises overview-row's own Tip usage (the disclosure
+// toggle) plus the WorkspaceAddButton wiring. ProjectContextMenu (the row's
+// right-click wrapper) is stubbed as a pass-through so the row still renders.
+vi.mock('./project-menu', () => ({
+  ProjectContextMenu: ({ children }: { children: ReactNode }) => children,
+  ProjectMenu: () => null
+}))
 
-beforeEach(() => $removedSessionIds.set(new Set()))
-afterEach(() => {
-  cleanup()
-  $removedSessionIds.set(new Set())
-})
+const project = { id: 'p1', label: 'Test D' } as unknown as SidebarProjectTree
 
-describe('ProjectOverviewRow previews', () => {
-  it('lists the project’s sessions when nothing has been removed', () => {
-    renderRow([session('s1'), session('s2')])
-    expandPreviews()
+const session = (id: string, updated: number): SessionInfo => ({ id, updated_at: updated }) as unknown as SessionInfo
 
-    expect(screen.getByText('s1')).toBeInTheDocument()
-    expect(screen.getByText('s2')).toBeInTheDocument()
+describe('ProjectOverviewRow', () => {
+  afterEach(() => {
+    workspaceOpen.value = false
+    projectsStore.fetchProjectSessions.mockReset()
+    projectsStore.projectProfile.mockReset().mockReturnValue('default')
   })
 
-  it('never previews a session the user just deleted', () => {
-    $removedSessionIds.set(new Set(['s1']))
+  it('does not render the disclosure toggle when there is nothing to preview', () => {
+    render(<ProjectOverviewRow project={project} />)
 
-    renderRow([session('s1'), session('s2')])
-    expandPreviews()
-
-    expect(screen.queryByText('s1')).not.toBeInTheDocument()
-    expect(screen.getByText('s2')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show Test D sessions' })).toBeNull()
   })
 
-  // The subscription, not just the filter: the tree does not change when a
-  // session is deleted, so without a reason to re-render this row would keep
-  // showing the deleted chat until something ELSE moved.
-  it('drops a preview the moment the tombstone lands, with no new tree', () => {
-    renderRow([session('s1'), session('s2')])
-    expandPreviews()
-    expect(screen.getByText('s1')).toBeInTheDocument()
+  // Group by → Projects previews only the 3 most-recent sessions per project;
+  // sessions 4+ need a visible, in-place way to be reached (#112406).
+  it('offers "Show all N sessions" past the preview cap and reveals the rest of the project inline', async () => {
+    workspaceOpen.value = true
+    const five = Array.from({ length: 5 }, (_, index) => session(`s${index + 1}`, 500 - index))
+    const busy = { ...project, sessionCount: 5 } as SidebarProjectTree
+    projectsStore.fetchProjectSessions.mockResolvedValue({
+      ...busy,
+      repos: [{ groups: [{ sessions: five }] }]
+    } as unknown as SidebarProjectTree)
 
-    act(() => $removedSessionIds.set(new Set(['s1'])))
+    render(
+      <ProjectOverviewRow
+        previewSessions={five.slice(0, 3)}
+        project={busy}
+        renderRows={items => <div data-testid="rows">{items.map(item => item.id).join(',')}</div>}
+      />
+    )
 
-    expect(screen.queryByText('s1')).not.toBeInTheDocument()
-    expect(screen.getByText('s2')).toBeInTheDocument()
+    expect(screen.getByTestId('rows').textContent).toBe('s1,s2,s3')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all 5 sessions' }))
+
+    await waitFor(() => expect(screen.getByTestId('rows').textContent).toBe('s1,s2,s3,s4,s5'))
+    expect(projectsStore.fetchProjectSessions).toHaveBeenCalledWith('p1', { supersedable: false })
+    expect(screen.queryByRole('button', { name: 'Show all 5 sessions' })).toBeNull()
   })
 
-  // A pin is stored on the durable lineage root while the tree lists the live
-  // tip, so a delete that tombstoned the root has to reach this row too.
-  it('drops a preview tombstoned under its lineage root', () => {
-    const tip = { ...session('tip'), _lineage_root_id: 'root' } as SessionInfo
-    $removedSessionIds.set(new Set(['root']))
+  // The hydrated lanes are the raw backend payload: pinned, filtered-out and
+  // just-deleted sessions must go through the same exclusion the previews did,
+  // and N must not promise rows the view hides.
+  it('"Show all" runs the hydrated lanes through the tree exclusion and counts only what it will render', async () => {
+    workspaceOpen.value = true
+    const five = Array.from({ length: 5 }, (_, index) => session(`s${index + 1}`, 500 - index))
+    const busy = { ...project, sessionCount: 5 } as SidebarProjectTree
+    projectsStore.fetchProjectSessions.mockResolvedValue({
+      ...busy,
+      repos: [{ groups: [{ sessions: five }] }]
+    } as unknown as SidebarProjectTree)
+    // s2 is pinned (renders in Pinned), s5 was just deleted.
+    const hidden = new Set(['s2', 's5'])
 
-    renderRow([tip, session('s2')])
-    expandPreviews()
+    render(
+      <ProjectOverviewRow
+        hiddenSessionCount={hidden.size}
+        isSessionHidden={item => hidden.has(item.id)}
+        previewSessions={[five[0], five[2]]}
+        project={busy}
+        renderRows={items => <div data-testid="rows">{items.map(item => item.id).join(',')}</div>}
+      />
+    )
 
-    expect(screen.queryByText('tip')).not.toBeInTheDocument()
-    expect(screen.getByText('s2')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show all 3 sessions' }))
+
+    await waitFor(() => expect(screen.getByTestId('rows').textContent).toBe('s1,s3,s4'))
+  })
+
+  it('offers the "new session" add button on Home, which starts one with no folder', () => {
+    const home = {
+      id: '__no_project__',
+      isNoProject: true,
+      label: 'Home',
+      path: null
+    } as unknown as SidebarProjectTree
+
+    const onNewSession = vi.fn()
+
+    render(<ProjectOverviewRow onNewSession={onNewSession} project={home} />)
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Home' }))
+
+    expect(onNewSession).toHaveBeenCalledWith(null)
   })
 })

@@ -3,11 +3,11 @@ import { atom } from 'nanostores'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { HermesGitBaseBranch } from '@/global'
-import { $notifications, clearNotifications } from '@/store/notifications'
 import type * as ProjectsModule from '@/store/projects'
 import { listBaseBranches } from '@/store/projects'
 
 vi.mock('@/store/coding-status', () => ({
+  $repoStatus: atom(null),
   registerRepoStatusCwd: vi.fn(() => () => {}),
   repoStatusForCwd: vi.fn(() => atom(null))
 }))
@@ -23,7 +23,6 @@ const mount = (onValueChange: (value: string) => void) =>
   render(<BaseBranchPicker onValueChange={onValueChange} repoPath="/work/repo" value="" />)
 
 afterEach(() => {
-  clearNotifications()
   cleanup()
   vi.clearAllMocks()
 })
@@ -45,22 +44,18 @@ describe('BaseBranchPicker', () => {
     await waitFor(() => expect(onValueChange).toHaveBeenCalledWith('upstream/main'))
   })
 
-  it('reports a failed load instead of silently basing the worktree on HEAD', async () => {
+  it('leaves the trigger blank when the branch list fails to load', async () => {
     // A non-repo folder answers with an empty list, not an error, so reaching
-    // the catch really does mean the call failed. Swallowing it left the
-    // trigger blank and submitted with no `base` at all — the new worktree was
-    // then cut from whatever HEAD happened to be, with nothing said about it.
+    // the catch really does mean the call failed. The picker must not invent a
+    // default — submitting with no `base` at all is the honest failure mode
+    // (desktop's catch only clears the list; notify lives on the dialog that
+    // owns the submit).
     vi.mocked(listBaseBranches).mockRejectedValue(new Error('gateway unreachable'))
     const onValueChange = vi.fn()
 
     mount(onValueChange)
 
-    await waitFor(() => {
-      const errors = $notifications.get().filter(item => item.kind === 'error')
-
-      expect(errors.map(item => item.title)).toContain('Could not load branches')
-      expect(errors.some(item => `${item.message} ${item.detail}`.includes('gateway unreachable'))).toBe(true)
-    })
+    await waitFor(() => expect(listBaseBranches).toHaveBeenCalled())
     expect(onValueChange).not.toHaveBeenCalled()
   })
 })

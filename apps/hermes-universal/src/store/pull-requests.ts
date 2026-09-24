@@ -1,22 +1,17 @@
 import { atom } from 'nanostores'
 
 import type { HermesBranchPullRequest } from '@/global'
+import { scanSessionPullRequests, type SessionInfo } from '@/hermes'
 import { desktopGit } from '@/lib/desktop-git'
-import { scanSessionPullRequests } from '@/lib/gateway-rest'
 import { Codecs, persistentAtom } from '@/lib/persisted'
-import type { SessionInfo } from '@/types/hermes'
 
-// Ported from desktop `store/pull-requests.ts`. Both routes ship in the gateway
-// REST client (lib/gateway-rest): the per-repo `gh pr list` rides the git facade
-// as `review.prList`, and the transcript recovery scan is called directly.
-
-/** How a row's PR reads at a glance — and what a sidebar filter would filter on.
- *  A session with no branch, no PR, or an unreachable `gh` is `none`. */
+/** How a row's PR reads at a glance — and what the sidebar filters on. A
+ *  session with no branch, no PR, or an unreachable `gh` is `none`. */
 export type PullRequestBucket = 'closed' | 'draft' | 'merged' | 'none' | 'open'
 
-// `gh pr list` is a network call per repo. The sidebar asks on mount, on window
-// focus, and whenever the set of repos on screen changes — this keeps those from
-// stacking into a burst of identical requests.
+// `gh pr list` is a network call per repo. The sidebar asks on mount, on
+// window focus, and whenever the set of repos on screen changes — this keeps
+// those from stacking into a burst of identical requests.
 const PR_STALE_MS = 60_000
 
 /** Every known PR keyed by `${repoRoot}\n${branch}` — the join a session row
@@ -25,7 +20,7 @@ export const $pullRequestsByBranch = atom<Record<string, HermesBranchPullRequest
 
 /** Sessions whose PR isn't on the branch they recorded at start — the checkout
  *  moved mid-conversation, or the work went off to a worktree. Written when the
- *  app creates a PR and when one is recovered from a transcript. Holds the
+ *  desktop creates a PR and when one is recovered from a transcript. Holds the
  *  lookup key, not the PR, so state stays live through the same refresh as
  *  everything else. */
 export const $prBranchBySession = persistentAtom<Record<string, string>>(
@@ -138,8 +133,9 @@ export function pullRequestBucket(pr: HermesBranchPullRequest | undefined): Pull
 
 /** Pull PRs for the given lookups, grouped by the repo they live in. Each entry
  *  is a branch name, or `#<number>` for a PR recovered from a transcript. Skips
- *  repos fetched recently or still in flight. Goes through the git facade, so it
- *  asks the GATEWAY's `gh` about the gateway's checkout. */
+ *  repos fetched recently or still in flight. Goes through the remote-aware git
+ *  facade, so a desktop pointed at a remote gateway asks the BACKEND's `gh`
+ *  about the backend's checkout. */
 export async function refreshPullRequests(lookupsByRepo: Record<string, string[]>, force = false): Promise<void> {
   const review = desktopGit()?.review
 
@@ -194,35 +190,4 @@ export async function refreshPullRequests(lookupsByRepo: Record<string, string[]
       }
     })
   )
-}
-
-/**
- * Drop the backend-bound half of this store because the gateway changed.
- *
- * `gh` runs on the GATEWAY, so everything here describes that host: the keys are
- * its absolute repo paths, the TTL means "asked this backend recently", and
- * `scanUnavailable` is a verdict about one backend's routes — latched to stop a
- * retry storm against an older gateway, it otherwise leaves PR recovery switched
- * off for the rest of the run on a new gateway that serves the route fine.
- *
- * `inFlight` is deliberately left alone: those requests still have to release
- * their own guard, and the worst a late one does is re-add a PR the next refresh
- * asks for anyway. `$prBranchBySession` / `$prScannedSessions` are keyed by
- * session id, and the switch already wiped the sessions.
- */
-export function resetPullRequestsForBackendSwitch(): void {
-  fetchedAt.clear()
-  scanUnavailable = false
-  $pullRequestsByBranch.set({})
-}
-
-/** Test-only: drop the TTL / in-flight bookkeeping so cases don't leak. */
-export function _resetPullRequestsForTests(): void {
-  fetchedAt.clear()
-  inFlight.clear()
-  scanUnavailable = false
-  scanInFlight = false
-  $pullRequestsByBranch.set({})
-  $prBranchBySession.set({})
-  $prScannedSessions.set([])
 }

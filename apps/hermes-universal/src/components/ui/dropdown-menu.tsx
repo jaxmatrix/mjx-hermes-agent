@@ -2,8 +2,8 @@ import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 import * as React from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
+import { usePopoverPortalContainer } from '@/components/ui/dialog-portal-context'
 import { cn } from '@/lib/utils'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 // Shared class tokens for edge-to-edge menus (use with `p-0` content): rows go
 // full-width, square, and compact so the highlight spans the whole surface.
@@ -61,6 +61,10 @@ function DropdownMenuSearch({
 
           onKeyDown?.(event)
         }}
+        // Search fields here filter ids, slugs, and model names — dictionary
+        // squiggles under them are noise (matching the composer/settings
+        // inputs, which already disable spellcheck).
+        spellCheck={false}
         type="text"
         {...props}
       />
@@ -71,29 +75,25 @@ function DropdownMenuSearch({
 function DropdownMenuContent({
   className,
   collisionPadding = 8,
+  portalContainer,
   sideOffset = 4,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
-  // The in-app browser's guest is a NATIVE view the compositor paints above the
-  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
-  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
-  useGuestOcclusion('dropdown-menu')
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+  portalContainer?: HTMLElement | null
+}) {
+  // An explicit target-owned container supports global menus whose component
+  // lives outside the dialog's React context. Nested menus still inherit the
+  // enclosing dialog; everything else falls back to document.body.
+  const container = usePopoverPortalContainer(portalContainer)
 
   return (
-    <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Portal container={container}>
       <DropdownMenuPrimitive.Content
         // `dt-portal-scrollbar` reproduces the thin themed scrollbar from
         // `.scrollbar-dt` for portaled overlays (Radix renders this under
         // document.body, outside #root's scope). See styles.css.
-        //
-        // `--z-modal-popover`, not a bare `z-50` (MJXHRM-365). The portal puts
-        // this under document.body, so it is stacked against the dialog
-        // (`--z-modal`, 130), not against its trigger — and a menu opened from
-        // inside a dialog rendered *behind* it. That rung exists for exactly
-        // this case; styles.css names it "a select/dropdown/popover opened from
-        // inside a modal, portaled to body".
         className={cn(
-          'dt-portal-scrollbar z-(--z-modal-popover) max-h-(--radix-dropdown-menu-content-available-height) min-w-36 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'dt-portal-scrollbar z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-36 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className
         )}
         // Keep the menu inside the viewport: Radix flips/shifts away from edges
@@ -247,10 +247,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      {!hideChevron && (
-        // Points at the edge the submenu opens toward, so it mirrors with it.
-        <Codicon className="ms-auto text-(--ui-text-tertiary) rtl:-scale-x-100" name="chevron-right" size="1rem" />
-      )}
+      {!hideChevron && <Codicon className="ms-auto text-(--ui-text-tertiary)" name="chevron-right" size="1rem" />}
     </DropdownMenuPrimitive.SubTrigger>
   )
 }
@@ -271,10 +268,9 @@ function DropdownMenuSubContent({
         // overlays (rendered under document.body). Use a fixed `max-h-80`
         // rather than the Radix available-height variable: that variable is
         // only published on Content, NOT SubContent — using it here collapses
-        // the submenu to 0px height. `--z-modal-popover` for the same reason as
-        // Content above (MJXHRM-365).
+        // the submenu to 0px height.
         className={cn(
-          'dt-portal-scrollbar z-(--z-modal-popover) max-h-80 min-w-36 origin-(--radix-dropdown-menu-content-transform-origin) overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'dt-portal-scrollbar z-50 max-h-80 min-w-36 origin-(--radix-dropdown-menu-content-transform-origin) overflow-y-auto rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] text-popover-foreground shadow-md backdrop-blur-md data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className
         )}
         // Flip to the other side / shift vertically when near a viewport edge

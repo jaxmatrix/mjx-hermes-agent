@@ -2,19 +2,16 @@ import { type ChangeEvent, type KeyboardEvent } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tip } from '@/components/ui/tooltip'
 import { translateNow, useI18n } from '@/i18n'
-import { ChevronDown, ExternalLink, Loader2, Save, Trash } from '@/lib/icons'
-import { prettyName } from '@/lib/text'
+import { ChevronDown, ExternalLink, Loader2, Save, Trash2 } from '@/lib/icons'
+import { isSubmitEnter } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import type { EnvVarInfo } from '@/types/hermes'
 
 import { CONTROL_TEXT } from './constants'
-import { withoutKey } from './helpers'
+import { prettyName, withoutKey } from './helpers'
 import { ListRow } from './primitives'
 import type { EnvRowProps } from './types'
-
-// Ported from apps/desktop/src/app/settings/credential-key-ui.tsx (Trash2 → Trash).
 
 export type KeyRowProps = Omit<EnvRowProps, 'info' | 'varKey'>
 
@@ -75,7 +72,7 @@ export function KeyField({
   const update = (e: ChangeEvent<HTMLInputElement>) => setEdits(c => ({ ...c, [varKey]: e.target.value }))
 
   const keydown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && dirty) {
+    if (isSubmitEnter(e) && dirty) {
       void onSave(varKey)
     } else if (e.key === 'Escape' && editing) {
       e.preventDefault()
@@ -119,19 +116,17 @@ export function KeyField({
       {editing && (info.is_set || dirty) && (
         <div className="flex items-center gap-1">
           {info.is_set && (
-            <Tip label={t.settings.credentials.remove}>
-              <Button
-                aria-label={t.settings.credentials.remove}
-                className="text-muted-foreground hover:text-destructive"
-                disabled={busy}
-                onClick={() => void onClear(varKey)}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <Trash />
-              </Button>
-            </Tip>
+            <Button
+              aria-label={t.settings.credentials.remove}
+              className="text-muted-foreground hover:text-destructive"
+              disabled={busy}
+              onClick={() => void onClear(varKey)}
+              size="icon-xs"
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 />
+            </Button>
           )}
           {dirty && (
             <Button className="h-8" disabled={busy} onClick={() => void onSave(varKey)} size="sm">
@@ -164,7 +159,6 @@ function CredentialDocsLink({ href }: { href: string }) {
 
 /** One credential row — collapsible; description and docs link expand on click. */
 export function CredentialKeyCard({
-  elementId,
   expanded,
   info,
   label,
@@ -181,12 +175,11 @@ export function CredentialKeyCard({
   return (
     <div
       className={cn(
-        '@container group/card scroll-mt-6 rounded-[6px] p-3 transition-colors',
+        '@container group/card rounded-[6px] p-3 transition-colors',
         expandable && 'cursor-pointer',
         expandable && !expanded && 'row-hover',
         expanded && 'bg-(--ui-bg-quaternary) ring-1 ring-(--ui-stroke-secondary)'
       )}
-      id={elementId}
       onClick={expandable ? onToggle : undefined}
       onKeyDown={
         expandable
@@ -385,8 +378,6 @@ export function credentialRowLabel(varKey: string, info: EnvVarInfo): string {
 }
 
 interface CredentialKeyCardProps {
-  /** DOM id for the ⌘K `?key=` deep link — `credentialRowElementId(varKey)`. */
-  elementId?: string
   expanded: boolean
   info: EnvVarInfo
   label: string

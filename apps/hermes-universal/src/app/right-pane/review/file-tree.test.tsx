@@ -31,7 +31,7 @@ function topLevelFiles(count: number): HermesReviewFile[] {
 
 function renderTree() {
   return render(
-    <I18nProvider>
+    <I18nProvider configClient={null} initialLocale="en">
       <ReviewFileTree />
     </I18nProvider>
   )

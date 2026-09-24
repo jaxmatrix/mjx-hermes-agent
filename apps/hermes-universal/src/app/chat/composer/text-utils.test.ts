@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { setReactionsEnabled } from '@/store/reactions-enabled'
-
-import { blobDedupeKey, detectTrigger, extractClipboardImageBlobs, mayContainTrigger } from './text-utils'
+import { blobDedupeKey, detectTrigger, extractClipboardImageBlobs } from './text-utils'
 
 describe('detectTrigger', () => {
   it('detects a bare slash trigger with an empty query', () => {
@@ -87,7 +85,7 @@ describe('detectTrigger', () => {
     // boundaries: typing a trigger right after a chip (no space) still opens
     // the popover, and a chip inside a token ends it.
     expect(detectTrigger('\uFFFC@Desk')).toEqual({ kind: '@', query: 'Desk', tokenLength: 5, value: 'Desk' })
-    // Not position 0, so it reads as an inline skill reference (MJXHRM-304).
+    // Not position 0, so it's an inline reference — not a command invocation.
     expect(detectTrigger('\uFFFC/cle')).toEqual({
       inline: true,
       kind: '/',
@@ -141,49 +139,30 @@ describe('detectTrigger', () => {
     })
   })
 
-  // MJXHRM-304: the second `/` shape. A slash after whitespace is an inline
-  // skill REFERENCE dropped into prose, not a command invocation — the popover
-  // filters to skills there (use-composer-trigger), because a built-in like
-  // `/new` acts on the app and means nothing mid-sentence.
-  it('opens an inline slash trigger mid-message', () => {
-    expect(detectTrigger('hello /')).toEqual({ inline: true, kind: '/', query: '', tokenLength: 1, value: '' })
+  it('treats a mid-message slash as an inline reference', () => {
+    // Skills have to be reachable anywhere in a prompt, not just at position 0.
+    expect(detectTrigger('hello /')).toEqual({ kind: '/', inline: true, query: '', tokenLength: 1, value: '' })
     expect(detectTrigger('hello /clean')).toEqual({
-      inline: true,
       kind: '/',
+      inline: true,
       query: 'clean',
       tokenLength: 6,
       value: 'clean'
     })
-    expect(detectTrigger('text\n/skill')?.inline).toBe(true)
-  })
-
-  it('keeps a position-0 slash a command invocation, not an inline reference', () => {
-    expect(detectTrigger('/personality alic')).toEqual({
+    expect(detectTrigger('text\n/skill')).toEqual({
       kind: '/',
-      query: 'personality alic',
-      tokenLength: 17,
-      value: 'personality alic'
+      inline: true,
+      query: 'skill',
+      tokenLength: 6,
+      value: 'skill'
     })
   })
 
   it('does not carry arg completion into an inline slash reference', () => {
     // Only a position-0 slash is a real invocation, so `/personality alic`
-    // mid-message is prose — the inline trigger ends at the command token, and
-    // a query with a space in it can no longer match at all.
+    // mid-message is prose — the trigger ends at the command token.
     expect(detectTrigger('hello there /personality alic')).toBeNull()
     expect(detectTrigger('run /tools enable foo')).toBeNull()
-  })
-
-  it('finds the LAST slash, so a leading command does not swallow a later skill', () => {
-    // The command regex's argument tail (`(?:\s+\S*)*`) matches `/work /cle`
-    // whole, which used to silence completion for every slash after the first.
-    expect(detectTrigger('/work /cle')).toEqual({
-      inline: true,
-      kind: '/',
-      query: 'cle',
-      tokenLength: 4,
-      value: 'cle'
-    })
   })
 
   it('still anchors at-mention triggers strictly at the token edge', () => {
@@ -281,82 +260,5 @@ describe('blobDedupeKey', () => {
     const file = new File([], 'a.png', { type: 'image/png', lastModified: 42 })
 
     expect(blobDedupeKey(file)).toBe('file:a.png:0:image/png:42')
-  })
-})
-
-/**
- * The `:shortcode:` trigger and the cheap screen that guards it.
- *
- * The screen used to live in `use-composer-trigger`, listing `@` and `/` only,
- * so it discarded every emoji trigger before `detectTrigger` could match one.
- * It lives beside the regexes now precisely so the two cannot drift again —
- * these tests hold them together.
- */
-describe('the `:` emoji trigger', () => {
-  afterEach(() => {
-    setReactionsEnabled(false)
-  })
-
-  it('matches a shortcode of two characters or more', () => {
-    setReactionsEnabled(true)
-
-    expect(detectTrigger(':jo')).toEqual({ kind: ':', query: 'jo', tokenLength: 3, value: 'jo' })
-    expect(detectTrigger('nice :tada')).toEqual({ kind: ':', query: 'tada', tokenLength: 5, value: 'tada' })
-    expect(detectTrigger('\uFFFC:jo')).toEqual({ kind: ':', query: 'jo', tokenLength: 3, value: 'jo' })
-  })
-
-  it('needs two characters, so a bare colon and a clock time stay quiet', () => {
-    setReactionsEnabled(true)
-
-    expect(detectTrigger(':')).toBeNull()
-    expect(detectTrigger(':j')).toBeNull()
-    expect(detectTrigger('12:30')).toBeNull()
-    expect(detectTrigger('http://ex')).toBeNull()
-  })
-
-  it("yields to `@` — a directive starter's colon is part of the @ query", () => {
-    setReactionsEnabled(true)
-
-    expect(detectTrigger('@file:')?.kind).toBe('@')
-    expect(detectTrigger('@folder:src')?.kind).toBe('@')
-  })
-
-  it('is off unless the emoji surface is on', () => {
-    expect(detectTrigger(':joy')).toBeNull()
-
-    setReactionsEnabled(true)
-
-    expect(detectTrigger(':joy')?.kind).toBe(':')
-  })
-})
-
-describe('mayContainTrigger', () => {
-  afterEach(() => {
-    setReactionsEnabled(false)
-  })
-
-  it('admits anything holding an @ or a /', () => {
-    expect(mayContainTrigger('mail me @ home')).toBe(true)
-    expect(mayContainTrigger('src/foo')).toBe(true)
-  })
-
-  it('rejects prose with no trigger character at all', () => {
-    expect(mayContainTrigger('hello there')).toBe(false)
-  })
-
-  it('admits a colon only while the emoji surface is on', () => {
-    expect(mayContainTrigger('hello :jo')).toBe(false)
-
-    setReactionsEnabled(true)
-
-    expect(mayContainTrigger('hello :jo')).toBe(true)
-  })
-
-  it('never rejects text `detectTrigger` would have matched', () => {
-    setReactionsEnabled(true)
-
-    for (const text of ['@', '/', 'hi /skill', '@file:src', 'hello :jo', '\uFFFC:tada']) {
-      expect(mayContainTrigger(text), text).toBe(true)
-    }
   })
 })

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -16,16 +16,18 @@ vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 vi.mock('@/store/native-notifications', () => ({ dispatchNativeNotification: vi.fn() }))
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undefined) }))
 
-import type { ToolCallPart } from '@/lib/chat-messages'
+import type { ToolCallPart } from '@/lib/session-key-messages'
 import { routeGatewayEvent } from '@/store/event-router'
-import { clearAllPrompts, sessionAwaitingInput, sessionMcpSetupRequest } from '@/store/prompts'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { sessionMcpSetupRequest } from '@/store/mcp-setup'
+import { clearSessionMcpSetup } from '@/store/prompt-session-bridge'
+import { clearAllPrompts } from '@/store/prompts'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 const event = (type: string, payload: Record<string, unknown>, sessionId = 's1'): GatewayEvent =>
   ({ type, session_id: sessionId, payload }) as GatewayEvent
 
 const toolParts = (key: string): ToolCallPart[] =>
-  ($sessionStates.get()[key]?.messages ?? []).flatMap(message =>
+  ($sessionKeyStates.get()[key]?.messages ?? []).flatMap(message =>
     message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call')
   )
 
@@ -39,7 +41,8 @@ const toolParts = (key: string): ToolCallPart[] =>
 describe('event-router → mcp.setup lifecycle', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    clearSessionMcpSetup()
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
 
@@ -59,7 +62,8 @@ describe('event-router → mcp.setup lifecycle', () => {
       requestId: 'req-1',
       server: 'linear',
       action: 'install',
-      reason: 'To read the ticket'
+      reason: 'To read the ticket',
+      sessionId: 's1'
     })
   })
 
@@ -73,7 +77,7 @@ describe('event-router → mcp.setup lifecycle', () => {
         args: { action: 'install', reason: 'To read the ticket', server: 'linear' }
       })
     ])
-    expect($sessionStates.get().s1?.needsInput).toBe(true)
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(true)
   })
 
   // The tool's own default. A payload whose action the schema never allowed
@@ -120,7 +124,8 @@ describe('event-router → mcp.setup lifecycle', () => {
   it('parks the turn on the user so Esc will not interrupt it', () => {
     raise()
 
-    expect(sessionAwaitingInput('s1').get()).toBe(true)
+    expect(sessionMcpSetupRequest('s1').get()).not.toBeNull()
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(true)
   })
 
   // Unlike `clarify.expire`, this one IS consumed: an expired setup card can
@@ -146,7 +151,7 @@ describe('event-router → mcp.setup lifecycle', () => {
     routeGatewayEvent(event('tool.complete', { name: 'setup_mcp', tool_id: 'call_abc123', result: '' }))
 
     expect(sessionMcpSetupRequest('s1').get()).toBeNull()
-    expect($sessionStates.get().s1?.needsInput).toBe(false)
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(false)
   })
 
   it('leaves it parked while some other tool finishes', () => {

@@ -1,4 +1,4 @@
-import { WorkspaceRoutes } from '@/app/contrib/panes'
+import { WorkspaceRoutes } from '@/app/contrib/workspace-routes'
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
 
 import { useRestoreLastSession } from './hooks/use-restore-last-session'

@@ -1,32 +1,31 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-/**
- * `source` decides the session's PLATFORM on the gateway, and "desktop" is the
- * literal that unlocks the `desktop_ui` toolset (`_gui_surface_toolsets` in
- * tui_gateway/server.py). Universal answers every one of those bridges, so it
- * says so — but only inside the app shell.
- */
-describe('SESSION_SOURCE_PARAMS', () => {
-  it('claims the desktop surface inside the Tauri shell', async () => {
-    vi.resetModules()
-    vi.doMock('@/lib/platform', () => ({ IS_TAURI: true }))
+import { isMessagingSource, sessionSourceSearchTerms } from './session-source'
 
-    const { SESSION_SOURCE_PARAMS } = await import('./session-source')
-
-    expect(SESSION_SOURCE_PARAMS).toEqual({ source: 'desktop' })
-    expect({ cols: 96, ...SESSION_SOURCE_PARAMS }).toEqual({ cols: 96, source: 'desktop' })
-
-    vi.doUnmock('@/lib/platform')
+// Regression guard for #46761 / PR #47395: Photon (iMessage) must keep its own
+// sidebar section. refreshMessagingSessions() filters rows through
+// isMessagingSource(), so this entry is the sole condition that keeps Photon
+// sessions out of generic recents. A silent removal would regress the feature
+// with no test failure — these asserts pin the contract.
+describe('photon messaging source registration', () => {
+  it('treats photon as a messaging source (own sidebar section)', () => {
+    expect(isMessagingSource('photon')).toBe(true)
   })
 
-  it('claims nothing in a plain browser, which answers none of those bridges', async () => {
-    vi.resetModules()
-    vi.doMock('@/lib/platform', () => ({ IS_TAURI: false }))
+  it('is case/space insensitive on the source id', () => {
+    expect(isMessagingSource('PHOTON')).toBe(true)
+    expect(isMessagingSource('  photon ')).toBe(true)
+  })
 
-    const { SESSION_SOURCE_PARAMS } = await import('./session-source')
+  it('exposes the iMessage/messages search aliases so Photon sessions are findable', () => {
+    const terms = sessionSourceSearchTerms('photon')
+    expect(terms).toContain('imessage')
+    expect(terms).toContain('messages')
+  })
 
-    expect({ cols: 96, ...SESSION_SOURCE_PARAMS }).toEqual({ cols: 96 })
-
-    vi.doUnmock('@/lib/platform')
+  it('does not flag local/CLI-ish sources as messaging (guard sanity)', () => {
+    expect(isMessagingSource('cli')).toBe(false)
+    expect(isMessagingSource(null)).toBe(false)
+    expect(isMessagingSource(undefined)).toBe(false)
   })
 })

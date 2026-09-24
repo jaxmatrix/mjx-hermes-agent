@@ -1,14 +1,14 @@
+import { compactNumber } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 
 import { useElapsedSeconds } from '@/components/chat/activity-timer'
 import { ActivityTimerText } from '@/components/chat/activity-timer-text'
+import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
 import { Codicon } from '@/components/ui/codicon'
 import { FadeText } from '@/components/ui/fade-text'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { type Translations, useI18n } from '@/i18n'
-import { compactNumber } from '@/lib/format'
-import { interruptSubagent, steerSubagent, type SubagentSteerReason } from '@/lib/gateway-rpc'
 import { AlertCircle, CheckCircle2 } from '@/lib/icons'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
@@ -16,14 +16,11 @@ import {
   $subagentsBySession,
   allSubagents,
   buildSubagentTree,
-  sessionOfSubagent,
   type SubagentNode,
   type SubagentStatus,
-  type SubagentStreamEntry,
-  type SubagentWorktree
+  type SubagentStreamEntry
 } from '@/store/subagents'
 
-import type { OverlayVariant } from '../overlays/overlay-view'
 import { Panel, PanelEmpty, PanelHeader } from '../overlays/panel'
 
 // Mirrors statusGlyph() in tool-fallback.tsx so subagent rows speak the
@@ -43,7 +40,7 @@ function statusGlyph(status: SubagentStatus, a: Translations['agents']): ReactNo
     return <AlertCircle aria-label={a.failed} className="size-3.5 shrink-0 text-destructive" />
   }
 
-  return <CheckCircle2 aria-label={a.done} className="size-3.5 shrink-0 text-(--ui-green)/85" />
+  return <CheckCircle2 aria-label={a.done} className="size-3.5 shrink-0 text-emerald-600/85 dark:text-emerald-400/85" />
 }
 
 const STREAM_TONE: Record<SubagentStreamEntry['kind'], string> = {
@@ -63,7 +60,7 @@ function streamGlyph(entry: SubagentStreamEntry): ReactNode {
   }
 
   if (entry.kind === 'summary') {
-    return <CheckCircle2 aria-hidden className="mt-0.5 size-3 shrink-0 text-(--ui-green)/85" />
+    return <CheckCircle2 aria-hidden className="mt-0.5 size-3 shrink-0 text-emerald-600/85 dark:text-emerald-400/85" />
   }
 
   if (entry.kind === 'thinking') {
@@ -79,11 +76,9 @@ function streamGlyph(entry: SubagentStreamEntry): ReactNode {
 
 interface AgentsViewProps {
   onClose: () => void
-  /** `fullscreen` when hosted as a phone/native screen, which draws its own chrome. */
-  variant?: OverlayVariant
 }
 
-export function AgentsView({ onClose, variant }: AgentsViewProps) {
+export function AgentsView({ onClose }: AgentsViewProps) {
   const { t } = useI18n()
   const subagentsBySession = useStore($subagentsBySession)
 
@@ -93,7 +88,7 @@ export function AgentsView({ onClose, variant }: AgentsViewProps) {
   const tree = useMemo(() => buildSubagentTree(allSubagents(subagentsBySession)), [subagentsBySession])
 
   return (
-    <Panel closeLabel={t.agents.close} onClose={onClose} variant={variant}>
+    <Panel closeLabel={t.agents.close} onClose={onClose}>
       {tree.length === 0 ? (
         <PanelEmpty description={t.agents.emptyDesc} icon="hubot" title={t.agents.emptyTitle} />
       ) : (
@@ -123,28 +118,6 @@ const fmtDuration = (seconds: number | undefined, a: Translations['agents']) => 
 
 const fmtTokens = (value: number | undefined, a: Translations['agents']) =>
   value ? a.tokens(compactNumber(value)) : ''
-
-/**
- * What the isolated checkout holds, in one line.
- *
- * An inspection that failed short-circuits everything else: `commits: 0` /
- * `dirty: false` are then the payload's DEFAULTS, not measurements, and
- * printing "no commits" from them is exactly the "the child did nothing"
- * conclusion the gateway's own `note` warns against.
- */
-const worktreeState = (worktree: SubagentWorktree, a: Translations['agents']): string => {
-  if (worktree.inspectionFailed) {
-    return a.worktreeUnknown
-  }
-
-  if (worktree.pruned) {
-    return a.worktreePruned
-  }
-
-  return [a.worktreeCommits(worktree.commits), worktree.dirty ? a.worktreeDirty : '', a.worktreeKept]
-    .filter(Boolean)
-    .join(' · ')
-}
 
 // Distinct contract from coarseElapsed: rounds to the second (this ticks live),
 // and hours are unbounded ("25h", never "1d"). Kept local on purpose.
@@ -179,10 +152,36 @@ function groupDelegations(roots: readonly SubagentNode[]): RootGroup[] {
   let n = 0
 
   for (const node of roots) {
+    // Exact grouping when the backend tags workers with their batch id —
+    // concurrent or nested fan-outs of the same shape must not merge.
+    if (node.delegationId) {
+      const byId = groups.find(g => g.id === `delegation:${node.delegationId}`)
+
+      if (byId) {
+        byId.nodes.push(node)
+
+        continue
+      }
+
+      n += 1
+      groups.push({
+        id: `delegation:${node.delegationId}`,
+        delegationIndex: n,
+        nodes: [node],
+        taskCount: node.taskCount
+      })
+
+      continue
+    }
+
+    // Older backends (no delegation_id): heuristic grouping by shape + time.
     const prev = groups.at(-1)
     const prevTail = prev?.nodes.at(-1)
     const closeInTime = prevTail ? Math.abs(node.startedAt - prevTail.startedAt) <= 5_000 : false
-    const sameShape = prev && node.taskCount > 1 && prev.taskCount === node.taskCount
+
+    const sameShape =
+      prev && !prev.id.startsWith('delegation:') && node.taskCount > 1 && prev.taskCount === node.taskCount
+
     const uniqueStep = prev ? !prev.nodes.some(item => item.taskIndex === node.taskIndex) : false
 
     if (prev && sameShape && closeInTime && uniqueStep) {
@@ -217,15 +216,17 @@ function SubagentTree({ tree }: { tree: SubagentNode[] }) {
   const tokens = flat.reduce((sum, n) => sum + (n.inputTokens ?? 0) + (n.outputTokens ?? 0), 0)
   const cost = flat.reduce((sum, n) => sum + (n.costUsd ?? 0), 0)
 
+  const visible = usePaneVisible()
+
   useEffect(() => {
-    if (active <= 0 || typeof window === 'undefined') {
+    if (active <= 0 || !visible || typeof window === 'undefined') {
       return
     }
 
     const id = window.setInterval(() => setNowMs(Date.now()), 500)
 
     return () => window.clearInterval(id)
-  }, [active])
+  }, [active, visible])
 
   if (tree.length === 0) {
     return (
@@ -319,184 +320,10 @@ function StreamLine({
   )
 }
 
-/**
- * Which refusal the user is being told about.
- *
- * `subagent.steer` answers 200 for every one of these and names which in
- * `reason`. They are not one message: "too late" is a race lost by a hair and
- * worth retrying on the next child, while "not this chat's subagent" will never
- * work from here however fast the user is. A gateway too old to send `reason`
- * (and any value added after this build) falls back to the generic line.
- */
-const steerRefusal = (reason: SubagentSteerReason | undefined, copy: Translations['agents']): string => {
-  switch (reason) {
-    case 'no_agent':
-
-    case 'unknown_subagent':
-      return copy.steerGone
-
-    case 'no_session_authority':
-
-    case 'not_owner':
-      return copy.steerNotOwned
-
-    default:
-      return copy.steerRejected
-  }
-}
-
-/**
- * Redirect a live subagent without stopping it.
- *
- * `subagent.steer` answers 200 either way: `rejected` means the child is gone,
- * is not ours, or is already past its last tool boundary. Nothing surfaced that
- * before, so a steer that never landed looked exactly like one that did — hence
- * the explicit outcome line rather than a fire-and-forget button.
- *
- * "Queued" is still not "delivered". A child that finishes before draining the
- * text produces `missedSteer` on its row (see `SubagentRow`), which is the only
- * retraction of the promise this control makes.
- */
-function RowControls({ node }: { node: SubagentNode }) {
-  const { t } = useI18n()
-  const a = t.agents
-  const [open, setOpen] = useState(false)
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
-  const [outcome, setOutcome] = useState<null | { kind: 'error' | 'ok'; message: string }>(null)
-
-  /**
-   * End the child now. `found: false` is the same class of answer as steer's
-   * `rejected` — a 200 that means "there was nothing to stop" — so it has to be
-   * reported, not swallowed, or the button looks like it worked every time.
-   */
-  const stop = async () => {
-    setSending(true)
-
-    try {
-      const result = await interruptSubagent({ subagentId: node.id })
-      setOutcome({
-        kind: result.found ? 'ok' : 'error',
-        message: result.found ? a.stopRequested : a.steerGone
-      })
-    } catch {
-      setOutcome({ kind: 'error', message: a.steerFailed })
-    } finally {
-      setSending(false)
-    }
-  }
-
-  const submit = async () => {
-    const trimmed = text.trim()
-    const sessionId = sessionOfSubagent(node.id)
-
-    if (!trimmed || !sessionId) {
-      return
-    }
-
-    setSending(true)
-
-    try {
-      const result = await steerSubagent({ sessionId, subagentId: node.id, text: trimmed })
-      const queued = result.status === 'queued'
-      setOutcome({
-        kind: queued ? 'ok' : 'error',
-        message: queued ? a.steerQueued : steerRefusal(result.reason, a)
-      })
-
-      if (queued) {
-        setText('')
-        setOpen(false)
-      }
-    } catch {
-      setOutcome({ kind: 'error', message: a.steerFailed })
-    } finally {
-      setSending(false)
-    }
-  }
-
-  return (
-    <div className="grid min-w-0 gap-1 ps-6">
-      {open ? (
-        <div className="flex min-w-0 items-center gap-1.5">
-          <input
-            autoFocus
-            className="min-w-0 flex-1 rounded-md border border-(--ui-stroke-tertiary) bg-transparent px-2 py-1 text-[0.72rem] outline-none focus:border-(--ui-stroke-secondary)"
-            disabled={sending}
-            onChange={event => setText(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                void submit()
-              } else if (event.key === 'Escape') {
-                event.preventDefault()
-                setOpen(false)
-              }
-            }}
-            placeholder={a.steerPlaceholder}
-            value={text}
-          />
-          <button
-            className="shrink-0 rounded-md px-2 py-1 text-[0.66rem] text-foreground/80 hover:text-foreground disabled:opacity-50"
-            disabled={sending || !text.trim()}
-            onClick={() => void submit()}
-            type="button"
-          >
-            {a.steerSend}
-          </button>
-          <button
-            className="shrink-0 rounded-md px-2 py-1 text-[0.66rem] text-muted-foreground/70 hover:text-foreground"
-            onClick={() => setOpen(false)}
-            type="button"
-          >
-            {a.steerCancel}
-          </button>
-        </div>
-      ) : (
-        <div className="flex min-w-0 items-center gap-3">
-          <button
-            className="w-fit rounded-md text-[0.66rem] text-muted-foreground/70 hover:text-foreground"
-            onClick={() => {
-              setOutcome(null)
-              setOpen(true)
-            }}
-            type="button"
-          >
-            {a.steer}
-          </button>
-          <button
-            className="w-fit rounded-md text-[0.66rem] text-muted-foreground/70 hover:text-destructive disabled:opacity-50"
-            disabled={sending}
-            onClick={() => {
-              setOutcome(null)
-              void stop()
-            }}
-            type="button"
-          >
-            {a.stop}
-          </button>
-        </div>
-      )}
-
-      {outcome ? (
-        <p
-          className={cn(
-            'text-[0.62rem] leading-[0.95rem]',
-            outcome.kind === 'error' ? 'text-destructive' : 'text-muted-foreground/70'
-          )}
-          role="status"
-        >
-          {outcome.message}
-        </p>
-      ) : null}
-    </div>
-  )
-}
-
-function SubagentRow({ node, depth = 0, nowMs }: { node: SubagentNode; depth?: number; nowMs: number }) {
+export function SubagentRow({ node, depth = 0, nowMs }: { node: SubagentNode; depth?: number; nowMs: number }) {
   const { t } = useI18n()
   const running = node.status === 'running' || node.status === 'queued'
-  const elapsed = useElapsedSeconds(running, `subagent:${node.id}`)
+  const elapsed = useElapsedSeconds(running, `subagent:${node.id}`, node.startedAt)
 
   const durationSeconds =
     typeof node.durationSeconds === 'number' ? Math.max(0, Math.round(node.durationSeconds)) : elapsed
@@ -578,59 +405,6 @@ function SubagentRow({ node, depth = 0, nowMs }: { node: SubagentNode; depth?: n
             </p>
           ) : null}
         </div>
-      ) : null}
-
-      {running ? <RowControls node={node} /> : null}
-
-      {/* A child that ran out of steps still says `completed` and still returns
-          a summary, so the status glyph alone reads as success. The gateway now
-          names the difference on `subagent.complete` (MJXHRM-459). */}
-      {node.budgetWrapup ? (
-        <p
-          className="ps-6 text-[0.62rem] leading-[0.95rem] text-(--ui-yellow)"
-          data-selectable-text="true"
-          role="status"
-        >
-          {t.agents.budgetWrapup}
-        </p>
-      ) : null}
-
-      {node.truncated ? (
-        <p
-          className="ps-6 text-[0.62rem] leading-[0.95rem] text-(--ui-yellow)"
-          data-selectable-text="true"
-          role="status"
-        >
-          {t.agents.truncatedNotice}
-        </p>
-      ) : null}
-
-      {/* Where an isolated child's work actually is. `pruned` means the
-          checkout is gone because it held nothing; anything with commits or a
-          dirty tree is kept for the user to review or merge, and an inspection
-          that FAILED must not be read as "no work" — hence the third line
-          rather than a zero. */}
-      {node.worktree ? (
-        <div className="grid min-w-0 gap-0.5 ps-6" data-selectable-text="true">
-          <p className="text-[0.58rem] font-medium uppercase tracking-wider text-muted-foreground/60">
-            {t.agents.worktree}
-          </p>
-          <p className="wrap-break-word font-mono text-[0.67rem] leading-relaxed text-muted-foreground/80">
-            {node.worktree.path || node.worktree.branch}
-          </p>
-          <p className="text-[0.62rem] leading-[0.95rem] text-muted-foreground/70">
-            {worktreeState(node.worktree, t.agents)}
-          </p>
-        </div>
-      ) : null}
-
-      {/* The other half of the steer contract: "queued" was never a delivery
-          receipt, and this row is where the promise is withdrawn. The gateway
-          only knows it at completion, so it always lands on a settled row. */}
-      {node.missedSteer ? (
-        <p className="ps-6 text-[0.62rem] leading-[0.95rem] text-destructive" data-selectable-text="true" role="status">
-          {t.agents.steerMissed(node.missedSteer)}
-        </p>
       ) : null}
 
       {node.children.length > 0 ? (

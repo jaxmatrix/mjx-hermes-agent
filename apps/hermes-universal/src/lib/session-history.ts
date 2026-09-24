@@ -1,9 +1,9 @@
 import { renderMediaTags } from '@/lib/chat-media'
-import { dedupeRepeatedTextInParts } from '@/lib/chat-messages'
 import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
 import { shouldProjectInflightDump, userTurnAlreadyPersisted } from '@/lib/live-tail'
+import { dedupeRepeatedTextInParts } from '@/lib/session-key-messages'
 import type { ChatMessage, ChatPart, ToolCallPart } from '@/store/chat'
-import type { MessageReaction, SessionMessage, SessionResumeResponse } from '@/types/hermes'
+import type { MessageReaction, SessionMessage, SessionResumeResult } from '@/types/hermes'
 
 // Hydrate a stored transcript (SessionMessage[]) into our lean assistant-ui parts
 // model (Hc1). Lean port of desktop apps/desktop/src/lib/chat-messages.ts
@@ -110,7 +110,7 @@ function displayContentForMessage(role: SessionMessage['role'], content: unknown
   const refs = [...new Set(Array.from(attachedContext.matchAll(CONTEXT_REF_RE)).map(match => match[0]))]
 
   // The prose keeps the `@file:` token the user typed, so it already chips in
-  // place (`components/assistant-ui/directive-content.tsx` renders them). Only
+  // place (`components/assistant-ui/directive-text.tsx` renders them). Only
   // hoist a ref the prose is missing — a turn persisted by an older backend that
   // stripped the tokens. Re-listing an inline ref would chip twice.
   const missing = refs.filter(ref => !visibleText.includes(ref))
@@ -547,7 +547,7 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
  */
 export function appendLiveSessionProjection(
   messages: ChatMessage[],
-  projection: Pick<SessionResumeResponse, 'inflight' | 'queued' | 'session_id'>
+  projection: Pick<SessionResumeResult, 'inflight' | 'queued' | 'session_id'>
 ): ChatMessage[] {
   const inflightUser = projection.inflight?.user?.trim() ?? ''
   const inflightAssistant = projection.inflight?.assistant ?? ''

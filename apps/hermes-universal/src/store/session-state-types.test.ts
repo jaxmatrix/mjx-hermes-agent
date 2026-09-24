@@ -10,7 +10,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  $sessionStates,
+  $sessionKeyStates,
   clearStoredIdIndex,
   emptySessionState,
   publishSessionState,
@@ -19,7 +19,7 @@ import {
 } from '@/store/session-state-types'
 
 beforeEach(() => {
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   clearStoredIdIndex()
 })
 
@@ -29,14 +29,14 @@ describe('rekeySession', () => {
 
     const resolvedDuringPublish: Array<null | string> = []
 
-    const unsubscribe = $sessionStates.subscribe(() => {
+    const unsubscribe = $sessionKeyStates.subscribe(() => {
       resolvedDuringPublish.push(runtimeKeyForStoredSession('stored-1'))
     })
 
     rekeySession('runtime-1', 'runtime-2', { runtimeSessionId: 'runtime-2' })
     unsubscribe()
 
-    // `$sessionStates.set` notifies SYNCHRONOUSLY, and the reverse index is not
+    // `$sessionKeyStates.set` notifies SYNCHRONOUSLY, and the reverse index is not
     // an atom — it is a plain map that those subscribers consult. Remapping it
     // after the publish meant every lookup made from inside the notification
     // resolved to the OLD key, found it missing, and took

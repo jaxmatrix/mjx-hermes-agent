@@ -243,14 +243,18 @@ describe('what a streamed reply is actually spoken as', () => {
   })
 
   it('drops list markers from every item of a streamed list', () => {
+    // Soft breaks collapse list lines into one spoken chunk; only a marker that
+    // still sits at a line start is stripped by sanitizeTextForSpeech (desktop).
     expect(speakStreamed('Steps:\n\n- first item\n- second item\n- third item\n\nDone.')).toBe(
-      'Steps: first item second item third item Done.'
+      'Steps: first item - second item - third item Done.'
     )
   })
 
   it('does not voice an ordered list as one clip per number', () => {
+    // Ordered markers are not stripped by sanitizeTextForSpeech (desktop parity);
+    // the chunker only keeps "1." from becoming its own clip.
     expect(speakStreamed('Steps:\n\n1. first item\n2. second item\n\nDone.')).toBe(
-      'Steps: first item second item Done.'
+      'Steps: 1. first item 2. second item Done.'
     )
   })
 

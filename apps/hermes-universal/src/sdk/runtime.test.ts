@@ -68,6 +68,27 @@ describe('installPluginSdk', () => {
   })
 })
 
+describe('one SDK surface for both kinds of plugin', () => {
+  it('installs the module the public specifier resolves to, universal’s additions included', async () => {
+    installPluginSdk()
+
+    const viaAlias = await import('@hermes/plugin-sdk')
+    const installed = (globalThis as Record<string, unknown>).__HERMES_PLUGIN_SDK__ as typeof viaAlias
+
+    // Desktop's shim names its barrel by relative path. If that path were the
+    // namespace here, a runtime-loaded plugin would get desktop's SDK while a
+    // bundled one got universal's — the same import, two surfaces.
+    expect(installed).toBe(viaAlias)
+    expect(installed.startPointerDrag).toBeTypeOf('function')
+  })
+
+  it('names universal’s additions in the shim a runtime plugin imports', () => {
+    const source = blobs.get(sdkImportMap()['@hermes/plugin-sdk']) ?? ''
+
+    expect(source).toMatch(/export const \{ [^}]*\bstartPointerDrag\b[^}]*\} = m;/)
+  })
+})
+
 describe('sdkImportMap', () => {
   it('maps every specifier the loader rewrites, longest key first', () => {
     const map = sdkImportMap()

@@ -18,7 +18,7 @@ export function Slot({ area }: SlotProps) {
     <>
       {items.map(c => (
         <ContribBoundary id={c.id} key={`${c.source ?? 'core'}:${c.id}`} variant="chip">
-          <ContribRender render={c.render} />
+          {c.render && <ContribRender render={c.render} />}
         </ContribBoundary>
       ))}
     </>

@@ -2,62 +2,69 @@
  * Profile share: export/import a profile as a portable bundle.
  *
  * The archive is the CLI's own `hermes profile export` tar.gz (config, skills,
- * SOUL.md, cron — credentials always excluded), plus one app-authored file at
- * the root: `desktop.json`, the appearance/interface overlay (skin + mode, any
- * user-theme definitions the skin needs, the profile rail color, the layout
- * tree). A CLI import of the same archive simply carries the file along; this
- * import applies it, so the receiver gets the whole look — theme, layout,
- * skills — as a ready-to-use profile.
+ * SOUL.md, cron — credentials always excluded), plus one desktop-only file at
+ * the root: `desktop.json`, the appearance/interface overlay (skin + mode,
+ * any user-theme definitions the skin needs, the profile rail color, and the
+ * layout tree). A CLI import of the same archive simply carries the file
+ * along; the desktop import applies it so the receiving user gets the whole
+ * look — theme, layout, skills — as a ready-to-use profile.
  *
- * Ported from desktop `src/store/profile-share.ts` (6e7eafc7e8). Two seams
- * differ, both deliberately:
- *
- *   • APPEARANCE IS GLOBAL HERE. Desktop keeps skin/mode as per-profile prefs
- *     (`skinPref.resolve(key)`); universal has one global skin + mode
- *     (themes/context.tsx says so in as many words). So the overlay snapshots
- *     and assigns the global choice. `profileColor` is genuinely per-profile in
- *     both, and is keyed as such.
- *
- *   • PATHS ARE ON THE BACKEND, AND THE BACKEND IS USUALLY NOT THIS MACHINE.
- *     Desktop can use a native save/open dialog because "the native dialogs and
- *     the backend share the filesystem for local and pooled backends". For
- *     universal the gateway owns the disk (see lib/desktop-fs), so export lets
- *     the BACKEND name the file (under `HERMES_HOME/profile-exports`) and
- *     reports the path, and import picks through the REMOTE file picker. A
- *     native dialog here would hand the backend a path on the wrong machine.
+ * Paths, not bytes, cross the renderer↔backend boundary: the native save/open
+ * dialogs and the backend share the filesystem for local and pooled backends.
  */
 
 import { isLayoutNode, normalize } from '@/components/pane-shell/tree/model'
-import { $layoutTree, adoptImportedTree } from '@/components/pane-shell/tree/store'
+import { $layoutTree, markActivePreset, persistTree } from '@/components/pane-shell/tree/store'
+import { exportProfileArchive, importProfileArchive } from '@/hermes'
 import { translateNow } from '@/i18n'
-import { selectRemotePaths } from '@/lib/desktop-fs'
-import { exportProfileArchive, importProfileArchive, type ProfileDesktopOverlay } from '@/lib/gateway-rest'
-import { $mode, $skin, type ThemeMode } from '@/themes/context'
+import { LAYOUT_KEYS } from '@/lib/layout-persistence'
+import { readKey, writeKey } from '@/lib/storage'
+import { modePref, skinPref, type ThemeMode } from '@/themes/context'
 import { BUILTIN_THEMES } from '@/themes/presets'
 import type { DesktopTheme } from '@/themes/types'
 import { $userThemes, installUserTheme, resolveTheme } from '@/themes/user-themes'
+import type { ProfileDesktopOverlay } from '@/types/hermes'
 
 import { notify, notifyError } from './notifications'
-import { $activeGatewayProfile, $profileColors, normalizeProfileKey, setProfileColor } from './profile'
-import { refreshProfiles, setActiveProfile } from './profiles'
+import {
+  $activeGatewayProfile,
+  $profileColors,
+  normalizeProfileKey,
+  refreshActiveProfile,
+  selectProfile,
+  setProfileColor
+} from './profile'
 
-/** Filename of the overlay inside the archive (profile root). Kept as
- *  `desktop.json` — it is a cross-app contract, not an app name. */
+/** Filename of the overlay inside the archive (profile root). */
 export const DESKTOP_OVERLAY_FILENAME = 'desktop.json'
 
 const OVERLAY_VERSION = 1
 
+/** Activity-window profile imports bump this so primary windows reload the tree. */
+function bumpLayoutImportToken() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const prev = readKey(LAYOUT_KEYS.imported)
+  const next = prev === null ? '1' : String(Number(prev) + 1)
+
+  writeKey(LAYOUT_KEYS.imported, next)
+  window.dispatchEvent(new StorageEvent('storage', { key: LAYOUT_KEYS.imported, newValue: next }))
+}
+
 /**
- * Snapshot the appearance/interface for `profile` into the overlay. The layout
- * tree is global (one window layout, not per-profile) — it rides along so the
- * receiver can opt into the sender's whole interface.
+ * Snapshot the desktop appearance/interface for `profile` into the overlay.
+ * The layout tree is global (one window layout, not per-profile) — it rides
+ * along so the receiver can opt into the sender's whole interface.
  */
 export function buildDesktopOverlay(profile: string): ProfileDesktopOverlay {
   const key = normalizeProfileKey(profile)
-  const skin = $skin.get()
+  const skin = skinPref.resolve(key)
+  const mode = modePref.resolve(key)
 
-  // Bundle the full definition of any non-built-in theme the skin points at, so
-  // the receiver's picker can resolve it. Built-ins resolve by name.
+  // Bundle the full definition of any non-built-in theme the skin points at,
+  // so the receiver's picker can resolve it. Built-ins resolve by name.
   const themes: Record<string, unknown> = {}
   const userTheme = BUILTIN_THEMES[skin] ? undefined : $userThemes.get()[skin]
 
@@ -68,17 +75,15 @@ export function buildDesktopOverlay(profile: string): ProfileDesktopOverlay {
   return {
     version: OVERLAY_VERSION,
     skin,
-    mode: $mode.get(),
+    mode,
     ...(Object.keys(themes).length ? { themes } : {}),
     profileColor: $profileColors.get()[key] ?? null,
-    // Null in a satellite window, which holds no tree of its own — better an
-    // absent layout than someone else's.
     layoutTree: $layoutTree.get()
   }
 }
 
-/** Export `profile` (backend archive + appearance overlay). Returns the archive
- *  path ON THE BACKEND. */
+/** Export `profile` (backend archive + desktop overlay) to `output` (or the
+ *  backend's staging dir when omitted). Returns the archive path. */
 export async function exportProfileBundle(profile: string, output?: string): Promise<string> {
   const overlay = buildDesktopOverlay(profile)
 
@@ -93,11 +98,10 @@ export async function exportProfileBundle(profile: string, output?: string): Pro
 const isThemeMode = (value: unknown): value is ThemeMode => value === 'light' || value === 'dark' || value === 'system'
 
 /**
- * Apply an imported overlay: install bundled themes, adopt the skin + mode,
- * assign the new profile's rail color, and (when present) adopt the sender's
- * layout tree. Every step is independent and best-effort — a malformed half
- * never blocks the rest, and a missing overlay is a plain CLI-exported archive
- * (no-op).
+ * Apply an imported overlay: install bundled themes, assign the new profile's
+ * skin + mode + rail color, and (when present) adopt the sender's layout tree.
+ * Every step is independent and best-effort — a malformed half never blocks
+ * the rest, and a missing overlay is a plain CLI-exported archive (no-op).
  */
 export function applyDesktopOverlay(profile: string, overlay: null | ProfileDesktopOverlay | undefined): void {
   if (!overlay || typeof overlay !== 'object') {
@@ -116,14 +120,14 @@ export function applyDesktopOverlay(profile: string, overlay: null | ProfileDesk
     }
   }
 
-  // 2. Appearance. Only assign a skin that actually resolves, so the pref never
-  //    points at nothing.
+  // 2. Appearance assignment for the new profile. Only assign a skin that
+  //    actually resolves so the pref never points at nothing.
   if (typeof overlay.skin === 'string' && resolveTheme(overlay.skin)) {
-    $skin.set(overlay.skin)
+    skinPref.assign(key, overlay.skin)
   }
 
   if (isThemeMode(overlay.mode)) {
-    $mode.set(overlay.mode)
+    modePref.assign(key, overlay.mode)
   }
 
   // 3. Rail color.
@@ -131,26 +135,22 @@ export function applyDesktopOverlay(profile: string, overlay: null | ProfileDesk
     setProfileColor(key, overlay.profileColor)
   }
 
-  // 4. Layout tree — global by design (one window layout). Normalized through
-  //    the same canonicalizer the boot load uses; a null result means the tree
-  //    was junk, so the current layout stays.
-  //
-  //    `adoptImportedTree` rather than `applyTree`: this tree was authored by
-  //    the ARCHIVE, not by the window unpacking it, and on Android that window
-  //    is the Profiles Activity — which does not own the persisted layout, so a
-  //    plain `applyTree` had its write swallowed while still clearing the user's
-  //    pane sizes and pins. It is also what tells the other live windows to stop
-  //    holding the layout they booted with (MJXHRM-420).
+  // 4. Layout tree — global by design (one window layout). Normalize through
+  //    the same canonicalizer the boot load uses; a null result means the
+  //    tree was junk, so the current layout stays.
   if (overlay.layoutTree != null && isLayoutNode(overlay.layoutTree)) {
     const tree = normalize(overlay.layoutTree)
 
     if (tree) {
-      adoptImportedTree(tree)
+      $layoutTree.set(tree)
+      persistTree()
+      markActivePreset('custom')
+      bumpLayoutImportToken()
     }
   }
 }
 
-/** Import an archive, apply its overlay, return the new profile name. */
+/** Import an archive, apply its desktop overlay, return the new profile name. */
 export async function importProfileBundle(archive: string, name?: string): Promise<string> {
   const result = await importProfileArchive(archive, name)
   applyDesktopOverlay(result.name, result.desktop)
@@ -164,26 +164,34 @@ export function activeProfileKey(): string {
 }
 
 // ── Dialog-driven flows ──────────────────────────────────────────────────────
-// One store function per user verb, so every door (the Profiles overlay's row
-// menu, its header button, any future menu item) funnels through the same
-// wiring. Toasts via the shared notification store; strings via translateNow so
-// the flows stay callable from non-React surfaces.
+// One store function per user verb (⌘K row, rail button, and any future menu
+// item all funnel here). Toasts via the shared notification store; strings via
+// translateNow so the flows stay callable from non-React surfaces.
 
 const ARCHIVE_FILTERS = [{ extensions: ['tar.gz', 'tgz'], name: 'Hermes profile' }]
 
-/**
- * Export `profile` (default: the active one). The BACKEND chooses the location
- * — `HERMES_HOME/profile-exports` — and the resulting path is surfaced in the
- * toast, because on a remote gateway the archive is written on that machine and
- * a local save dialog would be a lie.
- *
- * Returns the archive path, or null when the export failed.
- */
+/** Pick a save location and export `profile` (default: the active one).
+ *  Returns the archive path, or null when the user cancelled. */
 export async function runExportProfileFlow(profile?: string): Promise<null | string> {
   const target = normalizeProfileKey(profile ?? activeProfileKey())
+  const pick = window.hermesDesktop?.selectSavePath
+
+  if (!pick) {
+    return null
+  }
+
+  const output = await pick({
+    title: translateNow('profiles.exportProfile'),
+    defaultPath: `${target}.tar.gz`,
+    filters: ARCHIVE_FILTERS
+  })
+
+  if (!output) {
+    return null
+  }
 
   try {
-    const archive = await exportProfileBundle(target)
+    const archive = await exportProfileBundle(target, output)
     notify({ kind: 'success', title: translateNow('profiles.exported'), message: archive })
 
     return archive
@@ -194,16 +202,13 @@ export async function runExportProfileFlow(profile?: string): Promise<null | str
   }
 }
 
-/**
- * Pick an archive on the BACKEND filesystem and import it as a new profile,
- * landing the user in it. Returns the new profile name, or null when cancelled
- * or failed.
- */
+/** Pick an archive and import it as a new profile; lands the user in it on a
+ *  fresh chat. Returns the new profile name, or null when cancelled/failed. */
 export async function runImportProfileFlow(): Promise<null | string> {
-  const paths = await selectRemotePaths({
-    filters: ARCHIVE_FILTERS,
+  const paths = await window.hermesDesktop?.selectPaths?.({
+    title: translateNow('profiles.importProfile'),
     multiple: false,
-    title: translateNow('profiles.importProfile')
+    filters: ARCHIVE_FILTERS
   })
 
   const archive = paths?.[0]
@@ -215,10 +220,10 @@ export async function runImportProfileFlow(): Promise<null | string> {
   try {
     const name = await importProfileBundle(archive)
     notify({ kind: 'success', title: translateNow('profiles.imported'), message: name })
-    // Same landing as the create dialog's onCreated: refresh the list, then
-    // switch the app into the new profile.
-    await refreshProfiles()
-    setActiveProfile(name)
+    // Same landing as CreateProfileDialog's onCreated: refresh the list, then
+    // switch into the new profile on a fresh chat.
+    await refreshActiveProfile()
+    selectProfile(name)
 
     return name
   } catch (error) {

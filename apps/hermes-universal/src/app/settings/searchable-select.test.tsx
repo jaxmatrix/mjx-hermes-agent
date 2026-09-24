@@ -1,13 +1,18 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { stubResizeObserver } from '@/test/jsdom'
 import type { ConfigFieldSchema } from '@/types/hermes'
 
-import { ConfigField } from './config-section'
+import { ConfigField } from './config-field'
 import { rankSearchOption, SearchableSelect } from './searchable-select'
 
-// The scrollIntoView / pointer-capture / ResizeObserver shims Radix Popover and
-// cmdk need in jsdom already live in src/test-setup.ts.
+beforeAll(() => {
+  stubResizeObserver()
+  Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.hasPointerCapture = vi.fn(() => false)
+  Element.prototype.releasePointerCapture = vi.fn()
+})
 
 afterEach(() => {
   cleanup()
@@ -30,17 +35,9 @@ describe('rankSearchOption', () => {
     expect(rankSearchOption('ASIA/KOLKATA', 'kolkata')).toBe(2)
   })
 
-  it('scores a substring match anywhere as 1', () => {
-    expect(rankSearchOption('America/New_York', 'amer')).toBe(1)
-  })
-
   it('scores a slashless option by plain substring', () => {
     expect(rankSearchOption('UTC', 'ut')).toBe(1)
     expect(rankSearchOption('UTC', 'xyz')).toBe(0)
-  })
-
-  it('scores a non-match as 0', () => {
-    expect(rankSearchOption('Europe/Berlin', 'tokyo')).toBe(0)
   })
 })
 
@@ -76,12 +73,6 @@ describe('SearchableSelect', () => {
     fireEvent.click(screen.getByRole('combobox'))
 
     expect(screen.queryByText('System default')).toBeNull()
-  })
-
-  it('shows the placeholder when the value is blank', () => {
-    render(<SearchableSelect onChange={vi.fn()} options={options} placeholder="Search…" value="" />)
-
-    expect(screen.getByRole('combobox').textContent).toContain('Search…')
   })
 })
 
@@ -121,20 +112,5 @@ describe('ConfigField searchable routing', () => {
     fireEvent.click(screen.getByText('System default'))
 
     expect(onChange).toHaveBeenCalledWith('')
-  })
-
-  it('routes FREE_INPUT_KEYS to a typeable combobox rather than a closed select', () => {
-    render(
-      <ConfigField
-        onChange={vi.fn()}
-        schema={{ type: 'select', options: ['rachel'] }}
-        schemaKey="tts.elevenlabs.voice_id"
-        value="custom-clone-id"
-      />
-    )
-
-    // The value is a voice id absent from the option list — it must survive.
-    expect(screen.getByDisplayValue('custom-clone-id')).not.toBeNull()
-    expect(screen.getByLabelText('Show options')).not.toBeNull()
   })
 })

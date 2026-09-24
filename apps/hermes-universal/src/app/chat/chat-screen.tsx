@@ -10,13 +10,18 @@ import { SecretBar } from '@/app/chat/secret-bar'
 import { useSessionView } from '@/app/chat/session-view'
 import { SudoBar } from '@/app/chat/sudo-bar'
 import { useFileDrop } from '@/app/chat/use-file-drop'
+import { useTabConnection } from '@/app/chat/use-tab-connection'
 import { Thread } from '@/components/assistant-ui/thread/thread'
 import { Backdrop } from '@/components/backdrop'
+import { ChatConnectionBanner, TranscriptUnavailable } from '@/components/chat/chat-connection-banner'
 import { COMPOSER_HEART_CONFIG, HeartField } from '@/components/chat/vibe-hearts'
 import { IS_MOBILE } from '@/lib/platform'
+import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { $statusLine as $globalStatusLine } from '@/store/chat'
 import { $petActive } from '@/store/pet'
 import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
+import { tabIsBroken } from '@/store/tab-connection'
 
 /**
  * The chat surface: thread, composer, per-session prompt bars.
@@ -35,7 +40,7 @@ export const ChatScreen = memo(function ChatScreen() {
   const sessionKey = useStore(view.$runtimeId) ?? ''
 
   const busy = useStore(view.$busy)
-  const statusLine = useStore(view.$statusLine)
+  const statusLine = useStore(view.$statusLine ?? $globalStatusLine)
   // Blocking prompts are per SESSION, so each chat surface renders its own
   // inline bars. These used to read the global prompt atoms and were therefore
   // gated to the primary chat, leaving a tile to surface its prompts through a
@@ -45,13 +50,21 @@ export const ChatScreen = memo(function ChatScreen() {
   const sudo = useStore(sessionSudoRequest(sessionKey))
   const secret = useStore(sessionSecretRequest(sessionKey))
   const { dragActive } = useFileDrop()
+  // THIS TAB's backend, never the app's (MJXHRM-591). A chat bound to a
+  // connection that is down keeps its transcript and says so; one whose backend
+  // changed under it says that instead, and offers only Close.
+  const connection = useTabConnection(sessionKey)
+  const broken = tabIsBroken(connection.state)
   // A pet out owns the hearts; the composer lane only catches them when none is.
   const petActive = useStore($petActive)
 
   const barsPresent = (busy && statusLine) || approval || sudo || secret
 
   return (
-    <div className="chat">
+    // The red INNER border, the owner's framing: a tab in a four-pane layout has
+    // to be findable at a glance, and a border inside the pane marks the chat
+    // rather than the furniture around it.
+    <div className={cn('chat', broken && 'rounded-(--radius) ring-1 ring-inset ring-destructive/60')}>
       {/* Decoration behind everything, toggleable from Settings → Appearance. */}
       <Backdrop />
       {/* The chat title lives INSIDE the chat area (desktop parity — see
@@ -65,8 +78,12 @@ export const ChatScreen = memo(function ChatScreen() {
           composer's ComposerPrimitive.Input / trigger popover have runtime
           context. */}
       <ChatRuntimeProvider>
-        <Thread />
-        <ScrollToBottomButton />
+        {/* A lost connection with NOTHING cached would otherwise render as an
+            empty conversation, which is a lie about the conversation rather
+            than a statement about the connection (owner, Design v1.2). An empty
+            chat on a live connection keeps whatever it does today. */}
+        {broken && connection.transcriptEmpty ? <TranscriptUnavailable /> : <Thread />}
+        <ScrollToBottomButton sessionId={sessionKey || null} />
         {barsPresent && (
           <div className="composer-bars">
             {busy && statusLine && <div className="ps-0.5 text-[0.8125rem] text-muted-foreground">{statusLine}</div>}
@@ -76,6 +93,16 @@ export const ChatScreen = memo(function ChatScreen() {
                 choice buttons sit with the tool row that asked. */}
             {sudo && <SudoBar request={sudo} sessionKey={sessionKey} />}
             {secret && <SecretBar request={secret} sessionKey={sessionKey} />}
+          </div>
+        )}
+        {broken && (
+          <div className="px-(--composer-dock-inset-inline) pb-1">
+            <ChatConnectionBanner
+              label={connection.label}
+              onClose={connection.close}
+              onRetry={connection.retry}
+              state={connection.state}
+            />
           </div>
         )}
         <ChatComposer />
@@ -99,7 +126,7 @@ export const ChatScreen = memo(function ChatScreen() {
 
       {/* OS file drag-and-drop affordance — covers the whole chat area (Tauri
           delivers drops window-globally; the drop is handled by useFileDrop). */}
-      <ChatDropOverlay active={dragActive} />
+      <ChatDropOverlay kind={dragActive ? 'files' : null} />
     </div>
   )
 })

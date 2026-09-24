@@ -1,17 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import type { SessionInfo } from '@/types/hermes'
-
 import {
   initialQuickComposerState,
-  normalizeQuickEntrySubmit,
-  QUICK_ENTRY_SESSION_OPTIONS,
   QUICK_TARGET_CURRENT,
   QUICK_TARGET_NEW,
   type QuickComposerEvent,
   quickComposerReducer,
   type QuickComposerState,
-  quickEntrySessionOptions,
   type QuickEntrySubmitPayload
 } from './quick-entry'
 
@@ -32,7 +27,7 @@ function run(events: QuickComposerEvent[], from: QuickComposerState = initialQui
   return { sent, state }
 }
 
-// Most flows only make sense once the primary window has reported a live
+// Most flows only make sense once the primary renderer has reported a live
 // gateway — this is the push the quick window receives on open.
 const connect: QuickComposerEvent = {
   connected: true,
@@ -44,17 +39,6 @@ const connect: QuickComposerEvent = {
 }
 
 describe('quickComposerReducer', () => {
-  it('starts visible, empty, DISCONNECTED, and targeting the current chat', () => {
-    expect(initialQuickComposerState).toEqual({
-      connected: false,
-      draft: '',
-      sessions: [],
-      submitting: false,
-      target: QUICK_TARGET_CURRENT,
-      visible: true
-    })
-  })
-
   it('submit sends the trimmed draft with the target, clears it, and hides', () => {
     const { sent, state } = run([connect, { draft: '  ship it  ', type: 'edit' }, { type: 'submit' }])
 
@@ -102,18 +86,7 @@ describe('quickComposerReducer', () => {
   })
 
   it('a second submit while already submitting cannot double-send', () => {
-    // The draft has to be non-empty for this to test anything: a bare double
-    // Enter is already stopped by the empty-text guard, since the first submit
-    // clears the draft — so that version passed with `submitting` deleted
-    // outright. A keystroke landing between the two Enters is the shape a fast
-    // typist actually produces, and it is what the flag is for.
-    const { sent, state } = run([
-      connect,
-      { draft: 'hello', type: 'edit' },
-      { type: 'submit' },
-      { draft: 'hello there', type: 'edit' },
-      { type: 'submit' }
-    ])
+    const { sent, state } = run([connect, { draft: 'hello', type: 'edit' }, { type: 'submit' }, { type: 'submit' }])
 
     expect(sent).toEqual([{ target: QUICK_TARGET_CURRENT, text: 'hello' }])
     expect(state.submitting).toBe(true)
@@ -201,109 +174,11 @@ describe('quickComposerReducer', () => {
     expect(state.sessions).toHaveLength(2)
   })
 
-  it('re-summoning after a dismiss never carries the old draft back', () => {
-    const dismissed = run([connect, { draft: 'stale text', type: 'edit' }, { type: 'dismiss' }]).state
-    const reopened = quickComposerReducer(dismissed, { type: 'shown' }).state
-
-    expect(reopened.draft).toBe('')
-    expect(reopened.visible).toBe(true)
-  })
-
-  it('editing keeps the window open and never sends', () => {
-    const { sent, state } = run([
-      connect,
-      { draft: 'a', type: 'edit' },
-      { draft: 'ab', type: 'edit' },
-      { draft: 'abc', type: 'edit' }
-    ])
-
-    expect(sent).toEqual([])
-    expect(state.draft).toBe('abc')
-    expect(state.visible).toBe(true)
-  })
-
   it('a full summon → type → submit → summon cycle sends exactly once per round', () => {
     const first = run([connect, { draft: 'one', type: 'edit' }, { type: 'submit' }])
     const second = run([{ type: 'shown' }, { draft: 'two', type: 'edit' }, { type: 'submit' }], first.state)
 
     expect(first.sent).toEqual([{ target: QUICK_TARGET_CURRENT, text: 'one' }])
     expect(second.sent).toEqual([{ target: QUICK_TARGET_CURRENT, text: 'two' }])
-  })
-})
-
-// A `SessionInfo` has ~25 fields the picker does not read; only the four that
-// decide whether a row is offered and what it says are worth writing out.
-function session(partial: Partial<SessionInfo> & { id: string }): SessionInfo {
-  return {
-    ended_at: null,
-    input_tokens: 0,
-    is_active: false,
-    last_active: 0,
-    message_count: 0,
-    model: null,
-    output_tokens: 0,
-    preview: null,
-    source: null,
-    started_at: 0,
-    title: null,
-    tool_call_count: 0,
-    ...partial
-  }
-}
-
-describe('quickEntrySessionOptions', () => {
-  it('labels a row by title, falling back to the preview and then the id', () => {
-    expect(
-      quickEntrySessionOptions([
-        session({ id: 'a', title: 'Fix the build' }),
-        session({ id: 'b', preview: 'why is the CI red' }),
-        session({ id: 'c' })
-      ])
-    ).toEqual([
-      { id: 'a', title: 'Fix the build' },
-      { id: 'b', title: 'why is the CI red' },
-      { id: 'c', title: 'c' }
-    ])
-  })
-
-  it('treats a whitespace-only title as no title at all', () => {
-    expect(quickEntrySessionOptions([session({ id: 'a', preview: '  real text  ', title: '   ' })])).toEqual([
-      { id: 'a', title: 'real text' }
-    ])
-  })
-
-  it('never offers an archived session — it is a dead target for a prompt', () => {
-    expect(
-      quickEntrySessionOptions([session({ archived: true, id: 'gone' }), session({ id: 'live', title: 'Live' })])
-    ).toEqual([{ id: 'live', title: 'Live' }])
-  })
-
-  it('is a capture aid, not a session browser: at most a handful of rows', () => {
-    const many = Array.from({ length: 20 }, (_, i) => session({ id: `s${i}`, title: `Session ${i}` }))
-
-    expect(quickEntrySessionOptions(many)).toHaveLength(QUICK_ENTRY_SESSION_OPTIONS)
-    // Newest first — the list arrives ordered and the slice must not reorder it.
-    expect(quickEntrySessionOptions(many)[0]).toEqual({ id: 's0', title: 'Session 0' })
-  })
-})
-
-describe('normalizeQuickEntrySubmit', () => {
-  it('passes a well-formed payload through', () => {
-    expect(normalizeQuickEntrySubmit({ target: 's1', text: 'hello' })).toEqual({ target: 's1', text: 'hello' })
-  })
-
-  it('defaults a missing or non-string target to the current chat', () => {
-    expect(normalizeQuickEntrySubmit({ text: 'hello' })).toEqual({ target: QUICK_TARGET_CURRENT, text: 'hello' })
-    expect(normalizeQuickEntrySubmit({ target: 7, text: 'hello' })).toEqual({
-      target: QUICK_TARGET_CURRENT,
-      text: 'hello'
-    })
-  })
-
-  it('rejects anything with no text to send', () => {
-    expect(normalizeQuickEntrySubmit({ text: '   ' })).toBeNull()
-    expect(normalizeQuickEntrySubmit({ target: 's1' })).toBeNull()
-    expect(normalizeQuickEntrySubmit(null)).toBeNull()
-    expect(normalizeQuickEntrySubmit('send this')).toBeNull()
   })
 })

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router'
 
 import { PetSection } from '@/app/pet/pet-section'
 import { QuickEntryRow } from '@/app/quick-entry/quick-entry-row'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -34,13 +35,12 @@ import { ConnectionsSection } from './connections'
 import { KeybindSettings } from './keybind-settings'
 import { KeysSection } from './keys-section'
 import { MemorySection } from './memory-section'
-import { ModelSection } from './model-section'
+import { ModelSettings } from './model-settings'
 import { NotificationsSection } from './notifications-section'
 import { PluginsSettings } from './plugins-settings'
 import { EmptyState, ListRow, SettingsContent } from './primitives'
-import { ProvidersSection } from './providers-section'
+import { ProvidersSettings } from './providers-settings'
 import { useSettingsNav } from './settings-nav'
-import { settingRowElementId } from './settings-search'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
 import { VoiceSection } from './voice-section'
 
@@ -48,14 +48,12 @@ import { VoiceSection } from './voice-section'
 // transport.ts) — a device-local preference, not a schema config field, so it's a
 // headerSlot above the Workspace page's schema fields rather than a `SECTIONS` key.
 function TerminalHostRow() {
-  const { t } = useI18n()
-  const copy = t.settings.workspace
   const preference = useStore($terminalHostPreference)
 
   const options = [
-    { id: 'auto', label: copy.terminalHostAuto },
-    { id: 'device', label: copy.terminalHostDevice },
-    { id: 'gateway', label: copy.terminalHostGateway }
+    { id: 'auto', label: 'Auto' },
+    { id: 'device', label: 'This device' },
+    { id: 'gateway', label: 'Gateway' }
   ] as const satisfies readonly { id: TerminalHostPreference; label: string }[]
 
   return (
@@ -74,9 +72,9 @@ function TerminalHostRow() {
           </SelectContent>
         </Select>
       }
-      description={copy.terminalHostDesc}
+      description="Where the agent shell runs for this device."
       id={settingRowElementId('workspace.terminal-host')}
-      title={copy.terminalHostTitle}
+      title="Shell runs on"
     />
   )
 }
@@ -122,15 +120,13 @@ function KeepAwakeRow() {
 // renders as off. That is the honest reading: until it is answered, closing the
 // window does not keep Hermes running.
 function BackgroundModeRow() {
-  const { t } = useI18n()
-  const copy = t.settings.config
   const backgroundMode = useStore($backgroundMode)
 
   return (
     <ListRow
       action={
         <Switch
-          aria-label={copy.backgroundModeTitle}
+          aria-label="Keep running in background"
           checked={backgroundMode === true}
           onCheckedChange={on => {
             triggerHaptic('selection')
@@ -138,9 +134,9 @@ function BackgroundModeRow() {
           }}
         />
       }
-      description={copy.backgroundModeDesc}
+      description="Keep Hermes running when the last window closes."
       id={settingRowElementId('advanced.background-mode')}
-      title={copy.backgroundModeTitle}
+      title="Keep running in background"
     />
   )
 }
@@ -279,7 +275,9 @@ export function SectionBody({ section }: { section: string }) {
     // Providers: Accounts (OAuth sign-in) + API keys + custom-endpoints sub-tabs.
     case 'providers':
       return (
-        <ProvidersSection
+        <ProvidersSettings
+          onClose={() => undefined}
+          onViewChange={() => undefined}
           view={sub === 'keys' ? 'keys' : sub === 'custom-endpoints' ? 'custom-endpoints' : 'accounts'}
         />
       )
@@ -298,7 +296,7 @@ export function SectionBody({ section }: { section: string }) {
     // auxiliary. "Set up <provider>" routes per provider kind (custom endpoint /
     // OAuth / picker) — see `resolveProviderSetup` in store/onboarding.ts.
     case 'model':
-      return <ModelSection />
+      return <ModelSettings />
 
     // Appearance (Jc8): theme mode + skin + language.
     case 'appearance':

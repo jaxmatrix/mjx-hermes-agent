@@ -180,7 +180,7 @@ describe('background mode store', () => {
     expect($notifications.get()).toHaveLength(1)
     expect($notifications.get()[0]).toMatchObject({
       kind: 'error',
-      title: "Couldn't keep Hermes running in the background"
+      title: 'settings.config.backgroundModeFailed'
     })
   })
 

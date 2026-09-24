@@ -67,7 +67,7 @@ async function pluginSocketAuthParam(conn: Connection): Promise<null | string> {
  * `app/contrib/controller.tsx`'s module body, and `main.tsx` only dials
  * afterwards), so at `ctx.socket()` time there is normally no connection at
  * all — and a gateway switch is a soft re-home in place
- * (`store/gateway-soft-switch.ts`), never a reload. Without the subscription
+ * (`selectConnection`, `store/connections.ts`), never a reload. Without the subscription
  * this door opened nothing on a cold boot and, once open, kept streaming the
  * PREVIOUS gateway's data into a plugin whose REST calls had already moved.
  *

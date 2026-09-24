@@ -5,6 +5,7 @@ import type { WritableAtom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
+import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 
 const getProjectSkills = vi.fn()
@@ -39,9 +40,11 @@ async function renderGate(profile?: null | string) {
 
   await act(async () => {
     render(
-      <QueryClientProvider client={queryClient}>
-        <ProjectSkillsGate profile={profile} />
-      </QueryClientProvider>
+      <I18nProvider>
+        <QueryClientProvider client={queryClient}>
+          <ProjectSkillsGate profile={profile} />
+        </QueryClientProvider>
+      </I18nProvider>
     )
   })
 }
@@ -72,7 +75,7 @@ describe('ProjectSkillsGate', () => {
 
     await renderGate()
 
-    expect(await screen.findByText(/2 skills in this repo are not loaded/)).toBeTruthy()
+    expect(await screen.findByText(/2 project skills need trust/)).toBeTruthy()
     expect(screen.getByText('/repo')).toBeTruthy()
   })
 
@@ -88,7 +91,7 @@ describe('ProjectSkillsGate', () => {
 
     await renderGate('research')
 
-    const button = await screen.findByRole('button', { name: 'Trust this repo' })
+    const button = await screen.findByRole('button', { name: 'Trust project skills' })
     await act(async () => {
       fireEvent.click(button)
     })
@@ -107,8 +110,8 @@ describe('ProjectSkillsGate', () => {
 
     await renderGate()
 
-    expect(await screen.findByText(/1 project skill loaded from this repo/)).toBeTruthy()
-    expect(screen.getByText(/1 blocked by the security scan/)).toBeTruthy()
+    expect(await screen.findByText(/1 project skill trusted/)).toBeTruthy()
+    expect(screen.getByText(/1 quarantined by the scanner/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop trusting' })).toBeTruthy()
   })
 

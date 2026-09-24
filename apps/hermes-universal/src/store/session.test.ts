@@ -1,1972 +1,1534 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { ClientSessionState } from '@/app/types'
+import { createClientSessionState } from '@/lib/chat-runtime'
+import type { SessionInfo } from '@/types/hermes'
+
+const setUnreadRemote = vi.fn<(id: string, unread: boolean, profile?: null | string) => Promise<{ ok: boolean }>>(() =>
+  Promise.resolve({ ok: true })
+)
 
 vi.mock('@/hermes', () => ({
-  listAllProfileSessions: vi.fn(),
-  getSession: vi.fn(),
-  getSessionMessages: vi.fn(),
-  deleteSession: vi.fn(),
-  renameSession: vi.fn(),
-  setSessionArchived: vi.fn(),
-  searchSessions: vi.fn(),
-  setApiRequestProfile: vi.fn()
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  // Opening a session now PATCHes its persisted unread flag (clearUnreadOnOpen
+  // -> markSessionUnread); keep the REST mutation minimal for the suite.
+  setApiRequestProfile: () => {},
+  setSessionUnreadRemote: (id: string, unread: boolean, profile?: null | string) => setUnreadRemote(id, unread, profile)
 }))
-// `$gatewayState` and `getGatewayClient` are here only because `store/projects`
-// reaches `store/connection` through `lib/api`, and `branchStoredSession` now
-// resolves its parent through `store/session-lookup` (which reads the project
-// tree). Omitting either makes the whole suite fail to import, not one test.
-// `deleteSessionLocal` now asks before deleting a PINNED session (MJXHRM-479).
-// Nothing here renders a `<ConfirmHost />`, so an unmocked `confirm()` would
-// park a promise and every pinned-delete test would time out. Default: yes.
-vi.mock('@/store/confirm', () => ({ confirm: vi.fn(async () => true) }))
 
-vi.mock('@/store/gateway', async () => {
-  const { atom } = await import('@/store/atom')
+import { deferred } from '../test/deferred'
+import { makeSessionInfo } from '../test/session-info'
 
-  return {
-    $gatewayState: atom('open'),
-    addGatewayEventListener: () => () => {},
-    getGatewayClient: () => null,
-    requestGateway: vi.fn()
-  }
-})
-
-import { GatewayRpcError } from '@/gateway/rpc-error'
-import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
-import { ApiError } from '@/lib/api'
-import type { ChatMessage } from '@/lib/chat-messages'
-import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
-import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
-import { confirm } from '@/store/confirm'
-import { requestGateway } from '@/store/gateway'
-import * as notifications from '@/store/notifications'
-import { $showAllProfiles } from '@/store/profile'
-import { $activeProfile } from '@/store/profiles'
 import {
-  $activeSessionKey,
-  $sessionStates,
-  hydratingKey,
-  runtimeKeyForStoredSession,
-  updateSession
-} from '@/store/session-state-types'
-import { $transcriptPaint, __resetTranscriptPaint } from '@/store/transcript-paint'
-import { clearAllTurns, getInflightTurn } from '@/store/turn-lifecycle'
-import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
-import type { PaginatedSessions, SessionInfo } from '@/types/hermes'
-
-import { $pinnedSessionIds } from './layout'
-import { $profiles } from './profiles'
-import { $projectTree } from './projects'
-import {
-  $activeStoredSessionId,
-  $pinnedSessionCache,
-  $removedSessionIds,
+  $activeSessionId,
+  $connection,
+  $currentCwd,
+  $currentModel,
+  $currentProvider,
+  $selectedStoredSessionId,
   $sessions,
-  $sessionsLimit,
-  $sessionsListEpoch,
-  $sessionsTotal,
   $unreadFinishedSessionIds,
-  $workingSessionIds,
-  adoptLiveSession,
-  archiveSessionLocal,
-  branchCurrentSession,
-  branchStoredSession,
-  clearPinnedSessionCache,
-  clearUnreadFinishedSession,
-  deleteSessionLocal,
-  isMessagingSource,
-  isSessionPinned,
+  _resetLegacyDiscardForTests,
+  _resetSessionOwnerHintsForTests,
+  applyConfiguredDefaultProjectDir,
+  carryForwardFailedProfileSessions,
+  commitWorkspaceCwdForSelectedSession,
+  ensureDefaultWorkspaceCwd,
+  forgetSessionOwnerHintsForConnection,
+  forgetSessionOwnerHintsForSession,
+  getConfiguredDefaultProjectDir,
+  getRememberedRoute,
+  getRememberedSessionId,
+  getRememberedWorkspaceCwd,
+  getSessionOwnerHint,
+  getSessionOwnerHints,
+  hydrateSessionOwnerHints,
+  keepFailedProfileMeta,
+  knownSessionOwner,
   knownSessionProfile,
-  lastOpenedSessionId,
-  loadMoreSessions,
-  markPluginOwnedSession,
-  messagingSourceLabel,
-  openSession,
-  pinnedSessionRows,
-  pruneSessionTombstones,
-  reclaimSessionTransport,
-  refreshSessions,
-  renameSessionLocal,
-  resetSessionsPaging,
-  resolveSessionProfile,
-  sameStoredSession,
-  sessionExistsOnBackends,
-  setBranchedSessionOpener
+  lineageAliases,
+  mergeSessionPage,
+  rememberedSessionProfile,
+  resolveComposerSessionKey,
+  sessionBelongsToProfile,
+  sessionMatchesStoredId,
+  sessionOwnerRouteFromRow,
+  sessionPinId,
+  setComposerSelectionOwner,
+  setConnection,
+  setCurrentCwd,
+  setCurrentCwdTransient,
+  setCurrentModel,
+  setCurrentModelSource,
+  setCurrentProvider,
+  setRememberedRoute,
+  setRememberedSessionId,
+  setSelectedStoredSessionId,
+  setSessionOwnerHint,
+  setSessions,
+  shouldMigrateComposerScope,
+  touchSessionActivity,
+  workspaceCwdForNewSession
 } from './session'
+import {
+  $attentionSessionIds,
+  clearAllSessionStates,
+  getRecentlySettledSessionIds,
+  publishSessionState
+} from './session-states'
 
-const row = (id: string, title: string): SessionInfo => ({ id, title }) as unknown as SessionInfo
+const session = (over: Partial<SessionInfo>): SessionInfo => makeSessionInfo({ id: 'live', ...over })
 
-/** One project holding `sessions` in a single lane — the widest source
- *  `sessionRowFor` searches, and the one a session past the recents page is
- *  usually found in. */
-const treeWith = (sessions: SessionInfo[]) =>
-  ({
-    id: 'p1',
-    label: 'Project',
-    path: '/repo',
-    previewSessions: [],
-    repos: [
-      {
-        id: 'r1',
-        label: 'repo',
-        path: '/repo',
-        groups: [{ id: 'g1', label: 'main', path: '/repo', sessions }],
-        sessionCount: sessions.length
-      }
-    ],
-    sessionCount: sessions.length
-  }) as unknown as (typeof $projectTree.value)[number]
+describe('composer model persistence scope', () => {
+  const local = { baseUrl: '', connectionId: 'local', mode: 'local' } as never
 
-const rowWithCwd = (id: string, cwd: null | string): SessionInfo => ({ id, cwd }) as unknown as SessionInfo
+  beforeEach(() => {
+    window.localStorage.clear()
+    setConnection(local)
+    setCurrentModel('')
+    setCurrentProvider('')
+    setCurrentModelSource('')
+  })
 
-const rowOnProfile = (id: string, profile: string): SessionInfo => ({ id, profile }) as unknown as SessionInfo
+  afterEach(() => {
+    setConnection(local)
+    window.localStorage.clear()
+  })
 
-const profile = (name: string) => ({ name }) as unknown as (typeof $profiles.value)[number]
+  it('keeps manual model selections isolated by remote connection and profile', () => {
+    const remote = (profile: string) =>
+      ({ baseUrl: 'https://aibox.example', connectionId: 'aibox', mode: 'remote', profile }) as never
 
-afterEach(() => {
-  vi.clearAllMocks()
-  $sessions.set([])
-  $sessionsTotal.set(0)
-  $activeStoredSessionId.set(null)
-  $unreadFinishedSessionIds.set([])
-  $showAllProfiles.set(false)
-  $activeProfile.set(null)
-  $profiles.set([])
-  $removedSessionIds.set(new Set())
-  $pinnedSessionIds.set([])
-  setBranchedSessionOpener(null)
-  resetSessionsPaging()
-  clearAllTurns()
-  resetSessionStates()
-  seedActiveSession('runtime-0')
+    setConnection(remote('fred'))
+    setCurrentModel('grok-4')
+    setCurrentProvider('xai-oauth')
+    setCurrentModelSource('manual')
+
+    setConnection(remote('fred-work'))
+    expect($currentModel.get()).toBe('')
+    expect($currentProvider.get()).toBe('')
+
+    setCurrentModel('local/model')
+    setCurrentProvider('custom:local')
+    setConnection(remote('fred'))
+
+    expect($currentModel.get()).toBe('grok-4')
+    expect($currentProvider.get()).toBe('xai-oauth')
+  })
+
+  it('keeps inferred local-primary connections on the historical bare keys', () => {
+    setComposerSelectionOwner('remote', 'default')
+    window.localStorage.setItem('hermes.desktop.composer.model', 'legacy-model')
+    window.localStorage.setItem('hermes.desktop.composer.provider', 'legacy-provider')
+
+    setConnection({ baseUrl: '', connectionId: 'local', mode: 'local', profile: 'default' } as never)
+
+    expect($currentModel.get()).toBe('legacy-model')
+    expect($currentProvider.get()).toBe('legacy-provider')
+    setCurrentModel('next-model')
+    expect(window.localStorage.getItem('hermes.desktop.composer.model')).toBe('next-model')
+    expect(window.localStorage.getItem('hermes.desktop.composer.model.registry.local.default')).toBeNull()
+  })
+
+  it('uses the live registry owner when the connection descriptor is stale', () => {
+    const remote = (profile: string) =>
+      ({ baseUrl: 'https://aibox.example', connectionId: 'aibox', mode: 'remote', profile }) as never
+
+    setConnection(remote('fred'))
+    setCurrentModel('grok-4')
+    setCurrentProvider('xai-oauth')
+    setCurrentModelSource('manual')
+
+    // ensureGatewayAgent publishes this coordinate even if getConnectionFor
+    // fails and $connection therefore still describes fred.
+    setComposerSelectionOwner('aibox', 'fred-work')
+    setCurrentModel('local/model')
+    setCurrentProvider('custom:local')
+    setCurrentModelSource('default')
+
+    setComposerSelectionOwner('aibox', 'fred')
+    expect($currentModel.get()).toBe('grok-4')
+    expect($currentProvider.get()).toBe('xai-oauth')
+
+    setComposerSelectionOwner('aibox', 'fred-work')
+    expect($currentModel.get()).toBe('local/model')
+    expect($currentProvider.get()).toBe('custom:local')
+  })
 })
 
-describe('session store', () => {
-  it('deleteSessionLocal removes optimistically and rolls back on error', async () => {
-    $sessions.set([row('a', 'A'), row('b', 'B')])
-    $sessionsTotal.set(2)
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-    await deleteSessionLocal('a')
-    expect($sessions.get().map(s => s.id)).toEqual(['b'])
-    expect($sessionsTotal.get()).toBe(1)
-
-    $sessions.set([row('a', 'A')])
-    vi.mocked(deleteSession).mockRejectedValue(new Error('nope'))
-    await deleteSessionLocal('a')
-    expect($sessions.get().map(s => s.id)).toEqual(['a']) // restored
+describe('session owner hints', () => {
+  afterEach(() => {
+    _resetSessionOwnerHintsForTests({ storage: true })
   })
 
-  it('renameSessionLocal updates optimistically and rolls back on error', async () => {
-    $sessions.set([row('a', 'Old')])
-    vi.mocked(renameSession).mockRejectedValue(new Error('nope'))
-    await renameSessionLocal('a', 'New')
-    expect($sessions.get()[0].title).toBe('Old') // rolled back
+  it('preserves the registry owner recorded on a discovered session row', () => {
+    expect(
+      knownSessionOwner(
+        [session({ connection_id: 'test-amnezia', id: 'registry-session', profile: 'default' })],
+        'registry-session'
+      )
+    ).toEqual({ connectionId: 'test-amnezia', profile: 'default' })
   })
 
-  it('openSession resumes: hydrates the transcript + binds the runtime id', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({
-      messages: [{ role: 'user', content: 'hi' }],
-      session_id: 'runtime-1'
+  it('preserves the exact registry owner for session-scoped RPC routing', () => {
+    const route = {
+      connectionId: 'test-amnezia',
+      mode: 'remote' as const,
+      profile: 'default',
+      targetProfile: 'default'
+    }
+
+    setSessionOwnerHint('remote-session', route)
+
+    expect(knownSessionOwner([session({ id: 'remote-session', profile: 'default' })], 'remote-session')).toEqual(route)
+  })
+
+  it('keeps identical session ids separate across connection and profile owners', () => {
+    const sourceA = { connectionId: 'source-a', mode: 'remote' as const, profile: 'worker', targetProfile: 'backend-a' }
+    const sourceB = { connectionId: 'source-b', mode: 'remote' as const, profile: 'worker', targetProfile: 'backend-b' }
+
+    setSessionOwnerHint('same-session', sourceA)
+    setSessionOwnerHint('same-session', sourceB)
+
+    expect(getSessionOwnerHint('same-session', sourceA)).toEqual(sourceA)
+    expect(getSessionOwnerHint('same-session', sourceB)).toEqual(sourceB)
+    expect(getSessionOwnerHint('same-session')).toBeUndefined()
+  })
+
+  it('bounds owner hints and evicts the oldest scoped identity', () => {
+    for (let index = 0; index < 257; index += 1) {
+      setSessionOwnerHint(`bounded-${index}`, {
+        connectionId: 'bounded-source',
+        mode: 'remote',
+        profile: 'worker',
+        targetProfile: 'backend-worker'
+      })
+    }
+
+    const scope = { connectionId: 'bounded-source', profile: 'worker' }
+    expect(getSessionOwnerHint('bounded-0', scope)).toBeUndefined()
+    expect(getSessionOwnerHint('bounded-256', scope)).toMatchObject({ connectionId: 'bounded-source' })
+  })
+
+  it('survives a relaunch: hints are persisted and rehydrated in LRU order', () => {
+    const omar = { connectionId: 'local', mode: 'local' as const, profile: 'omar' }
+    const remote = { connectionId: 'homelab', mode: 'remote' as const, profile: 'worker', targetProfile: 'w' }
+
+    setSessionOwnerHint('stored-omar', omar)
+    setSessionOwnerHint('stored-remote', remote)
+
+    // "Relaunch": the in-memory map is gone, storage is not.
+    _resetSessionOwnerHintsForTests()
+    expect(getSessionOwnerHint('stored-omar')).toBeUndefined()
+
+    hydrateSessionOwnerHints()
+
+    expect(getSessionOwnerHint('stored-omar')).toEqual(omar)
+    expect(getSessionOwnerHint('stored-remote')).toEqual(remote)
+
+    // LRU order survives: the oldest persisted entry is the first evicted.
+    for (let index = 0; index < 255; index += 1) {
+      setSessionOwnerHint(`filler-${index}`, { connectionId: 'filler', profile: 'p' })
+    }
+
+    expect(getSessionOwnerHint('stored-omar')).toBeUndefined()
+    expect(getSessionOwnerHint('stored-remote')).toEqual(remote)
+  })
+
+  it('ignores malformed persisted entries and never throws on hydrate', () => {
+    window.localStorage.setItem(
+      'hermes.desktop.sessionOwnerHints.v1',
+      JSON.stringify([
+        'junk',
+        ['no-route', null],
+        ['bad-shape', { connectionId: 7, profile: 'x' }],
+        ['good', { connectionId: 'local', profile: 'omar', mode: 'sideways' }]
+      ])
+    )
+
+    _resetSessionOwnerHintsForTests()
+    expect(() => hydrateSessionOwnerHints()).not.toThrow()
+    expect(getSessionOwnerHint('good')).toEqual({ connectionId: 'local', profile: 'omar' })
+    expect(getSessionOwnerHint('no-route')).toBeUndefined()
+    expect(getSessionOwnerHint('bad-shape')).toBeUndefined()
+  })
+
+  it('forgets every hint naming a removed connection, in memory and on disk', () => {
+    setSessionOwnerHint('stored-a', { connectionId: 'gone', profile: 'omar' })
+    setSessionOwnerHint('stored-b', { connectionId: 'gone', profile: 'default' })
+    setSessionOwnerHint('stored-c', { connectionId: 'local', profile: 'omar' })
+
+    forgetSessionOwnerHintsForConnection('gone')
+
+    expect(getSessionOwnerHint('stored-a')).toBeUndefined()
+    expect(getSessionOwnerHint('stored-b')).toBeUndefined()
+    expect(getSessionOwnerHint('stored-c')).toEqual({ connectionId: 'local', profile: 'omar' })
+
+    _resetSessionOwnerHintsForTests()
+    hydrateSessionOwnerHints()
+    expect(getSessionOwnerHint('stored-a')).toBeUndefined()
+    expect(getSessionOwnerHint('stored-c')).toEqual({ connectionId: 'local', profile: 'omar' })
+  })
+
+  it('forgets every route for one session without disturbing other sessions', () => {
+    setSessionOwnerHint('poisoned', { connectionId: 'local', mode: 'local', profile: 'default' })
+    setSessionOwnerHint('poisoned', { connectionId: 'remote-a', mode: 'remote', profile: 'default' })
+    setSessionOwnerHint('healthy', { connectionId: 'remote-a', mode: 'remote', profile: 'default' })
+
+    forgetSessionOwnerHintsForSession('poisoned')
+
+    expect(getSessionOwnerHints('poisoned')).toEqual([])
+    expect(getSessionOwnerHint('healthy')).toMatchObject({ connectionId: 'remote-a' })
+
+    _resetSessionOwnerHintsForTests()
+    hydrateSessionOwnerHints()
+    expect(getSessionOwnerHints('poisoned')).toEqual([])
+    expect(getSessionOwnerHint('healthy')).toMatchObject({ connectionId: 'remote-a' })
+  })
+
+  it('pins only connection-tagged rows and leaves primary SSH rows ambient', () => {
+    expect(sessionOwnerRouteFromRow(session({ connection_id: 'source-a', profile: 'worker' }))).toEqual({
+      connectionId: 'source-a',
+      profile: 'worker',
+      targetProfile: 'worker'
     })
-    await openSession('stored-9')
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-9', cols: 96 })
-    expect($activeStoredSessionId.get()).toBe('stored-9')
-    expect($sessionId.get()).toBe('runtime-1')
-    expect($busy.get()).toBe(false)
-    expect($messages.get()).toEqual([{ id: expect.any(String), role: 'user', parts: [{ type: 'text', text: 'hi' }] }])
+    expect(sessionOwnerRouteFromRow(session({ profile: 'default' }))).toBeUndefined()
+    expect(sessionOwnerRouteFromRow(session({ connection_id: '  ', profile: 'default' }))).toBeUndefined()
+  })
+})
+
+describe('knownSessionOwner', () => {
+  afterEach(() => {
+    _resetSessionOwnerHintsForTests({ storage: true })
   })
 
-  // The tile delegate has adopted a resumed turn since MJXHRM-356; the PRIMARY
-  // chat never did, so the surface most likely to be holding a live turn was the
-  // one `reconcileInflightTurns` could not see on a reconnect.
-  it('openSession adopts a turn already running on the gateway', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({
-      messages: [],
-      session_id: 'runtime-1',
-      running: true,
-      inflight: { user: 'the running prompt', assistant: 'partial', streaming: true }
+  it('returns the EXACT route for a connection-tagged row, the bare profile otherwise', () => {
+    const rows = [
+      session({ connection_id: 'local', id: 'tagged', profile: 'omar' }),
+      session({ id: 'untagged', profile: 'coder' }),
+      session({ connection_id: '  ', id: 'blank-tag', profile: 'coder' })
+    ]
+
+    expect(knownSessionOwner(rows, 'tagged')).toEqual({ connectionId: 'local', profile: 'omar' })
+    expect(knownSessionOwner(rows, 'untagged')).toBe('coder')
+    expect(knownSessionOwner(rows, 'blank-tag')).toBe('coder')
+    expect(knownSessionOwner(rows, null)).toBeUndefined()
+  })
+
+  it('falls through to the EXACT hint route for an unlisted session', () => {
+    const route = { connectionId: 'homelab', profile: 'worker', targetProfile: 'w' }
+
+    setSessionOwnerHint('hidden', route)
+
+    expect(knownSessionOwner([], 'hidden')).toEqual(route)
+  })
+})
+
+describe('computed $attentionSessionIds', () => {
+  beforeEach(() => {
+    clearAllSessionStates()
+  })
+
+  afterEach(() => {
+    clearAllSessionStates()
+  })
+
+  it('reflects sessions with needsInput=true and a storedSessionId', () => {
+    publishSessionState('rt1', { ...createClientSessionState('s1'), needsInput: true })
+    publishSessionState('rt2', { ...createClientSessionState('s2'), needsInput: false })
+
+    expect($attentionSessionIds.get()).toEqual(['s1'])
+  })
+
+  it('updates when needsInput changes', () => {
+    publishSessionState('rt1', { ...createClientSessionState('s1'), needsInput: true })
+    expect($attentionSessionIds.get()).toEqual(['s1'])
+
+    publishSessionState('rt1', { ...createClientSessionState('s1'), needsInput: false })
+    expect($attentionSessionIds.get()).toEqual([])
+  })
+
+  // A chat that hasn't been persisted yet has no stored id, and until it gets
+  // one the surfaces key on its runtime id — so publishing under that is what
+  // lets a clarify prompt on the very first turn reach the row.
+  it('falls back to the runtime id for a session with no storedSessionId', () => {
+    publishSessionState('rt1', { ...createClientSessionState(null), needsInput: true })
+    expect($attentionSessionIds.get()).toEqual(['rt1'])
+  })
+})
+
+describe('sessionPinId', () => {
+  it('uses the live id when there is no compression lineage', () => {
+    expect(sessionPinId(session({ id: 'abc' }))).toBe('abc')
+  })
+
+  it('uses the lineage root so a pin survives compression', () => {
+    // After auto-compression the entry surfaces under a fresh tip id but keeps
+    // the original root — pinning on the root keeps the pin stable.
+    expect(sessionPinId(session({ id: 'tip', _lineage_root_id: 'root' }))).toBe('root')
+  })
+})
+
+describe('lineageAliases across a deep compression chain', () => {
+  it('aliases every segment, intermediates included', () => {
+    // The projected row carries the full chain: a tile or route can hold a
+    // MIDDLE segment's id from when IT was the tip.
+    const rows = [session({ _lineage_ids: ['root', 'mid', 'tip'], _lineage_root_id: 'root', id: 'tip' })]
+
+    expect(lineageAliases('mid', rows).sort()).toEqual(['mid', 'root', 'tip'])
+    expect(lineageAliases('tip', rows).sort()).toEqual(['mid', 'root', 'tip'])
+    expect(sessionMatchesStoredId(rows[0], 'mid')).toBe(true)
+  })
+})
+
+describe('resolveComposerSessionKey', () => {
+  it('keeps the lineage root across compression tip rotation', () => {
+    const tipBefore = '20260720_062637_ad96b3'
+    const tipAfter = '20260720_071049_a28905'
+    const sessions = [session({ id: tipAfter, _lineage_root_id: tipBefore })]
+
+    expect(resolveComposerSessionKey(tipBefore, [session({ id: tipBefore })])).toBe(tipBefore)
+    expect(resolveComposerSessionKey(tipAfter, sessions)).toBe(tipBefore)
+  })
+
+  it('falls back to the live id when the tip row is not loaded yet', () => {
+    expect(resolveComposerSessionKey('tip-new', [])).toBe('tip-new')
+  })
+})
+
+describe('shouldMigrateComposerScope', () => {
+  it('allows tip → lineage-root rekey within the same conversation', () => {
+    const sessions = [session({ id: 'tip-a', _lineage_root_id: 'root-a' })]
+
+    expect(shouldMigrateComposerScope('tip-a', 'root-a', sessions)).toBe(true)
+  })
+
+  it('blocks cross-session migrate when route flipped but store selection lags', () => {
+    // ChatView mid-switch: selectedStoredSessionId still A, route-driven
+    // queueSessionKey already B. Migrating would re-home A's queue onto B.
+    const sessions = [
+      session({ id: 'tip-a', _lineage_root_id: 'root-a' }),
+      session({ id: 'tip-b', _lineage_root_id: 'root-b' })
+    ]
+
+    expect(shouldMigrateComposerScope('tip-a', 'root-b', sessions)).toBe(false)
+    expect(shouldMigrateComposerScope('root-a', 'root-b', sessions)).toBe(false)
+    expect(shouldMigrateComposerScope('tip-a', 'tip-b', sessions)).toBe(false)
+  })
+
+  it('is a no-op for identical or missing keys', () => {
+    const sessions = [session({ id: 'tip-a', _lineage_root_id: 'root-a' })]
+
+    expect(shouldMigrateComposerScope('root-a', 'root-a', sessions)).toBe(false)
+    expect(shouldMigrateComposerScope(null, 'root-a', sessions)).toBe(false)
+    expect(shouldMigrateComposerScope('root-a', null, sessions)).toBe(false)
+  })
+})
+
+describe('mergeSessionPage', () => {
+  it('carries the owning connection onto a row that comes back untagged (local registry source)', () => {
+    // A `local` registry source's rows are served by the primary aggregate as
+    // plain local rows: the unified-list splice tags only non-local sources.
+    // The refresh must not strip the exact owner the routed create stamped.
+    const previous = [session({ connection_id: 'local', id: 'omar-1', last_active: 5, profile: 'omar' })]
+    const incoming = [session({ id: 'omar-1', last_active: 5, profile: 'omar' })]
+
+    expect(mergeSessionPage(previous, incoming, [])[0]).toMatchObject({ connection_id: 'local', profile: 'omar' })
+  })
+
+  it('drops the carried tag when the refreshed row names a different profile, and never overrides an incoming tag', () => {
+    const previous = [
+      session({ connection_id: 'local', id: 'moved', profile: 'omar' }),
+      session({ connection_id: 'local', id: 'foreign', profile: 'omar' })
+    ]
+
+    const incoming = [
+      session({ id: 'moved', profile: 'default' }),
+      session({ connection_id: 'homelab', id: 'foreign', profile: 'omar' })
+    ]
+
+    const merged = mergeSessionPage(previous, incoming, [])
+    expect(merged.find(s => s.id === 'moved')?.connection_id).toBeUndefined()
+    expect(merged.find(s => s.id === 'foreign')?.connection_id).toBe('homelab')
+  })
+
+  it('keeps reference identity when the carried tag is already present', () => {
+    const previous = [session({ connection_id: 'local', id: 'same', last_active: 1, profile: 'omar' })]
+    const incoming = [session({ connection_id: 'local', id: 'same', last_active: 1, profile: 'omar' })]
+
+    expect(mergeSessionPage(previous, incoming, [])[0]).toBe(incoming[0])
+  })
+
+  it('never stitches one profile twin onto another: same id in two profiles stays two sessions (#92454)', () => {
+    // Two profiles can hold sessions with the SAME stored id (restored
+    // backups, copied state.dbs). Keyed by bare id these collapsed into one
+    // row whose title/activity carry crossed profiles — the visible seed of
+    // the cross-profile transcript/route mixups.
+    const previous = [session({ id: 'twin', last_active: 50, profile: 'testbot', title: 'Testbot work' })]
+
+    const incoming = [
+      session({ id: 'twin', last_active: 10, profile: 'quietbot' }),
+      session({ id: 'twin', last_active: 50, profile: 'testbot', title: 'Testbot work' })
+    ]
+
+    const merged = mergeSessionPage(previous, incoming, [])
+
+    // Both twins survive as distinct rows…
+    expect(merged.map(s => `${s.profile}:${s.id}`).sort()).toEqual(['quietbot:twin', 'testbot:twin'])
+    // …and testbot's title/activity is NOT stitched onto quietbot's row.
+    const quiet = merged.find(s => s.profile === 'quietbot')
+    expect(quiet?.title ?? null).toBeNull()
+    expect(quiet?.last_active).toBe(10)
+  })
+
+  it('a kept twin in another profile survives the incoming page dedupe (#92454)', () => {
+    // The incoming page carries only ONE profile's copy; the other profile's
+    // twin was in the previous list and pinned via keep. Bare-id dedupe
+    // treated the ids as equal and dropped the kept twin.
+    const previous = [session({ id: 'twin', profile: 'quietbot' })]
+    const incoming = [session({ id: 'twin', message_count: 2, profile: 'testbot' })]
+
+    const merged = mergeSessionPage(previous, incoming, ['twin'])
+
+    expect(merged.map(s => `${s.profile}:${s.id}`).sort()).toEqual(['quietbot:twin', 'testbot:twin'])
+  })
+
+  it('returns the server page untouched when there is nothing to keep', () => {
+    const previous = [session({ id: 'a' }), session({ id: 'b' })]
+    const incoming = [session({ id: 'a' })]
+
+    // Content, not identity: the title-carry map rebuilds the array even when
+    // nothing is carried, and `incoming` is a fresh server page every fetch.
+    expect(mergeSessionPage(previous, incoming, [])).toEqual(incoming)
+  })
+
+  it('keeps a still-working session the server omitted', () => {
+    // Repro of the disappearing-sessions bug: A finished and is returned by the
+    // server, but B and C are mid-first-response (message_count 0 in the DB) so
+    // listSessions(min_messages=1) skips them. They must survive the refresh.
+    const previous = [session({ id: 'c' }), session({ id: 'b' }), session({ id: 'a' })]
+    const incoming = [session({ id: 'a', message_count: 2 })]
+
+    const merged = mergeSessionPage(previous, incoming, ['b', 'c'])
+
+    expect(merged.map(s => s.id)).toEqual(['c', 'b', 'a'])
+    // The finished session comes from the fresh server payload, not the stale
+    // optimistic copy.
+    expect(merged.find(s => s.id === 'a')?.message_count).toBe(2)
+  })
+
+  it('does not duplicate a working session the server already returned', () => {
+    const previous = [session({ id: 'b' }), session({ id: 'a' })]
+    const incoming = [session({ id: 'b', message_count: 4 }), session({ id: 'a' })]
+
+    const merged = mergeSessionPage(previous, incoming, ['b'])
+
+    expect(merged.map(s => s.id)).toEqual(['b', 'a'])
+    expect(merged.find(s => s.id === 'b')?.message_count).toBe(4)
+  })
+
+  it('never resurrects a session the server dropped that is not in the keep set', () => {
+    // A deleted/archived session is removed from `previous` optimistically and
+    // is not in the keep set, so it must stay gone after a refresh.
+    const previous = [session({ id: 'b' }), session({ id: 'gone' })]
+    const incoming = [session({ id: 'b' })]
+
+    expect(mergeSessionPage(previous, incoming, ['b']).map(s => s.id)).toEqual(['b'])
+  })
+
+  it('never resurrects a HIDDEN session even when the keep set names it (#113273)', () => {
+    // Bot Mode canonical chats are born hidden and are live almost constantly
+    // (routines, bot-to-bot turns), so $workingSessionIds nearly always holds
+    // them — and an open Bot Chat tab pins the id via the tile keep too. The
+    // server page never lists hidden rows; the merge must not let the
+    // keep-list re-insert what the backend excludes by design, or "Bot Chat"
+    // rows become permanent residents of the Sessions sidebar.
+    const previous = [session({ hidden: true, id: 'bot-chat', title: 'Bot Chat' }), session({ id: 'mine' })]
+    const incoming = [session({ id: 'mine', message_count: 3 })]
+
+    expect(mergeSessionPage(previous, incoming, ['bot-chat']).map(s => s.id)).toEqual(['mine'])
+  })
+
+  it('keeps a pinned session that has aged off the recent page', () => {
+    // Repro of "loses pins until you refresh": a pinned chat falls off the
+    // most-recent page, so the server stops returning it. A hard replace would
+    // evict it and the Pinned section would go empty. The keep set (which
+    // carries pinned ids) must hold it in memory.
+    const previous = [session({ id: 'recent' }), session({ id: 'pinned' })]
+    const incoming = [session({ id: 'recent' })]
+
+    const merged = mergeSessionPage(previous, incoming, ['pinned'])
+
+    expect(merged.map(s => s.id)).toEqual(['pinned', 'recent'])
+  })
+
+  it('keeps a pinned session matched by its lineage root after compression', () => {
+    // The pin is stored on the lineage-root id, but the loaded row surfaces
+    // under its live compression tip. Matching on _lineage_root_id keeps it.
+    const previous = [session({ id: 'tip', _lineage_root_id: 'root' })] as SessionInfo[]
+    const incoming = [session({ id: 'other' })] as SessionInfo[]
+
+    const merged = mergeSessionPage(previous, incoming, ['root'])
+
+    expect(merged.map(s => s.id)).toEqual(['tip', 'other'])
+  })
+
+  it('evicts an old compression tip when the incoming page has the new tip from the same lineage', () => {
+    // Repro of #43483: after auto-compression rotates the tip (#4 → #5),
+    // the sidebar showed both the old tip and the new tip as separate rows.
+    // The old tip must be evicted because its lineage key matches the incoming
+    // new tip's lineage key.
+    const previous = [session({ id: 'tip-4', _lineage_root_id: 'root' }), session({ id: 'other' })] as SessionInfo[]
+
+    const incoming = [session({ id: 'tip-5', _lineage_root_id: 'root' })] as SessionInfo[]
+
+    // 'tip-4' is in the keep set (e.g. it was the active/working session),
+    // but should still be evicted because the incoming page carries the same
+    // lineage under a new tip id.
+    const merged = mergeSessionPage(previous, incoming, ['tip-4'])
+
+    expect(merged.map(s => s.id)).toEqual(['tip-5'])
+    // The new tip comes from the server payload.
+    expect(merged.find(s => s.id === 'tip-5')?._lineage_root_id).toBe('root')
+  })
+
+  it('preserves an unrelated pinned session even when lineage dedup is active', () => {
+    // Regression guard: lineage dedup must not accidentally evict sessions
+    // from a different lineage that happen to be in the keep set.
+    const previous = [
+      session({ id: 'a-old', _lineage_root_id: 'lineage-a' }),
+      session({ id: 'b', _lineage_root_id: 'lineage-b' })
+    ] as SessionInfo[]
+
+    const incoming = [session({ id: 'a-new', _lineage_root_id: 'lineage-a' })] as SessionInfo[]
+
+    const merged = mergeSessionPage(previous, incoming, ['b'])
+
+    expect(merged.map(s => s.id)).toEqual(['b', 'a-new'])
+  })
+
+  it('never regresses last_active behind an optimistic user-send bump', () => {
+    const previous = [session({ id: 'old', last_active: 9_000 })]
+    const incoming = [session({ id: 'old', last_active: 100, message_count: 4 })]
+
+    const merged = mergeSessionPage(previous, incoming, [])
+
+    expect(merged[0]?.last_active).toBe(9_000)
+    expect(merged[0]?.message_count).toBe(4)
+  })
+
+  it('carries an optimistic last_active across a compression tip rotation', () => {
+    const previous = [session({ id: 'tip-4', _lineage_root_id: 'root', last_active: 9_000 })] as SessionInfo[]
+    const incoming = [session({ id: 'tip-5', _lineage_root_id: 'root', last_active: 50 })] as SessionInfo[]
+
+    const merged = mergeSessionPage(previous, incoming, ['tip-4'])
+
+    expect(merged.map(s => s.id)).toEqual(['tip-5'])
+    expect(merged[0]?.last_active).toBe(9_000)
+  })
+
+  it('sorts survivors by last_active so they interleave with incoming instead of forming a stale block', () => {
+    // Repro of #47203: two survivors (B and C) have different last_active
+    // timestamps. B settled more recently than C. Without sorting, survivors
+    // are prepended in their old order from `previous`, which may be stale.
+    // With sorting, B (more recent) should appear before C.
+    const previous = [
+      session({ id: 'c', last_active: 100 }),
+      session({ id: 'b', last_active: 200 }),
+      session({ id: 'a', last_active: 300 })
+    ]
+
+    // Server returns A (fresh page, order=recent), omits B and C (min_messages=1)
+    const incoming = [session({ id: 'a', last_active: 300, message_count: 2 })]
+
+    const merged = mergeSessionPage(previous, incoming, ['b', 'c'])
+
+    // B (last_active 200) should come before C (last_active 100)
+    expect(merged.map(s => s.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('places a very recent survivor in correct position among incoming sessions', () => {
+    // A survivor with last_active between two incoming sessions should be
+    // interleaved, not prepended as a block.
+    const previous = [session({ id: 'survivor', last_active: 150 }), session({ id: 'old', last_active: 50 })]
+
+    const incoming = [session({ id: 'newest', last_active: 200 }), session({ id: 'older', last_active: 100 })]
+
+    const merged = mergeSessionPage(previous, incoming, ['survivor'])
+
+    // survivor (150) should be between newest (200) and older (100)
+    expect(merged.map(s => s.id)).toEqual(['newest', 'survivor', 'older'])
+  })
+
+  it('keeps a survivor whose optimistic last_active outranks the whole page on top', () => {
+    // touchSessionActivity stamps last_active on user-send before the server
+    // sees the message; that bump must place the survivor by its FRESH time.
+    const previous = [session({ id: 'typing', last_active: 900 }), session({ id: 'settled', last_active: 100 })]
+
+    const incoming = [session({ id: 'settled', last_active: 100, message_count: 3 })]
+
+    const merged = mergeSessionPage(previous, incoming, ['typing'])
+
+    expect(merged.map(s => s.id)).toEqual(['typing', 'settled'])
+  })
+
+  it('falls back to started_at for survivors that have no last_active yet', () => {
+    // A brand-new session (no persisted message) carries last_active 0; the
+    // backend's effective-recency key falls back to started_at, so we must
+    // too, or a fresh draft sinks to the very bottom of the sidebar.
+    const previous = [
+      session({ id: 'draft', last_active: 0, started_at: 500 }),
+      session({ id: 'other', last_active: 400 })
+    ]
+
+    const incoming = [session({ id: 'other', last_active: 400, message_count: 2 })]
+
+    const merged = mergeSessionPage(previous, incoming, ['draft'])
+
+    expect(merged.map(s => s.id)).toEqual(['draft', 'other'])
+  })
+
+  it('interleaves against the title-preserving merged rows, not the raw incoming page', () => {
+    // The optimistic last_active carried onto an incoming row must count for
+    // its position in the interleave: previous knows 'bumped' was touched at
+    // 300 even though the server page still reports 100.
+    const previous = [session({ id: 'survivor', last_active: 200 }), session({ id: 'bumped', last_active: 300 })]
+
+    const incoming = [session({ id: 'bumped', last_active: 100, message_count: 2 })]
+
+    const merged = mergeSessionPage(previous, incoming, ['survivor'])
+
+    expect(merged.map(s => s.id)).toEqual(['bumped', 'survivor'])
+    expect(merged[0]?.last_active).toBe(300)
+  })
+})
+
+describe('carryForwardFailedProfileSessions', () => {
+  it('is a no-op when the backend reported no profile errors', () => {
+    const previous = [session({ id: 'yesterday', profile: 'default' })]
+    const incoming = [session({ id: 'today', profile: 'default' })]
+
+    expect(carryForwardFailedProfileSessions(previous, incoming, undefined)).toBe(incoming)
+    expect(carryForwardFailedProfileSessions(previous, incoming, [])).toBe(incoming)
+  })
+
+  it('re-attaches idle rows for a profile whose slice failed (empty 200 + errors)', () => {
+    // Repro: current session is running, sidebar scan hits disk I/O, backend
+    // returns recents=[] with errors=[{profile:default}]. mergeSessionPage then
+    // keeps only working/pinned/selected and Yesterday/This-week vanish.
+    const previous = [
+      session({ id: 'running', last_active: 300, profile: 'default', title: 'Now' }),
+      session({ id: 'yesterday', last_active: 200, profile: 'default', title: 'Yesterday' }),
+      session({ id: 'week', last_active: 100, profile: 'default', title: 'This week' })
+    ]
+
+    const carried = carryForwardFailedProfileSessions(previous, [], [{ profile: 'default', error: 'disk I/O error' }])
+
+    expect(carried.map(s => s.id)).toEqual(['running', 'yesterday', 'week'])
+    expect(carried[1]).toBe(previous[1])
+  })
+
+  it('does not resurrect a successful profile’s omitted rows, and does not duplicate', () => {
+    const previous = [
+      session({ id: 'work-old', profile: 'work' }),
+      session({ id: 'home-idle', profile: 'default' }),
+      session({ id: 'home-fresh', profile: 'default' })
+    ]
+
+    const incoming = [session({ id: 'home-fresh', message_count: 4, profile: 'default' })]
+
+    const carried = carryForwardFailedProfileSessions(previous, incoming, [{ profile: 'work' }])
+
+    expect(carried.map(s => `${s.profile}:${s.id}`)).toEqual(['default:home-fresh', 'work:work-old'])
+  })
+
+  it('re-ranks carried rows by recency instead of parking them at the tail', () => {
+    const previous = [
+      session({ id: 'idle-newer', last_active: 500, profile: 'work' }),
+      session({ id: 'idle-older', last_active: 50, profile: 'work' })
+    ]
+
+    const incoming = [session({ id: 'home', last_active: 100, profile: 'default' })]
+
+    expect(carryForwardFailedProfileSessions(previous, incoming, [{ profile: 'work' }]).map(s => s.id)).toEqual([
+      'idle-newer',
+      'home',
+      'idle-older'
+    ])
+  })
+
+  it('treats a missing profile tag on the error as default', () => {
+    const previous = [session({ id: 'idle', profile: 'default' })]
+
+    expect(carryForwardFailedProfileSessions(previous, [], [{ error: 'disk I/O error' }]).map(s => s.id)).toEqual([
+      'idle'
+    ])
+  })
+
+  it('does not carry a hidden row forward through a failed profile scan (#113273)', () => {
+    // The failed-slice carry is the back door: a canonical Bot Chat parked in
+    // the list by an owner-resolution upsert would ride the "keep what the
+    // failed scan couldn't confirm" rule right back into the sidebar.
+    const previous = [
+      session({ hidden: true, id: 'bot-chat', profile: 'work', title: 'Bot Chat' }),
+      session({ id: 'idle', profile: 'work' })
+    ]
+
+    const carried = carryForwardFailedProfileSessions(previous, [], [{ profile: 'work', error: 'disk I/O error' }])
+
+    expect(carried.map(s => s.id)).toEqual(['idle'])
+  })
+})
+
+describe('keepFailedProfileMeta', () => {
+  it('is a no-op when the backend reported no profile errors', () => {
+    const incoming = { default: { cost_usd: 1, tokens: 2 } }
+
+    expect(keepFailedProfileMeta({ default: { cost_usd: 9, tokens: 9 } }, incoming, [])).toBe(incoming)
+  })
+
+  it('restores previous usage/truncated flags for profiles whose slice failed', () => {
+    const previous = { default: { cost_usd: 4, tokens: 40 }, work: { cost_usd: 1, tokens: 10 } }
+    const incoming = { work: { cost_usd: 2, tokens: 20 } }
+
+    expect(keepFailedProfileMeta(previous, incoming, [{ profile: 'default' }])).toEqual({
+      default: { cost_usd: 4, tokens: 40 },
+      work: { cost_usd: 2, tokens: 20 }
     })
+  })
+})
 
-    await openSession('stored-9')
-
-    expect(getInflightTurn('runtime-1')).toMatchObject({ origin: 'remote', prompt: 'the running prompt' })
-    expect($busy.get()).toBe(true)
+describe('touchSessionActivity', () => {
+  afterEach(() => {
+    setSessions([])
   })
 
-  // A cold resume after a crash reports `running: false, status: "idle"` while
-  // its kickoff thread waits on a deferred agent build; the interrupted prompt
-  // comes back on `inflight`, filled from the crash marker.
-  it('openSession adopts the crash continuation the gateway scheduled', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({
-      messages: [],
-      session_id: 'runtime-1',
-      running: false,
-      auto_continue: { attempt: 1, interrupted_at: 1_000 },
-      inflight: { user: 'fix the flaky test', assistant: '', streaming: true }
-    })
+  it('bumps last_active for a live id and a lineage-root pin target', () => {
+    setSessions([
+      session({ id: 'tip', _lineage_root_id: 'root', last_active: 10, preview: 'old' }),
+      session({ id: 'other', last_active: 20 })
+    ] as SessionInfo[])
 
-    await openSession('stored-9')
+    touchSessionActivity('root', { at: 99, preview: 'just sent' })
 
-    expect(getInflightTurn('runtime-1')).toMatchObject({
-      origin: 'auto-continue',
-      prompt: 'fix the flaky test',
-      attempts: 1
-    })
-    // Busy, so the recovered crash-journal tail stays pending instead of being
-    // sealed as a finished reply seconds before `message.start` lands.
-    expect($busy.get()).toBe(true)
+    const rows = $sessions.get()
+    const tip = rows.find(s => s.id === 'tip')
+    const other = rows.find(s => s.id === 'other')
+
+    expect(tip?.last_active).toBe(99)
+    expect(tip?.preview).toBe('just sent')
+    expect(other?.last_active).toBe(20)
   })
 
-  it('openSession leaves an idle session with no turn record', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1', running: false })
+  it('is monotonic — a stale stamp does not pull the row down', () => {
+    setSessions([session({ id: 'a', last_active: 50 })])
 
-    await openSession('stored-9')
+    touchSessionActivity('a', { at: 10 })
 
-    expect(getInflightTurn('runtime-1')).toBeNull()
-    expect($busy.get()).toBe(false)
+    expect($sessions.get()[0]?.last_active).toBe(50)
   })
 
-  it('openSession restores the chat cwd from the stored row', async () => {
-    $sessions.set([rowWithCwd('stored-9', '/home/me/project-a')])
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
-    await openSession('stored-9')
-    expect($currentCwd.get()).toBe('/home/me/project-a')
+  it('preserves array identity when nothing matched', () => {
+    const prev = [session({ id: 'a', last_active: 1 })]
+    setSessions(prev)
+
+    touchSessionActivity('missing', { at: 99 })
+
+    expect($sessions.get()).toBe(prev)
+  })
+})
+
+describe('workspaceCwdForNewSession', () => {
+  afterEach(() => {
+    applyConfiguredDefaultProjectDir(null)
+    $connection.set(null)
+    $currentCwd.set('')
+    $activeSessionId.set(null)
+    window.localStorage.removeItem('hermes.desktop.workspace-cwd')
+    window.localStorage.removeItem('hermes.desktop.workspace-cwd.remote.http%3A%2F%2Fbackend-a.default')
+    window.localStorage.removeItem('hermes.desktop.workspace-cwd.remote.http%3A%2F%2Fbackend-b.default')
+    delete (window as { hermesDesktop?: unknown }).hermesDesktop
   })
 
-  it('openSession prefers the resume response runtime cwd over the stored row', async () => {
-    $sessions.set([rowWithCwd('stored-9', '/home/me/stale')])
-    vi.mocked(requestGateway).mockResolvedValue({
-      info: { cwd: '/home/me/project-b' },
-      messages: [],
-      session_id: 'runtime-1'
-    })
-    await openSession('stored-9')
-    expect($currentCwd.get()).toBe('/home/me/project-b')
+  it('does not publish a delayed configured default after ownership is lost', async () => {
+    const settingsResult = deferred<{
+      defaultLabel: string
+      dir: string
+      resolvedCwd: string
+    }>()
+
+    const sanitizeWorkspaceCwd = vi.fn(async (cwd: string) => ({ cwd }))
+
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
+      sanitizeWorkspaceCwd,
+      settings: { getDefaultProjectDir: vi.fn(() => settingsResult.promise) }
+    }
+    applyConfiguredDefaultProjectDir('/newer/default')
+    let ownsSwitch = true
+
+    const seeding = ensureDefaultWorkspaceCwd(() => ownsSwitch)
+    ownsSwitch = false
+    settingsResult.resolve({ defaultLabel: '/stale', dir: '/stale/default', resolvedCwd: '/stale/default' })
+    await seeding
+
+    expect(getConfiguredDefaultProjectDir()).toBe('/newer/default')
+    expect($currentCwd.get()).toBe('')
+    expect(sanitizeWorkspaceCwd).not.toHaveBeenCalled()
   })
 
-  it('openSession keeps the stored cwd when the resume response omits one', async () => {
-    $sessions.set([rowWithCwd('stored-9', '/home/me/project-a')])
-    vi.mocked(requestGateway).mockResolvedValue({ info: {}, messages: [], session_id: 'runtime-1' })
-    await openSession('stored-9')
-    expect($currentCwd.get()).toBe('/home/me/project-a')
-  })
+  it('does not publish a delayed sanitized cwd after ownership is lost', async () => {
+    const sanitized = deferred<{ cwd: string }>()
 
-  it('openSession detaches the cwd for a chat that has none', async () => {
-    seedActiveSession('runtime-prev', { cwd: '/home/me/previous-chat' })
-    $sessions.set([rowWithCwd('stored-9', null)])
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
-    await openSession('stored-9')
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
+      sanitizeWorkspaceCwd: vi.fn(() => sanitized.promise),
+      settings: {
+        getDefaultProjectDir: vi.fn(async () => ({
+          defaultLabel: '/configured',
+          dir: '/configured',
+          resolvedCwd: '/configured'
+        }))
+      }
+    }
+    let ownsSwitch = true
+
+    const seeding = ensureDefaultWorkspaceCwd(() => ownsSwitch)
+    await vi.waitFor(() => expect(getConfiguredDefaultProjectDir()).toBe('/configured'))
+    ownsSwitch = false
+    sanitized.resolve({ cwd: '/stale/sanitized' })
+    await seeding
+
     expect($currentCwd.get()).toBe('')
   })
 
-  it('openSession still restores the cwd when resume fails', async () => {
-    $sessions.set([rowWithCwd('stored-9', '/home/me/project-a')])
-    vi.mocked(requestGateway).mockRejectedValue(new Error('offline'))
-    await openSession('stored-9')
-    expect($currentCwd.get()).toBe('/home/me/project-a')
-  })
-})
-
-/**
- * MJXHRM-385. A hydrate seeds `hydrating:<stored>` with `busy: true`, and the
- * generation counter is what cancels one open when another supersedes it. The
- * two together used to leave the abandoned placeholder busy FOREVER: nothing
- * else ever writes that slice, the LRU refuses to evict a busy placeholder, and
- * every surface keyed by the stored id — the sidebar row's status dot and its
- * running arc above all — then reads a turn that was never running.
- */
-describe('openSession — an abandoned hydrate', () => {
-  /** A resume that hangs until the returned `release` is called. */
-  const pendingResume = (sessionId: string) => {
-    let release = () => {}
-
-    vi.mocked(getSessionMessages).mockResolvedValue({ messages: [], session_id: sessionId } as never)
-    vi.mocked(requestGateway).mockImplementation(
-      () =>
-        new Promise(resolve => {
-          release = () => resolve({ messages: [], session_id: `runtime-${sessionId}` })
-        }) as never
-    )
-
-    return () => release()
-  }
-
-  // `onResumeSession` calls `openSession` on EVERY row click with no
-  // already-active guard, so this is one row clicked twice during its own load.
-  it('is not cancelled by a second open of the same session', async () => {
-    const release = pendingResume('stored-9')
-
-    const opening = openSession('stored-9')
-    // The same row again, while the first open is still in flight.
-    openSession('stored-9')
-    release()
-    await opening
-
-    expect($sessionStates.get()[hydratingKey('stored-9')]).toBeUndefined()
-    expect($sessionStates.get()['runtime-stored-9']).toMatchObject({
-      busy: false,
-      runtimeSessionId: 'runtime-stored-9'
-    })
-    expect($workingSessionIds.get().has('stored-9')).toBe(false)
-  })
-
-  // Superseded for real: a DIFFERENT session was opened mid-load. The first
-  // one's placeholder has no runtime binding and no turn — it must not be left
-  // claiming one.
-  it('leaves no busy placeholder behind when another session supersedes it', async () => {
-    const release = pendingResume('stored-9')
-
-    const opening = openSession('stored-9')
-    // A different row, before the first resume lands.
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-other' })
-    void openSession('stored-other')
-    release()
-    await opening
-
-    expect($sessionStates.get()[hydratingKey('stored-9')]).toBeUndefined()
-    expect($workingSessionIds.get().has('stored-9')).toBe(false)
-  })
-})
-
-/**
- * `ModelPill` spins while the model is blank, and a live session reads
- * its OWN slice rather than the sticky global — so a hydrate that seeds no model
- * leaves the composer's pill loading until a `session.info` happens to land, and
- * forever when none does. The list row already knows the answer: it is what the
- * sidebar prints under the title. `session-tile-delegate.ts` seeded it all along,
- * which is what made the primary path's omission a bug rather than a design.
- */
-describe('openSession — the model the pill paints', () => {
-  const listRow = (id: string, model: null | string) =>
-    ({ cwd: '/work', id, model, title: 'row' }) as unknown as SessionInfo
-
-  it("seeds the placeholder slice with the row's model", async () => {
-    $sessions.set([listRow('stored-m', 'anthropic/claude-opus-4')])
-    vi.mocked(getSessionMessages).mockResolvedValue({ messages: [], session_id: 'stored-m' } as never)
-
-    let release = () => {}
-
-    vi.mocked(requestGateway).mockImplementation(
-      () =>
-        new Promise(resolve => {
-          release = () => resolve({ messages: [], session_id: 'runtime-m' })
-        }) as never
-    )
-
-    const opening = openSession('stored-m')
-
-    // WHILE the resume is still in flight — the whole point is that the pill has
-    // something to paint before the gateway answers.
-    expect($sessionStates.get()[hydratingKey('stored-m')]).toMatchObject({
-      model: 'anthropic/claude-opus-4'
-    })
-
-    release()
-    await opening
-  })
-
-  it('settles to blank for a row with no model rather than throwing one in', async () => {
-    $sessions.set([listRow('stored-none', null)])
-    vi.mocked(getSessionMessages).mockResolvedValue({ messages: [], session_id: 'stored-none' } as never)
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-none' })
-
-    await openSession('stored-none')
-
-    // Blank is the honest state here: the reducer's adopt is truthiness-gated,
-    // so a real `session.info` still fills it.
-    expect($sessionStates.get()['runtime-none']?.model ?? '').toBe('')
-  })
-})
-
-/**
- * MJXHRM-371. The warm short-circuit is what makes switching mid-turn lossless
- * (MJX-132) — and it is also what leaves the gateway TRANSPORT bound to whatever
- * webview last resumed the session. `forceResume` separates the two: a caller
- * that needs the stream back can ask for a resume without asking for a reload.
- */
-describe('openSession — forceResume', () => {
-  const warmSession = () => {
-    seedActiveSession('runtime-warm', { storedSessionId: 'stored-warm', messages: [] })
-    // Leave the pointer elsewhere so the warm promotion has work to do.
-    $activeStoredSessionId.set(null)
-  }
-
-  it('issues NO resume on a warm slice by default', async () => {
-    warmSession()
-
-    await openSession('stored-warm')
-
-    expect(requestGateway).not.toHaveBeenCalled()
-    expect($activeStoredSessionId.get()).toBe('stored-warm')
-  })
-
-  it('issues exactly one resume on a warm slice when asked', async () => {
-    warmSession()
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-warm' })
-
-    await openSession('stored-warm', { forceResume: true })
-
-    expect(requestGateway).toHaveBeenCalledTimes(1)
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-warm', cols: 96 })
-    expect($activeStoredSessionId.get()).toBe('stored-warm')
-  })
-
-  it('does not refetch the transcript or overwrite the warm one', async () => {
-    seedActiveSession('runtime-warm', {
-      storedSessionId: 'stored-warm',
-      messages: [{ id: 'kept', role: 'user', parts: [{ type: 'text', text: 'still here' }] }]
-    })
-    // A display-REDUCED resume payload — writing it would be the MJX-132 loss.
-    vi.mocked(requestGateway).mockResolvedValue({
-      messages: [{ role: 'assistant', content: 'reduced' }],
-      session_id: 'runtime-warm'
-    })
-
-    await openSession('stored-warm', { forceResume: true })
-
-    expect(getSessionMessages).not.toHaveBeenCalled()
-    expect($messages.get().map(m => m.id)).toEqual(['kept'])
-  })
-
-  it('re-keys the slice when the backend hands back a new runtime id', async () => {
-    warmSession()
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-compacted' })
-
-    await openSession('stored-warm', { forceResume: true })
-
-    expect($sessionId.get()).toBe('runtime-compacted')
-    expect($activeStoredSessionId.get()).toBe('stored-warm')
-  })
-
-  it('leaves the chat readable when the rebind fails', async () => {
-    seedActiveSession('runtime-warm', {
-      storedSessionId: 'stored-warm',
-      messages: [{ id: 'kept', role: 'user', parts: [{ type: 'text', text: 'still here' }] }]
-    })
-    vi.mocked(requestGateway).mockRejectedValue(new Error('offline'))
-
-    await openSession('stored-warm', { forceResume: true })
-
-    expect($messages.get().map(m => m.id)).toEqual(['kept'])
-    expect($activeStoredSessionId.get()).toBe('stored-warm')
-  })
-})
-
-// The BACKGROUND half of the same seam (MJXHRM-371): a pop-out window closed and
-// its session has to come back onto this socket — while the user goes on looking
-// at whatever they were looking at.
-describe('reclaimSessionTransport', () => {
-  it('rebinds the stream without moving what the window is showing', async () => {
-    // Looking at one chat; a pop-out was holding a different one.
-    seedActiveSession('runtime-here', { storedSessionId: 'stored-here' })
-    $activeStoredSessionId.set('stored-here')
-    seedSession('runtime-popped', { storedSessionId: 'stored-popped' })
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-popped' })
-
-    await reclaimSessionTransport('stored-popped')
-
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-popped', cols: 96 })
-    // The pane never moves. `openSession(…, { forceResume: true })` would have
-    // dragged it onto a conversation the user closed a window on.
-    expect($activeStoredSessionId.get()).toBe('stored-here')
-    expect($sessionId.get()).toBe('runtime-here')
-  })
-
-  it('re-keys the reclaimed slice without stealing the active key', async () => {
-    seedActiveSession('runtime-here', { storedSessionId: 'stored-here' })
-    $activeStoredSessionId.set('stored-here')
-    seedSession('runtime-popped', { storedSessionId: 'stored-popped' })
-    // Compacted while the other window held it.
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-compacted' })
-
-    await reclaimSessionTransport('stored-popped')
-
-    expect($sessionStates.get()['runtime-compacted']?.storedSessionId).toBe('stored-popped')
-    expect($sessionStates.get()['runtime-popped']).toBeUndefined()
-    // NOT the reclaimed session's new id — that is the bug this guards.
-    expect($sessionId.get()).toBe('runtime-here')
-  })
-
-  it('does nothing for a session with no live slice here', async () => {
-    // Nothing on screen is deaf, and the next open hydrates it cold — which
-    // resumes and binds properly on its own.
-    await reclaimSessionTransport('stored-never-seen')
-
-    expect(requestGateway).not.toHaveBeenCalled()
-  })
-
-  it('stands aside while a hydrate is already in flight', async () => {
-    seedSession(hydratingKey('stored-popped'), { storedSessionId: 'stored-popped' })
-
-    await reclaimSessionTransport('stored-popped')
-
-    // That hydrate issues its own resume; a second one would race its re-key and
-    // strand the slice under a dead placeholder.
-    expect(requestGateway).not.toHaveBeenCalled()
-  })
-
-  it('is not cancelled by an unrelated session being opened', async () => {
-    seedSession('runtime-popped', { storedSessionId: 'stored-popped' })
-    // Two profiles, so the owner has to be PROBED — the await that puts a real
-    // gap between entering the reclaim and issuing its resume. Without one the
-    // open cannot interleave early enough to test anything, and this passed with
-    // the generation guard still in place.
-    $profiles.set([profile('default'), profile('work')])
-
-    let resolveProbe = () => {}
-    vi.mocked(getSession).mockImplementation(
-      () =>
-        new Promise(resolve => {
-          resolveProbe = () => resolve({ id: 'stored-popped', profile: 'default' } as SessionInfo)
-        })
-    )
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-popped' })
-
-    const reclaiming = reclaimSessionTransport('stored-popped')
-
-    // The user switches chats mid-reclaim. The generation counter answers "is
-    // this still the chat being switched to", which a background rebind is not
-    // asking — bumping it must not silently skip the resume.
-    seedSession('runtime-other', { storedSessionId: 'stored-other' })
-    openSession('stored-other')
-    resolveProbe()
-    await reclaiming
-
-    // NO `profile`: the owner ('default') is the ambient route here, and a route
-    // that matches the ambient one dispatches unscoped so the reauth-aware
-    // reconnect path in the ambient dispatcher still applies
-    // (`sessionRpcNeedsProfileRoute`).
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', {
-      session_id: 'stored-popped',
-      cols: 96
-    })
-  })
-
-  it('drops a re-key whose slice vanished while the resume was in flight', async () => {
-    seedSession('runtime-popped', { storedSessionId: 'stored-popped' })
-
-    let release = () => {}
-    vi.mocked(requestGateway).mockImplementation(
-      () =>
-        new Promise(resolve => {
-          release = () => resolve({ messages: [], session_id: 'runtime-compacted' })
-        }) as never
-    )
-
-    const reclaiming = reclaimSessionTransport('stored-popped')
-
-    // Deleted, evicted, or re-keyed by a hydrate that raced us. `rekeySession`
-    // would move an EMPTY state onto the new runtime id and leave a ghost.
-    $sessionStates.set({})
-    release()
-    await reclaiming
-
-    expect($sessionStates.get()['runtime-compacted']).toBeUndefined()
-  })
-})
-
-// A session-scoped call is served by ONE profile's backend. Without the owner it
-// lands on whichever gateway is live, which resumes another profile's chat
-// against the wrong database.
-describe('owning profile', () => {
-  it('routes resume + transcript through the row own profile stamp', async () => {
-    $sessions.set([rowOnProfile('stored-9', 'work')])
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
-    vi.mocked(getSessionMessages).mockResolvedValue({ messages: [], session_id: 'stored-9' } as never)
-
-    await openSession('stored-9')
-
-    expect(getSessionMessages).toHaveBeenCalledWith('stored-9', 'work')
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', {
-      session_id: 'stored-9',
-      cols: 96,
-      profile: 'work'
-    })
-  })
-
-  it('scopes delete + archive to the owning profile', async () => {
-    $sessions.set([rowOnProfile('a', 'work')])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-    await deleteSessionLocal('a')
-    expect(deleteSession).toHaveBeenCalledWith('a', 'work')
-
-    $sessions.set([rowOnProfile('b', 'work')])
-    await archiveSessionLocal('b')
-    expect(vi.mocked(getSession).mock.calls.length).toBe(0)
-  })
-
-  it('never probes when there is only one profile to be on', async () => {
-    // A single-profile install has no wrong answer to route around, so the
-    // resume must stay synchronous rather than pay a by-id lookup first.
-    await expect(resolveSessionProfile('unknown')).resolves.toBeUndefined()
-    expect(getSession).not.toHaveBeenCalled()
-  })
-
-  it('asks the ACTIVE profile BY NAME first, not the launch database', async () => {
-    // Unscoped, the first probe read the backend's launch database — and the
-    // active profile is excluded from the rest of the list, so the profile most
-    // likely to own the id was never actually asked.
-    $profiles.set([profile('default'), profile('work')])
-    vi.mocked(getSession)
-      .mockReset()
-      .mockResolvedValueOnce({ id: 'stored-e', profile: 'default' } as SessionInfo)
-
-    await expect(resolveSessionProfile('stored-e')).resolves.toBe('default')
-
-    expect(vi.mocked(getSession).mock.calls[0]).toEqual(['stored-e', 'default'])
-  })
-
-  it('probes other profiles for a session outside the loaded rows', async () => {
-    $profiles.set([profile('default'), profile('work')])
-    vi.mocked(getSession)
-      .mockRejectedValueOnce(new Error('404'))
-      .mockResolvedValueOnce({ id: 'stored-9', profile: 'work' } as SessionInfo)
-
-    await expect(resolveSessionProfile('stored-9')).resolves.toBe('work')
-    // Resolved once, remembered forever — a session's owner never changes.
-    expect(knownSessionProfile('stored-9')).toBe('work')
-  })
-})
-
-// The positive deletion signal behind the ghost-pin sweep (MJXHRM-414). Absence
-// from a list proves nothing — an archived session is absent too — so the only
-// safe answer comes from asking about the id directly.
-describe('sessionExistsOnBackends', () => {
-  const notFound = () => new ApiError('GET /api/sessions/x → HTTP 404: nope', 404, 'nope')
-
-  it('reports a row the backend still serves as present', async () => {
-    vi.mocked(getSession).mockResolvedValue({ id: 'alive' } as SessionInfo)
-
-    await expect(sessionExistsOnBackends('alive')).resolves.toBe('present')
-  })
-
-  it('reports gone only when the backend answers 404', async () => {
-    vi.mocked(getSession).mockRejectedValue(notFound())
-
-    await expect(sessionExistsOnBackends('deleted')).resolves.toBe('gone')
-  })
-
-  // The distinction the whole sweep rests on: a gateway that never answered has
-  // not said the session is gone, and a caller acting on it would destroy user
-  // state over a dropped packet.
-  it('reports unknown when the request fails for any other reason', async () => {
-    vi.mocked(getSession).mockRejectedValue(new Error('connection refused'))
-
-    await expect(sessionExistsOnBackends('offline')).resolves.toBe('unknown')
-  })
-
-  it('treats a 500 as no answer, not as a deletion', async () => {
-    vi.mocked(getSession).mockRejectedValue(new ApiError('boom', 500, 'boom'))
-
-    await expect(sessionExistsOnBackends('broken')).resolves.toBe('unknown')
-  })
-
-  // A pin is not profile-scoped while the recents list is, so the session may
-  // simply live on a profile the current scope never loads.
-  it('asks every configured profile before concluding a session is gone', async () => {
-    $profiles.set([profile('default'), profile('work')])
-    vi.mocked(getSession)
-      .mockRejectedValueOnce(notFound())
-      .mockResolvedValueOnce({ id: 'stored-9', profile: 'work' } as SessionInfo)
-
-    await expect(sessionExistsOnBackends('stored-9')).resolves.toBe('present')
-    expect(vi.mocked(getSession).mock.calls.map(call => call[1])).toEqual([undefined, 'work'])
-  })
-
-  it('is gone only when every profile 404s', async () => {
-    $profiles.set([profile('default'), profile('work')])
-    vi.mocked(getSession).mockRejectedValue(notFound())
-
-    await expect(sessionExistsOnBackends('stored-9')).resolves.toBe('gone')
-    expect(getSession).toHaveBeenCalledTimes(2)
-  })
-})
-
-// The backend list is a snapshot that can predate an in-flight delete, so a
-// refresh landing mid-mutation used to put the row straight back.
-describe('delete/archive tombstones', () => {
-  const page = (ids: string[]): PaginatedSessions =>
-    ({ sessions: ids.map(id => row(id, id)), total: ids.length }) as unknown as PaginatedSessions
-
-  it('keeps a deleted row out of a refresh that still lists it', async () => {
-    $sessions.set([row('a', 'A'), row('b', 'B')])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-    await deleteSessionLocal('a')
-
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page(['a', 'b']))
-    await refreshSessions()
-
-    expect($sessions.get().map(s => s.id)).toEqual(['b'])
-    // Still listed by the backend, so the tombstone stays pinned.
-    expect($removedSessionIds.get().has('a')).toBe(true)
-  })
-
-  it('lifts the tombstone once the backend stops listing the id', async () => {
-    $sessions.set([row('a', 'A')])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-    await deleteSessionLocal('a')
-
-    pruneSessionTombstones([])
-
-    expect($removedSessionIds.get().size).toBe(0)
-  })
-
-  it('undoes the tombstone when the delete fails', async () => {
-    $sessions.set([row('a', 'A')])
-    vi.mocked(deleteSession).mockRejectedValue(new Error('nope'))
-    await deleteSessionLocal('a')
-
-    expect($sessions.get().map(s => s.id)).toEqual(['a'])
-    expect($removedSessionIds.get().size).toBe(0)
-  })
-})
-
-/**
- * MJXHRM-423 — a session verb addressed by an alias.
- *
- * Auto-compression rotates a conversation's stored id and universal deliberately
- * leaves the surfaces holding the old one: a tile tab, a mobile bubble and a
- * restored layout pane all keep the id their chat was OPENED with, which after a
- * compaction is the lineage ROOT. Row lookup has always followed that. The
- * VERBS did not, and the backend does not paper over it uniformly — pin,
- * archive and delete flip the whole compression chain, while `set_session_title`
- * and `update_session_cwd` write a single row that the session list then
- * projects the TIP over.
- *
- * The fixture is the shape every one of these tests needs: the row is loaded
- * under its live tip `tip`, and the caller is holding `root`.
- */
-describe('a verb addressed by a pre-rotation id', () => {
-  const compacted = (title = 'Compacted chat') =>
-    ({ _lineage_root_id: 'root', id: 'tip', title }) as unknown as SessionInfo
-
-  // The one with no other symptom. The rename dialog opens on the correct
-  // current title (MJXHRM-386 widened THAT), the user retypes it, the "Renamed"
-  // toast fires — and the name goes onto a hidden ancestor row nothing renders.
-  it('renames the live tip, not the lineage root the tab is holding', async () => {
-    $sessions.set([compacted('Old')])
-    vi.mocked(renameSession).mockResolvedValue(undefined as never)
-
-    await renameSessionLocal('root', 'New')
-
-    expect(renameSession).toHaveBeenCalledWith('tip', 'New', undefined)
-    expect($sessions.get()[0].title).toBe('New')
-  })
-
-  it('still rolls the optimistic rename back when the wire call fails', async () => {
-    $sessions.set([compacted('Old')])
-    vi.mocked(renameSession).mockRejectedValue(new Error('nope'))
-
-    await renameSessionLocal('root', 'New')
-
-    expect($sessions.get()[0].title).toBe('Old')
-  })
-
-  it('removes the row optimistically on delete', async () => {
-    $sessions.set([compacted()])
-    $sessionsTotal.set(1)
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-
-    await deleteSessionLocal('root')
-
-    expect($sessions.get()).toEqual([])
-  })
-
-  it('removes the row optimistically on archive', async () => {
-    $sessions.set([compacted()])
-
-    await archiveSessionLocal('root')
-
-    expect($sessions.get()).toEqual([])
-  })
-
-  // Main is on the live tip; the delete comes from a tile tab on the root. Left
-  // comparing identity, the workspace went on rendering a conversation the
-  // backend had just dropped, and the next submit into it would 404.
-  it('empties main when the session being deleted is the one on screen under another id', async () => {
-    $sessions.set([compacted()])
-    $activeStoredSessionId.set('tip')
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-
-    await deleteSessionLocal('root')
-
-    expect($activeStoredSessionId.get()).toBeNull()
-  })
-
-  it('leaves an unrelated session in main alone', async () => {
-    $sessions.set([compacted(), row('other', 'Other')])
-    $activeStoredSessionId.set('other')
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-
-    await deleteSessionLocal('root')
-
-    expect($activeStoredSessionId.get()).toBe('other')
-  })
-})
-
-/** The question two SURFACES ask of each other — neither holding a row. */
-describe('sameStoredSession', () => {
-  it('sees one conversation behind a lineage root and its live tip', () => {
-    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-
-    expect(sameStoredSession('root', 'tip')).toBe(true)
-    expect(sameStoredSession('tip', 'root')).toBe(true)
-  })
-
-  it('keeps two different conversations apart', () => {
-    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo, row('other', 'Other')])
-
-    expect(sameStoredSession('root', 'other')).toBe(false)
-  })
-
-  it('is identity when no loaded row explains the id, and false for a missing one', () => {
-    expect(sameStoredSession('lonely', 'lonely')).toBe(true)
-    expect(sameStoredSession('lonely', 'stranger')).toBe(false)
-    expect(sameStoredSession(null, 'a')).toBe(false)
-    expect(sameStoredSession('a', null)).toBe(false)
-  })
-})
-
-// The transcript AUTHORITY is the REST endpoint: `session.resume` returns a
-// display-reduced history (tool-only assistant rows dropped, tool results
-// flattened to {name, context} with no ids), so hydrating from it lost the
-// intermediate thinking blocks and collapsed repeated tool calls.
-describe('openSession transcript source', () => {
-  const resumePayload = (extra: Record<string, unknown> = {}) => ({
-    messages: [{ role: 'tool', name: 'terminal', context: 'ls' }],
-    session_id: 'runtime-1',
-    ...extra
-  })
-
-  it('hydrates from the REST transcript, not the resume payload', async () => {
-    vi.mocked(getSessionMessages).mockResolvedValue({
-      messages: [
-        { role: 'user', content: 'do it' },
-        {
-          role: 'assistant',
-          content: '',
-          reasoning: 'think 1',
-          tool_calls: [{ id: 'a', function: { name: 'terminal', arguments: '{}' } }]
-        },
-        { role: 'tool', tool_call_id: 'a', tool_name: 'terminal', content: 'ok' },
-        { role: 'assistant', content: 'Done.' }
-      ],
-      session_id: 'stored-9'
-    } as never)
-    vi.mocked(requestGateway).mockResolvedValue(resumePayload())
-
-    await openSession('stored-9')
-
-    // Second arg = the owning profile; undefined on a single-profile install.
-    expect(getSessionMessages).toHaveBeenCalledWith('stored-9', undefined)
-    const parts = $messages.get().flatMap(m => m.parts)
-    // The reasoning survives only in the REST payload.
-    expect(parts.filter(p => p.type === 'reasoning')).toHaveLength(1)
-    expect(parts.filter(p => p.type === 'tool-call')).toHaveLength(1)
-    expect($sessionId.get()).toBe('runtime-1')
-  })
-
-  it('falls back to the resume payload when REST is unavailable', async () => {
-    vi.mocked(getSessionMessages).mockRejectedValue(new Error('offline'))
-    vi.mocked(requestGateway).mockResolvedValue(resumePayload())
-
-    await openSession('stored-9')
-
-    expect(
-      $messages
-        .get()
-        .flatMap(m => m.parts)
-        .filter(p => p.type === 'tool-call')
-    ).toHaveLength(1)
-    expect($sessionId.get()).toBe('runtime-1')
-  })
-
-  it('appends the in-flight turn onto the REST transcript', async () => {
-    vi.mocked(getSessionMessages).mockResolvedValue({
-      messages: [{ role: 'user', content: 'older turn' }],
-      session_id: 'stored-9'
-    } as never)
-    vi.mocked(requestGateway).mockResolvedValue(
-      resumePayload({ inflight: { streaming: true, user: 'the running prompt' } })
-    )
-
-    await openSession('stored-9')
-
-    const messages = $messages.get()
-    expect(messages.map(m => m.role)).toEqual(['user', 'user', 'assistant'])
-    expect(messages[2].pending).toBe(true)
-    expect($busy.get()).toBe(true)
-  })
-
-  it('ignores a stale open that resolves after a newer one', async () => {
-    vi.mocked(getSessionMessages).mockResolvedValue({ messages: [], session_id: 'x' } as never)
-
-    let releaseSlow: (value: unknown) => void = () => {}
-
-    const slow = new Promise(resolve => {
-      releaseSlow = resolve
-    })
+  it('prefers the configured default over the sticky remembered workspace', () => {
+    window.localStorage.setItem('hermes.desktop.workspace-cwd', '/home/user/sticky')
+    applyConfiguredDefaultProjectDir('/home/user/configured')
 
-    vi.mocked(requestGateway).mockImplementationOnce(() => slow as never)
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-new' })
-
-    const stale = openSession('stored-old')
-    await openSession('stored-new')
-    releaseSlow({ messages: [], session_id: 'runtime-old' })
-    await stale
-
-    expect($sessionId.get()).toBe('runtime-new')
-    expect($activeStoredSessionId.get()).toBe('stored-new')
-  })
-})
-
-describe('branchCurrentSession', () => {
-  const seedThread = () => {
-    $activeStoredSessionId.set('stored-1')
-    seedActiveSession('runtime-1', {
-      storedSessionId: 'stored-1',
-      messages: [
-        { id: 'm1', role: 'user', parts: [{ type: 'text', text: 'first' }] },
-        { id: 'm2', role: 'assistant', parts: [{ type: 'text', text: 'answer' }] },
-        { id: 'm3', role: 'user', parts: [{ type: 'text', text: 'second' }] },
-        { id: 'm4', role: 'assistant', parts: [{ type: 'text', text: 'reply' }] }
-      ]
-    })
-  }
-
-  // The WHOLE conversation, not just the last turn: a branch shares a past with
-  // its parent and diverges from there.
-  it('forks the thread up to the last turn into a new session and opens it', async () => {
-    seedThread()
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-
-    await expect(branchCurrentSession()).resolves.toBe(true)
-
-    expect(requestGateway).toHaveBeenCalledWith(
-      'session.create',
-      expect.objectContaining({
-        messages: [
-          { content: 'first', role: 'user' },
-          { content: 'answer', role: 'assistant' },
-          { content: 'second', role: 'user' },
-          { content: 'reply', role: 'assistant' }
-        ],
-        parent_session_id: 'stored-1'
-      })
-    )
-    expect($sessionId.get()).toBe('runtime-2')
-    expect($activeStoredSessionId.get()).toBe('stored-2')
-    expect($messages.get().map(m => m.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
-    expect($sessions.get()[0].parent_session_id).toBe('stored-1')
-  })
-
-  // MJXHRM-388. Branching AT a message copies everything up TO it — the port
-  // sliced `[at, at + 1)`, so the branch was a new chat quoting one reply with
-  // the question it answered, and every turn before it, gone. Desktop's own
-  // test names this: "only the clicked message survived instead of everything
-  // up to it".
-  it('forks the thread up to a specific message when given its id', async () => {
-    seedThread()
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2' } as never)
-
-    await branchCurrentSession('m2')
-
-    expect(requestGateway).toHaveBeenCalledWith(
-      'session.create',
-      expect.objectContaining({
-        messages: [
-          { content: 'first', role: 'user' },
-          { content: 'answer', role: 'assistant' }
-        ]
-      })
-    )
-  })
-
-  it('refuses without a session, while busy, or with nothing to copy', async () => {
-    // WITH turns painted, so this leg tests the "no session yet" refusal rather
-    // than falling through to the empty-transcript one. Not hypothetical: a
-    // slice still hydrating under a placeholder key shows its transcript before
-    // it has a wire id, and that is a chat you can try to branch. (Seeded
-    // bare, this assertion passed with the guard deleted.)
-    seedActiveSession('draft', {
-      runtimeSessionId: null,
-      storedSessionId: null,
-      messages: [{ id: 'd1', role: 'assistant', parts: [{ type: 'text', text: 'painted' }] }]
-    })
-    await expect(branchCurrentSession()).resolves.toBe(false)
-
-    seedThread()
-    updateSession('runtime-1', s => ({ ...s, busy: true }))
-    await expect(branchCurrentSession()).resolves.toBe(false)
-    updateSession('runtime-1', s => ({ ...s, busy: false }))
-
-    updateSession('runtime-1', s => ({
-      ...s,
-      messages: [{ id: 's1', role: 'system', parts: [{ type: 'text', text: 'slash:/help' }] }]
-    }))
-    await expect(branchCurrentSession()).resolves.toBe(false)
-
-    expect(requestGateway).not.toHaveBeenCalled()
-  })
-
-  // REGRESSION: assistant-ui addresses "branch in new chat" by message id. When
-  // the runtime converter dropped our ids, that id never matched and the branch
-  // silently forked the LAST turn instead of the clicked one.
-  it('refuses an explicit target that is not in the transcript', async () => {
-    seedThread()
-
-    await expect(branchCurrentSession('not-a-real-id')).resolves.toBe(false)
-    expect(requestGateway).not.toHaveBeenCalled()
-  })
-
-  it('reports a failed fork without disturbing the current thread', async () => {
-    seedThread()
-    vi.mocked(requestGateway).mockRejectedValue(new Error('nope'))
-
-    await expect(branchCurrentSession()).resolves.toBe(false)
-    expect($sessionId.get()).toBe('runtime-1')
-    expect($messages.get().map(m => m.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
-  })
-
-  // MJXHRM-388. Every other mutation path carries the parent's owning profile;
-  // this one did not, so `session.create` landed the branch on whichever gateway
-  // happened to be live and the conversation jumped databases.
-  it('creates the branch on the PARENT session owning profile', async () => {
-    seedThread()
-    $sessions.set([rowOnProfile('stored-1', 'research')])
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-
-    await branchCurrentSession()
-
-    expect(requestGateway).toHaveBeenCalledWith('session.create', expect.objectContaining({ profile: 'research' }))
-  })
-
-  // MJXHRM-388. A branch opens BESIDE the chat it came from. Placement lives in
-  // the tile/bubble stores, which import this module, so it arrives as a
-  // registered opener — and registering one is what stops the branch claiming
-  // the main pane and pushing the parent off screen.
-  it('hands the branch to the registered opener instead of claiming main', async () => {
-    seedThread()
-    const opened: [string, null | string][] = []
-    setBranchedSessionOpener((id, parent) => opened.push([id, parent]))
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-
-    await expect(branchCurrentSession()).resolves.toBe(true)
-
-    // The PARENT rides along, so the opener can put the branch in its strip
-    // rather than in the workspace's.
-    expect(opened).toEqual([['stored-2', 'stored-1']])
-    // The parent is still the loaded chat: nothing was displaced.
-    expect($activeStoredSessionId.get()).toBe('stored-1')
-    // ...and the branch is listed, so the tab the opener creates has a row.
-    expect($sessions.get().some(s => s.id === 'stored-2')).toBe(true)
-  })
-
-  // MJXHRM-388. Universal renders N chats at once, and hydrated message ids are
-  // POSITIONAL (`h3-assistant`) — so "branch in new chat" on a tile's message
-  // resolved a same-numbered message in the FOREGROUND chat and forked that
-  // conversation instead, with no error to notice. Every other per-surface
-  // action already routes by the surface's own view.
-  it('branches the SURFACE it was invoked from, not the foreground chat', async () => {
-    seedThread()
-    seedSession('runtime-tile', {
-      storedSessionId: 'stored-tile',
-      runtimeSessionId: 'runtime-tile',
-      messages: [
-        { id: 'm1', role: 'user', parts: [{ type: 'text', text: 'tile question' }] },
-        { id: 'm2', role: 'assistant', parts: [{ type: 'text', text: 'tile answer' }] }
-      ]
-    })
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-    // As the app always is (app/contrib/controller); without one the branch
-    // falls back to claiming main, which is the documented last resort.
-    setBranchedSessionOpener(() => undefined)
-
-    await expect(
-      branchCurrentSession('m2', {
-        busy: false,
-        cwd: '/tile/repo',
-        messages: $sessionStates.get()['runtime-tile'].messages,
-        runtimeId: 'runtime-tile',
-        storedId: 'stored-tile'
-      })
-    ).resolves.toBe(true)
-
-    expect(requestGateway).toHaveBeenCalledWith(
-      'session.create',
-      expect.objectContaining({
-        cwd: '/tile/repo',
-        messages: [
-          { content: 'tile question', role: 'user' },
-          { content: 'tile answer', role: 'assistant' }
-        ],
-        parent_session_id: 'stored-tile'
-      })
-    )
-    // The chat in main was never touched.
-    expect($activeStoredSessionId.get()).toBe('stored-1')
-    expect($messages.get().map(m => m.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
-  })
-
-  // MJXHRM-386/388. A tile holds the stored id it was opened with forever, so a
-  // parent that has since rotated through a compression must be re-resolved to
-  // its live tip — otherwise the branch nests under a dead id.
-  it('nests under the parent row LIVE tip, not the id the surface holds', async () => {
-    seedThread()
-    $projectTree.set([treeWith([{ id: 'tip-1', _lineage_root_id: 'root-1' } as unknown as SessionInfo])])
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-
-    await branchCurrentSession(undefined, {
-      busy: false,
-      cwd: '',
-      messages: $messages.get(),
-      runtimeId: 'runtime-1',
-      storedId: 'root-1'
-    })
-
-    expect(requestGateway).toHaveBeenCalledWith(
-      'session.create',
-      expect.objectContaining({ parent_session_id: 'tip-1' })
-    )
-  })
-
-  // MJXHRM-388. The optimistic row must be OWNED before its id is published:
-  // `$activeStoredSessionId`'s subscriber reads the owner right then to remember
-  // this profile's place, and an unowned row is remembered against whichever
-  // gateway is live — the cross-profile bleed `profile` exists to close.
-  it('stamps the branch row with its profile before the id goes active', async () => {
-    seedThread()
-    $sessions.set([rowOnProfile('stored-1', 'research')])
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-
-    let ownerWhenPublished: string | undefined
-
-    const stop = $activeStoredSessionId.listen(id => {
-      if (id === 'stored-2') {
-        ownerWhenPublished = knownSessionProfile('stored-2')
-      }
-    })
-
-    await branchCurrentSession()
-    stop()
-
-    expect(ownerWhenPublished).toBe('research')
-  })
-})
-
-/**
- * MJXHRM-386 — a branch's DIRECTORY, which is where its colour comes from.
- *
- * `branchStoredSession` branches a session the user is not looking at, so its
- * parent is exactly the sort that has aged out of the recents page. It resolved
- * that parent with a `$sessions.find(...)`, and a miss meant an empty `cwd`:
- * the branch was created in the gateway's default directory, belonged to no
- * project, and so inherited no lane and no colour.
- */
-describe('branchStoredSession — the branch inherits its parent directory', () => {
-  const transcript = () =>
-    vi.mocked(getSessionMessages).mockResolvedValue({
-      messages: [{ role: 'user', content: 'first' }],
-      session_id: 'x'
-    } as never)
-
-  it('takes the cwd from a parent that is only in the project tree', async () => {
-    transcript()
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-    $sessions.set([])
-    $projectTree.set([treeWith([{ cwd: '/www/app', id: 'old-1' } as unknown as SessionInfo])])
-
-    await branchStoredSession('old-1')
-
-    expect(requestGateway).toHaveBeenCalledWith('session.create', expect.objectContaining({ cwd: '/www/app' }))
-  })
-
-  it('records the parent as the row live tip, not the pre-rotation id it was given', async () => {
-    transcript()
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-    $sessions.set([])
-    $projectTree.set([
-      treeWith([{ _lineage_root_id: 'root-1', cwd: '/www/app', id: 'tip-1' } as unknown as SessionInfo])
-    ])
-
-    await branchStoredSession('root-1')
-
-    expect(requestGateway).toHaveBeenCalledWith(
-      'session.create',
-      expect.objectContaining({ parent_session_id: 'tip-1' })
-    )
-  })
-
-  // The optimistic row the sidebar shows before the next refresh: its `cwd`
-  // decides the lane and the inherited colour, and it used to be seeded from
-  // whatever chat was on SCREEN — which for a background branch is a different
-  // session in, quite possibly, a different project.
-  it('seeds the optimistic row with the branch directory, not the open chat one', async () => {
-    transcript()
-    vi.mocked(requestGateway).mockResolvedValue({ session_id: 'runtime-2', stored_session_id: 'stored-2' } as never)
-    // The chat on SCREEN, in a different project entirely.
-    seedActiveSession('runtime-0', { cwd: '/somewhere/else' })
-    expect($currentCwd.get()).toBe('/somewhere/else')
-    $sessions.set([])
-    $projectTree.set([treeWith([{ cwd: '/www/app', id: 'old-1' } as unknown as SessionInfo])])
-
-    await branchStoredSession('old-1')
-
-    expect($sessions.get().find(s => s.id === 'stored-2')?.cwd).toBe('/www/app')
-  })
-})
-
-describe('refreshSessions — profile scope', () => {
-  const page = (over: Partial<PaginatedSessions> = {}): PaginatedSessions =>
-    ({ limit: 30, offset: 0, sessions: [row('a', 'A')], total: 7, ...over }) as PaginatedSessions
-
-  it('asks the aggregator for the active profile in concrete scope', async () => {
-    $activeProfile.set('research')
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page({ profile_totals: { research: 3, default: 40 } }))
-
-    await refreshSessions()
-
-    expect(listAllProfileSessions).toHaveBeenCalledWith($sessionsLimit.get(), 1, 'exclude', 'recent', 'research')
-    // The scoped total wins over the aggregate one.
-    expect($sessionsTotal.get()).toBe(3)
-  })
-
-  it("asks for 'all' in the browse scope and keeps the aggregate total", async () => {
-    $showAllProfiles.set(true)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page({ profile_totals: { default: 4 } }))
-
-    await refreshSessions()
-
-    expect(listAllProfileSessions).toHaveBeenCalledWith($sessionsLimit.get(), 1, 'exclude', 'recent', 'all')
-    expect($sessionsTotal.get()).toBe(7)
-  })
-
-  it('falls back to the aggregate total when the scope has no per-profile entry', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page())
-
-    await refreshSessions()
-
-    expect(listAllProfileSessions).toHaveBeenCalledWith($sessionsLimit.get(), 1, 'exclude', 'recent', 'default')
-    expect($sessionsTotal.get()).toBe(7)
-  })
-})
-
-/**
- * MJXHRM-383. `SidebarSessionRow` is `memo(…, rowPropsEqual)` and that
- * comparator deliberately ignores the handler props, so the ONLY thing that can
- * make a row bail out is `Object.is(prev.session, next.session)`. Every refresh
- * below is a JSON-parsed page, so without identity sharing every row in every
- * lane re-renders on a poll that changed nothing — which is what made the
- * handler stabilization above it unobservable.
- */
-describe('refreshSessions — row identity', () => {
-  const page = (sessions: SessionInfo[]): PaginatedSessions =>
-    ({ limit: 30, offset: 0, sessions, total: sessions.length }) as PaginatedSessions
-
-  /** A fresh page object graph each call — what the transport really hands back. */
-  const serverPage = (rows: { id: string; last_active: number; title: string }[]): PaginatedSessions =>
-    page(rows.map(r => ({ ...r })) as unknown as SessionInfo[])
-
-  const ROWS = [
-    { id: 'a', last_active: 10, title: 'A' },
-    { id: 'b', last_active: 20, title: 'B' },
-    { id: 'c', last_active: 30, title: 'C' }
-  ]
-
-  it('publishes nothing when the refreshed page is content-identical', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
-    await refreshSessions()
-
-    const first = $sessions.get()
-    const published: unknown[] = []
-    const stop = $sessions.listen(value => published.push(value))
-
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
-    await refreshSessions()
-    stop()
-
-    // Same array — so nanostores never notifies and the sidebar never renders.
-    expect($sessions.get()).toBe(first)
-    expect(published).toEqual([])
-  })
-
-  it('leaves the untouched rows on their old objects when one row changes', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
-    await refreshSessions()
-
-    const before = $sessions.get()
-
-    vi.mocked(listAllProfileSessions).mockResolvedValue(
-      serverPage([ROWS[0], { ...ROWS[1], last_active: 999 }, ROWS[2]])
-    )
-    await refreshSessions()
-
-    const after = $sessions.get()
-
-    expect(after).not.toBe(before)
-    expect(after[0]).toBe(before[0])
-    expect(after[2]).toBe(before[2])
-    expect(after[1]).not.toBe(before[1])
-    expect(after[1].last_active).toBe(999)
-  })
-
-  it('keeps row identity across the recency reorder a new message causes', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
-    await refreshSessions()
-
-    const before = $sessions.get()
-
-    // 'c' got a message: it jumps to the head and shifts the rest down. Nothing
-    // about a/b changed, so their rows must not repaint.
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage([ROWS[2], ROWS[0], ROWS[1]]))
-    await refreshSessions()
-
-    const after = $sessions.get()
-
-    expect(after.map(s => s.id)).toEqual(['c', 'a', 'b'])
-    expect(after[0]).toBe(before[2])
-    expect(after[1]).toBe(before[0])
-    expect(after[2]).toBe(before[1])
-  })
-
-  it('still evicts a tombstoned row rather than reviving it from the previous page', async () => {
-    // The identity gate must not become a way for a deleted row to survive.
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
-    await refreshSessions()
-
-    $removedSessionIds.set(new Set(['b']))
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
-    await refreshSessions()
-
-    expect($sessions.get().map(s => s.id)).toEqual(['a', 'c'])
-  })
-})
-
-describe('loadMoreSessions', () => {
-  const page = (sessions: SessionInfo[], over: Partial<PaginatedSessions> = {}): PaginatedSessions =>
-    ({ limit: 30, offset: 0, sessions, total: 7, ...over }) as PaginatedSessions
-
-  it('asks for the NEXT page by recency depth and appends it', async () => {
-    $sessions.set([row('a', 'A'), row('b', 'B')])
-    $sessionsLimit.set(2)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([row('c', 'C')]))
-
-    await loadMoreSessions()
-
-    // offset = how deep into the recency window we have read; the window is not
-    // re-fetched.
-    expect(listAllProfileSessions).toHaveBeenCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 2)
-    expect($sessions.get().map(s => s.id)).toEqual(['a', 'b', 'c'])
-    expect($sessionsLimit.get()).toBe(3)
-  })
-
-  // The endpoints pass `include_pinned=True` and APPEND back-filled pins after
-  // the recency window, so a page can carry more rows than its limit — and the
-  // extras hold no window position. Counting them into the cursor skipped one
-  // real conversation per pin, permanently: never fetched, never rendered, and
-  // no visible gap to notice. (Reported by SE-H alongside `pageWindow`.)
-  it('does not let back-filled pins advance the cursor past what it read', async () => {
-    $sessions.set([row('a', 'A')])
-    $sessionsLimit.set(1)
-
-    // A full page of 30, plus two pins the server appended past the window.
-    const window30 = Array.from({ length: 30 }, (_, i) => row(`w${i}`, `W${i}`))
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([...window30, row('pin1', 'P1'), row('pin2', 'P2')]))
-
-    await loadMoreSessions()
-
-    // 1 + 30, NOT 1 + 32 — the two pins were not window positions.
-    expect($sessionsLimit.get()).toBe(31)
-
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([]))
-    await loadMoreSessions()
-
-    expect(listAllProfileSessions).toHaveBeenLastCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 31)
-  })
-
-  // Ordering is by recency, so a session that gets a message between the two
-  // fetches slides into the earlier page and would otherwise render twice.
-  it('drops a row that shifted into the previous page', async () => {
-    $sessions.set([row('a', 'A'), row('b', 'B')])
-    $sessionsLimit.set(2)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([row('b', 'B'), row('c', 'C')]))
-
-    await loadMoreSessions()
-
-    expect($sessions.get().map(s => s.id)).toEqual(['a', 'b', 'c'])
-  })
-
-  it('keeps the loaded rows when the next page comes back empty', async () => {
-    $sessions.set([row('a', 'A')])
-    $sessionsLimit.set(1)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([]))
-
-    await loadMoreSessions()
-
-    expect($sessions.get().map(s => s.id)).toEqual(['a'])
-    expect($sessionsLimit.get()).toBe(1)
-  })
-
-  it('keeps the loaded rows when the fetch fails', async () => {
-    $sessions.set([row('a', 'A')])
-    vi.mocked(listAllProfileSessions).mockRejectedValue(new Error('offline'))
-
-    await loadMoreSessions()
-
-    expect($sessions.get().map(s => s.id)).toEqual(['a'])
-  })
-})
-
-describe('unread-finished tracking', () => {
-  it('clears a session id the moment it becomes the active session', () => {
-    $unreadFinishedSessionIds.set(['stored-a', 'stored-b'])
-
-    $activeStoredSessionId.set('stored-a')
-
-    expect($unreadFinishedSessionIds.get()).toEqual(['stored-b'])
-  })
-
-  it('leaves the set alone when the chat goes back to a fresh draft', () => {
-    $unreadFinishedSessionIds.set(['stored-a'])
-
-    $activeStoredSessionId.set(null)
-
-    expect($unreadFinishedSessionIds.get()).toEqual(['stored-a'])
-  })
-
-  it('keeps the same array reference when the id was never unread', () => {
-    const before = ['stored-a']
-    $unreadFinishedSessionIds.set(before)
-
-    clearUnreadFinishedSession('stored-z')
-
-    expect($unreadFinishedSessionIds.get()).toBe(before)
-  })
-})
-
-describe('pinned rows survive the loaded window', () => {
-  it('falls back to the last-known row for a pin that scrolled out of the page', () => {
-    const pinned = row('stored-pin', 'Pinned chat')
-
-    // Seen on a page: cached.
-    $pinnedSessionIds.set(['stored-pin'])
-    $sessions.set([pinned, row('stored-other', 'Other')])
-
-    expect(pinnedSessionRows($sessions.get(), ['stored-pin'])).toEqual([pinned])
-
-    // A later page no longer reaches it — the pin is still stored, so the
-    // section must still show it rather than silently dropping the row.
-    $sessions.set([row('stored-other', 'Other')])
-
-    expect(pinnedSessionRows($sessions.get(), ['stored-pin'])).toEqual([pinned])
-  })
-
-  it('forgets a row once its pin is gone', () => {
-    $pinnedSessionIds.set(['stored-pin'])
-    $sessions.set([row('stored-pin', 'Pinned chat')])
-    expect($pinnedSessionCache.get()['stored-pin']).toBeDefined()
-
-    $pinnedSessionIds.set([])
-    $sessions.set([])
-
-    expect($pinnedSessionCache.get()['stored-pin']).toBeUndefined()
-  })
-
-  // MJXHRM-414. The cache fallback above is what makes the Pinned list survive
-  // pagination — and it is exactly what let a DELETED session go on rendering
-  // there: the row leaves `$sessions`, the cache still has it, and nothing ever
-  // released the pin. The two halves of the fix are pinned separately, because
-  // either alone leaves a window where the tombstone is visible.
-  it('deleting a pinned session releases its pin', async () => {
-    $pinnedSessionIds.set(['stored-pin'])
-    $sessions.set([row('stored-pin', 'Pinned chat')])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-
-    await deleteSessionLocal('stored-pin')
-
-    expect($pinnedSessionIds.get()).toEqual([])
-    expect(pinnedSessionRows($sessions.get(), $pinnedSessionIds.get())).toEqual([])
-  })
-
-  // The half of that fix nothing could see: a compaction rotates the live id,
-  // and the pin stays on the durable lineage root. The delete arrives with the
-  // TIP id, so releasing only the id it was handed leaves the pin standing —
-  // and the Pinned section resolves the deleted chat right back out of the
-  // cache under the root key.
-  it('releases the pin of a compacted session, whose pin id is not the id being deleted', async () => {
-    $pinnedSessionIds.set(['root'])
-    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-
-    await deleteSessionLocal('tip')
-
-    expect($pinnedSessionIds.get()).toEqual([])
+    expect(workspaceCwdForNewSession()).toBe('/home/user/configured')
   })
 
-  // And the mirror image, which is why BOTH ids are released rather than just
-  // the durable one: a row can reach a pin control without its lineage stamp —
-  // a server search result carries `session_id` and nothing else — so a pin can
-  // legitimately be stored under the live tip id.
-  it('releases a pin stored under the live tip id, not just the lineage root', async () => {
-    $pinnedSessionIds.set(['tip'])
-    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
+  it('keeps the configured default separate from a selected workspace', () => {
+    setCurrentCwd('/home/user/repo/.worktrees/feature')
 
-    await deleteSessionLocal('tip')
+    applyConfiguredDefaultProjectDir('/home/user/configured')
 
-    expect($pinnedSessionIds.get()).toEqual([])
+    expect(workspaceCwdForNewSession()).toBe('/home/user/configured')
+    expect($currentCwd.get()).toBe('/home/user/repo/.worktrees/feature')
   })
 
-  // MJXHRM-479. `deleteSessionLocal` is the one function six delete surfaces
-  // funnel through, so the "are you sure?" for a pinned chat lives here rather
-  // than in six menu rows. Unpinned deletes stay unconfirmed (desktop parity).
-  it('asks before deleting a PINNED session, and deletes nothing when told no', async () => {
-    $pinnedSessionIds.set(['stored-pin'])
-    $sessions.set([row('stored-pin', 'Pinned chat')])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-    // Seed the ANSWER against the outcome asserted: if the guard were missing,
-    // the row would be gone regardless of what confirm() said.
-    vi.mocked(confirm).mockResolvedValueOnce(false)
+  it('starts detached (no inherited cwd) when no default project dir is configured', () => {
+    // A bare new chat must NOT inherit the sticky/remembered or live workspace —
+    // that's the "why is my new session already on a branch" bug. Only an
+    // explicit configured default pre-attaches.
+    window.localStorage.setItem('hermes.desktop.workspace-cwd', '/home/user/sticky')
+    $currentCwd.set('/home/user/live')
 
-    await deleteSessionLocal('stored-pin')
-
-    expect(confirm).toHaveBeenCalled()
-    expect(vi.mocked(confirm).mock.calls[0]?.[0]).toMatchObject({ destructive: true })
-    // Nothing moved: not the RPC, not the optimistic removal, not the pin.
-    expect(deleteSession).not.toHaveBeenCalled()
-    expect($sessions.get().map(entry => entry.id)).toEqual(['stored-pin'])
-    expect($pinnedSessionIds.get()).toEqual(['stored-pin'])
-  })
-
-  it('does NOT ask when the session is unpinned', async () => {
-    // Pin a DIFFERENT row, so "no pins at all" cannot be what makes this pass.
-    $pinnedSessionIds.set(['someone-else'])
-    $sessions.set([row('plain', 'Plain chat'), row('someone-else', 'Pinned chat')])
-    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
-
-    await deleteSessionLocal('plain')
-
-    expect(confirm).not.toHaveBeenCalled()
-    expect(deleteSession).toHaveBeenCalledWith('plain', undefined)
-    expect($sessions.get().map(entry => entry.id)).toEqual(['someone-else'])
-  })
-
-  it('restores the pin when the delete RPC fails', async () => {
-    $pinnedSessionIds.set(['stored-pin'])
-    $sessions.set([row('stored-pin', 'Pinned chat')])
-    vi.mocked(deleteSession).mockRejectedValue(new Error('nope'))
-
-    await deleteSessionLocal('stored-pin')
-
-    expect($pinnedSessionIds.get()).toEqual(['stored-pin'])
-  })
-
-  it('never renders a tombstoned row, even while the delete is in flight', () => {
-    $pinnedSessionIds.set(['stored-pin'])
-    $sessions.set([row('stored-pin', 'Pinned chat')])
-    expect(pinnedSessionRows($sessions.get(), ['stored-pin'])).toHaveLength(1)
-
-    $removedSessionIds.set(new Set(['stored-pin']))
-
-    expect(pinnedSessionRows($sessions.get(), ['stored-pin'])).toEqual([])
-  })
-
-  // The two tombstone checks in `pinnedSessionRows` are NOT redundant, and the
-  // test above cannot tell them apart: with a pin id equal to the row id, either
-  // one alone passes it. A compacted chat separates them, and each check is the
-  // only thing covering its own case.
-  it('drops a pin whose stored id was tombstoned, even when its row surfaces under another id', () => {
-    // Deleted from a surface holding the row: `removalIds` tombstoned the
-    // lineage root, and the cached row still answers under its live tip id.
-    const tip = { _lineage_root_id: 'root', id: 'tip' } as SessionInfo
-    $pinnedSessionIds.set(['root'])
-    $sessions.set([tip])
-    expect(pinnedSessionRows($sessions.get(), ['root'])).toEqual([tip])
-
-    $removedSessionIds.set(new Set(['root']))
-
-    expect(pinnedSessionRows($sessions.get(), ['root'])).toEqual([])
+    expect(workspaceCwdForNewSession()).toBe('')
   })
 
-  it('drops a resolved row that was tombstoned under its live id, though the pin id was not', () => {
-    // The mirror image: deleted by an id the loaded rows could not resolve, so
-    // only the live tip got a tombstone while the pin is stored on the root.
-    const tip = { _lineage_root_id: 'root', id: 'tip' } as SessionInfo
-    $pinnedSessionIds.set(['root'])
-    $sessions.set([tip])
+  it('does not rewrite the live cwd while a session is active', () => {
+    $activeSessionId.set('sess-1')
+    $currentCwd.set('/live/session/path')
+    applyConfiguredDefaultProjectDir('/home/user/configured')
 
-    $removedSessionIds.set(new Set(['tip']))
-
-    expect(pinnedSessionRows($sessions.get(), ['root'])).toEqual([])
+    expect($currentCwd.get()).toBe('/live/session/path')
+    expect(workspaceCwdForNewSession()).toBe('/home/user/configured')
   })
 
-  // A session id means nothing on another backend, so the cached ROWS are
-  // gateway-bound even though the pin ids are not. Left standing across a soft
-  // switch they kept rendering the previous gateway's conversations in the new
-  // one's Pinned section — resolvable by nothing, openable to nothing.
-  it('forgets every cached row, and the persisted copy, when the backend changes', () => {
-    $pinnedSessionIds.set(['stored-pin'])
-    $sessions.set([row('stored-pin', 'Pinned chat')])
-    expect(localStorage.getItem('hermes.pinnedSessionRows')).toContain('stored-pin')
+  it('keeps remote workspace memory separate from local and other remotes', () => {
+    window.localStorage.setItem('hermes.desktop.workspace-cwd', '/local/project')
+    $currentCwd.set('/live/session/path')
+    $connection.set({ baseUrl: 'http://backend-a', mode: 'remote' } as never)
 
-    clearPinnedSessionCache()
+    // Bare new sessions are intentionally DETACHED across every mode
+    // (#57911): neither sticky local nor sticky remote cwd is an accept-
+    // able bare-default — only an explicit configured default pre-attaches.
+    // The per-backend memory itself stays isolated (asserted directly).
+    expect(workspaceCwdForNewSession()).toBe('')
 
-    expect($pinnedSessionCache.get()).toEqual({})
-    // Persisted too, or the next launch reads the old gateway's rows back in.
-    expect(localStorage.getItem('hermes.pinnedSessionRows')).not.toContain('stored-pin')
-    // The pin itself stays: it mirrors each gateway's own durable flag, and the
-    // one we are leaving must still have its pins when we come back.
-    expect($pinnedSessionIds.get()).toEqual(['stored-pin'])
-  })
-})
+    setCurrentCwd('/backend/project-a')
+    expect(getRememberedWorkspaceCwd()).toBe('/backend/project-a')
+    expect(workspaceCwdForNewSession()).toBe('')
 
-// The sweep that releases a pin whose session another client deleted only runs
-// when a WHOLE window has landed — the one moment a pin's absence from
-// `$sessions` carries information, because the backend back-fills pinned rows
-// past the limit. An epoch bumped on a failed fetch would have it acting on a
-// list that says nothing at all.
-describe('$sessionsListEpoch', () => {
-  it('counts a refresh that landed', async () => {
-    const before = $sessionsListEpoch.get()
-    vi.mocked(listAllProfileSessions).mockResolvedValue({
-      sessions: [row('a', 'A')],
-      total: 1
-    } as unknown as PaginatedSessions)
+    $connection.set({ baseUrl: 'http://backend-b', mode: 'remote' } as never)
+    expect(getRememberedWorkspaceCwd()).toBe('')
 
-    await refreshSessions()
+    setCurrentCwd('/backend/project-b')
+    expect(getRememberedWorkspaceCwd()).toBe('/backend/project-b')
+    expect(workspaceCwdForNewSession()).toBe('')
 
-    expect($sessionsListEpoch.get()).toBe(before + 1)
+    // Back on local with no configured default: a bare new chat is detached and
+    // never reads the remote keys (nor inherits the sticky local workspace).
+    $connection.set(null)
+    expect(workspaceCwdForNewSession()).toBe('')
   })
 
-  it('does not count a refresh that failed', async () => {
-    const before = $sessionsListEpoch.get()
-    vi.mocked(listAllProfileSessions).mockRejectedValue(new Error('offline'))
-
-    await refreshSessions()
-
-    expect($sessionsListEpoch.get()).toBe(before)
-  })
-})
+  it('reseeding a remote gateway with no remembered workspace clears a folder left by another backend (#114306)', async () => {
+    // The door the switch wipe does not cover: `$currentCwd` is initialised from
+    // whatever key is current at module load (the LOCAL memory when the app
+    // boots straight into a remote gateway), and boot reseeds through
+    // ensureDefaultWorkspaceCwd alone — no beginGatewaySwitch runs. An empty
+    // remembered value for the incoming gateway must therefore publish as a
+    // clear, not skip via the truthy-only seed, so seedDefaultCwd can apply
+    // that gateway's own default.
+    const sanitizeWorkspaceCwd = vi.fn(async (cwd: string) => ({ cwd }))
 
-// The icon table (app/messaging/platform-icon.tsx) and this source list answer
-// two halves of one question, and a platform in only one of them is invisible in
-// the other: photon and buzz shipped with icons and setup copy but no entry
-// here, so their sessions were never grouped out of recents.
-describe('messaging sources stay in sync with the icon table', () => {
-  it('recognises every platform that has an icon, case-insensitively', () => {
-    for (const source of ['photon', 'buzz', 'telegram', 'discord', 'bluebubbles']) {
-      expect(isMessagingSource(source)).toBe(true)
-      expect(isMessagingSource(source.toUpperCase())).toBe(true)
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
+      sanitizeWorkspaceCwd,
+      settings: { getDefaultProjectDir: vi.fn(async () => ({ defaultLabel: '', dir: '', resolvedCwd: '' })) }
     }
+
+    $connection.set({ baseUrl: 'http://backend-a', mode: 'remote' } as never)
+    setCurrentCwd('/opt/data/profiles/project-a')
+    expect(getRememberedWorkspaceCwd()).toBe('/opt/data/profiles/project-a')
+
+    // Simulate the gateway switch: connection flips to B before the reseed
+    // runs, exactly as beginGatewaySwitch/softSwitch do today.
+    $connection.set({ baseUrl: 'http://backend-b', mode: 'remote' } as never)
+    expect(getRememberedWorkspaceCwd()).toBe('')
+
+    await ensureDefaultWorkspaceCwd(() => true)
+
+    expect($currentCwd.get()).toBe('')
   })
 
-  it('still excludes local sources', () => {
-    expect(isMessagingSource('cli')).toBe(false)
-    expect(isMessagingSource('cron')).toBe(false)
-    expect(isMessagingSource(null)).toBe(false)
+  it('remembers only the workspace the user picked, not the one they looked at', () => {
+    // The reported bug (#77496 / #80213): every session resume used to write
+    // the remembered-workspace key — so opening a project chat silently moved
+    // the memory. Following a conversation must leave the memory alone.
+    // (Since #57911 a bare new session is detached in remote mode too, so the
+    // memory is asserted directly — its remaining consumer is resume seeding
+    // via ensureDefaultWorkspaceCwd.)
+    $connection.set({ baseUrl: 'http://backend-a', mode: 'remote' } as never)
+    setCurrentCwd('/backend/picked')
+
+    setCurrentCwdTransient('/backend/some-other-project')
+
+    expect($currentCwd.get()).toBe('/backend/some-other-project')
+    expect(getRememberedWorkspaceCwd()).toBe('/backend/picked')
+    expect(workspaceCwdForNewSession()).toBe('')
   })
 
-  it('labels the new platforms rather than falling back to a capitalised id', () => {
-    expect(messagingSourceLabel('photon')).toBe('Photon')
-    expect(messagingSourceLabel('buzz')).toBe('Buzz')
+  it('settling a resumed session does not move the remembered workspace', () => {
+    // The reporter's exact sequence: work in a project, open a chat from it,
+    // then ask for a new session. Resume settling publishes the conversation's
+    // cwd through commitWorkspaceCwdForSelectedSession — which must not claim
+    // that folder as the user's chosen workspace.
+    $connection.set({ baseUrl: 'http://backend-a', mode: 'remote' } as never)
+    setCurrentCwd('/backend/picked')
+
+    setSelectedStoredSessionId('sess-in-project')
+    commitWorkspaceCwdForSelectedSession('/backend/last-project')
+
+    expect(getRememberedWorkspaceCwd()).toBe('/backend/picked')
+    expect(workspaceCwdForNewSession()).toBe('')
+  })
+
+  it('does not stick a previous remote workspace onto a bare new session (#57911)', () => {
+    // Repro: in remote mode the user attaches to project-A so the renderer
+    // persists /tradingview as the remembered cwd under the remote key. The
+    // user then presses Cmd+N *without* being scoped into any project. A bare
+    // new session must NOT inherit /tradingview — pre-fix this returned the
+    // sticky remembered cwd and the gateway mapped it back to the wrong
+    // project via project_tree.py.
+    $connection.set({ baseUrl: 'http://backend-a', mode: 'remote' } as never)
+    setCurrentCwd('/tradingview')
+    applyConfiguredDefaultProjectDir(null)
+
+    expect(workspaceCwdForNewSession()).toBe('')
+  })
+
+  it('respects an explicit configured default in remote mode (#57911)', () => {
+    // Symmetric guard: removing the remote branch must NOT regress users who
+    // *did* set a configured default — the explicit default pre-attaches
+    // identically across local and remote mode.
+    $connection.set({ baseUrl: 'http://backend-a', mode: 'remote' } as never)
+    setCurrentCwd('/tradingview')
+    applyConfiguredDefaultProjectDir('/home/user/configured')
+
+    expect(workspaceCwdForNewSession()).toBe('/home/user/configured')
   })
 })
 
-// The keep-flag question asked before a DESTRUCTIVE action. It cannot be the
-// pin toggles' `$pinnedSessionIds.includes(sessionPinId(row))`: Settings →
-// Archived fetches its own rows and archived ids never enter `$sessions`, so
-// the local set is routinely empty for exactly the rows this decides about.
-describe('isSessionPinned', () => {
-  it('reads the backend keep flag off the row being acted on', () => {
-    // Fixture DISAGREES with the local set: nothing is pinned locally.
-    $pinnedSessionIds.set([])
-    expect(isSessionPinned({ id: 'a', pinned: true } as unknown as SessionInfo)).toBe(true)
-    expect(isSessionPinned({ id: 'a', pinned: false } as unknown as SessionInfo)).toBe(false)
+function makeState(over: Partial<ClientSessionState> = {}): ClientSessionState {
+  return { ...createClientSessionState('s1'), ...over }
+}
+
+describe('getRecentlySettledSessionIds', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    // clearAllSessionStates also drops settle-grace entries + watchdog timers,
+    // so nothing leaks in from a previous test.
+    clearAllSessionStates()
+    $selectedStoredSessionId.set(null)
+    $unreadFinishedSessionIds.set([])
   })
 
-  it('keys the local set on the lineage root, not the row id', () => {
-    // The row is a post-compaction TIP and the backend never heard about the
-    // pin. Keyed on `id` this returns false and the delete goes unwarned.
-    $pinnedSessionIds.set(['root'])
-    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(true)
+  afterEach(() => {
+    vi.useRealTimers()
+    clearAllSessionStates()
+    $selectedStoredSessionId.set(null)
+    $unreadFinishedSessionIds.set([])
   })
 
-  it('does not fire on a pin belonging to another conversation', () => {
-    $pinnedSessionIds.set(['someone-else'])
-    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(
-      false
-    )
+  it('keeps a session for the grace window after its turn settles, then drops it', () => {
+    // A turn starts then ends: the working→idle transition grants grace.
+    const working = makeState({ busy: true, storedSessionId: 's1' })
+    publishSessionState('rt1', working)
+
+    const idle = { ...working, busy: false }
+    publishSessionState('rt1', idle)
+
+    expect(getRecentlySettledSessionIds()).toEqual(['s1'])
+
+    // Still inside the window.
+    vi.setSystemTime(29_000)
+    expect(getRecentlySettledSessionIds()).toEqual(['s1'])
+
+    // Past the window: the entry is pruned on read.
+    vi.setSystemTime(31_000)
+    expect(getRecentlySettledSessionIds()).toEqual([])
   })
 
-  it('treats a gateway that predates the column as unpinned', () => {
-    $pinnedSessionIds.set([])
-    expect(isSessionPinned({ id: 'a' } as unknown as SessionInfo)).toBe(false)
+  it('does not grant grace when the session was never working (idle re-asserts)', () => {
+    const idle = makeState({ busy: false, storedSessionId: 'idle' })
+    publishSessionState('rt1', idle)
+    expect(getRecentlySettledSessionIds()).toEqual([])
+  })
+
+  it('clears the grace timer when the session goes busy again', () => {
+    const working = makeState({ busy: true, storedSessionId: 's2' })
+    publishSessionState('rt1', working)
+
+    const idle = { ...working, busy: false }
+    publishSessionState('rt1', idle)
+
+    expect(getRecentlySettledSessionIds()).toEqual(['s2'])
+
+    // A new turn for the same session is "working" again — drop it from the
+    // settled set so it's tracked as working, not recently-finished.
+    const workingAgain = { ...idle, busy: true }
+    publishSessionState('rt1', workingAgain)
+
+    expect(getRecentlySettledSessionIds()).toEqual([])
   })
 })
 
-// ---------------------------------------------------------------------------
-// The paint lane on the cold-open path (MJXHRM-480). The rows go on screen
-// through `$paintedMessages` BEFORE any I/O and are gone the moment the
-// authority lands — or the moment the open fails, which is the half that
-// matters most.
-// ---------------------------------------------------------------------------
-describe('openSession — the cached-tail paint', () => {
-  const cached = (id: string, body: string): ChatMessage => ({
-    id,
-    parts: [{ text: body, type: 'text' }],
-    role: 'user'
+describe('unread finished sessions', () => {
+  beforeEach(() => {
+    clearAllSessionStates()
+    $unreadFinishedSessionIds.set([])
+    $selectedStoredSessionId.set(null)
+    $sessions.set([])
+    setUnreadRemote.mockClear()
   })
 
-  const seedTail = (storedId: string, body = 'last screen') => {
-    __resetTranscriptTailCache()
-    __resetTranscriptPaint()
+  afterEach(() => {
+    clearAllSessionStates()
+    $unreadFinishedSessionIds.set([])
+    $selectedStoredSessionId.set(null)
+    $sessions.set([])
+  })
+
+  it('marks a session unread when its turn finishes in the background', () => {
+    $selectedStoredSessionId.set('other-session')
+
+    const working = makeState({ busy: true, storedSessionId: 's1' })
+    publishSessionState('rt1', working)
+
+    const idle = { ...working, busy: false }
+    publishSessionState('rt1', idle)
+
+    expect($unreadFinishedSessionIds.get()).toEqual(['s1'])
+  })
+
+  it('does NOT mark unread when the finishing session is the active one', () => {
+    $selectedStoredSessionId.set('s1')
+
+    const working = makeState({ busy: true, storedSessionId: 's1' })
+    publishSessionState('rt1', working)
+
+    const idle = { ...working, busy: false }
+    publishSessionState('rt1', idle)
+
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+  })
+
+  it('does NOT mark unread on idle→idle re-asserts (no prior working state)', () => {
+    $selectedStoredSessionId.set('other-session')
+
+    const idle = makeState({ busy: false, storedSessionId: 's1' })
+    publishSessionState('rt1', idle)
+
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+  })
+
+  it('clears unread when the user opens the session', () => {
+    $selectedStoredSessionId.set('other')
+
+    const working = makeState({ busy: true, storedSessionId: 's1' })
+    publishSessionState('rt1', working)
+
+    const idle = { ...working, busy: false }
+    publishSessionState('rt1', idle)
+
+    expect($unreadFinishedSessionIds.get()).toEqual(['s1'])
+
+    setSelectedStoredSessionId('s1')
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+  })
+
+  it('clears the whole conversation family when any row is opened', () => {
+    $sessions.set([
+      session({ id: 'parent', _lineage_root_id: null }),
+      session({ id: 'child', _lineage_root_id: 'parent' }),
+      session({ id: 'root', _lineage_root_id: null })
+    ])
+    $selectedStoredSessionId.set('other')
+
+    // Parent and child both finish in the background.
+    for (const storedId of ['parent', 'child']) {
+      const working = makeState({ busy: true, storedSessionId: storedId })
+      publishSessionState(`rt-${storedId}`, working)
+      publishSessionState(`rt-${storedId}`, { ...working, busy: false })
+    }
+
+    expect($unreadFinishedSessionIds.get().sort()).toEqual(['child', 'parent'])
+
+    // Opening the CHILD clears the PARENT's dot too (same family).
+    setSelectedStoredSessionId('child')
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+
+    $sessions.set([])
+  })
+
+  it('does NOT re-light a completion that settled before the user read it', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    $selectedStoredSessionId.set('other')
+
+    const working = makeState({ busy: true, storedSessionId: 's1' })
+    publishSessionState('rt1', working)
+
+    // User reads the session at t=2s, then the same completion re-asserts at
+    // t=3s — the re-assert is the same settled state, so it must not re-light.
+    vi.setSystemTime(2_000_000)
+    setSelectedStoredSessionId('s1')
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+
+    vi.setSystemTime(3_000_000)
+    publishSessionState('rt1', { ...working, busy: false })
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+
+    vi.useRealTimers()
+  })
+
+  it('re-lights when a NEW turn settles after the read baseline', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    $selectedStoredSessionId.set('other')
+
+    const working = makeState({ busy: true, storedSessionId: 's1' })
+    publishSessionState('rt1', working)
+
+    // User reads s1 at t=2s, then moves on to another session.
+    vi.setSystemTime(2_000_000)
+    setSelectedStoredSessionId('s1')
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+    setSelectedStoredSessionId('other')
+
+    // A NEW turn starts (busy again) and finishes at t=4s — genuinely new
+    // completion after the read baseline, so it re-lights.
+    vi.setSystemTime(3_000_000)
+    publishSessionState('rt1', { ...working, busy: true })
+
+    vi.setSystemTime(4_000_000)
+    publishSessionState('rt1', { ...working, busy: false })
+    expect($unreadFinishedSessionIds.get()).toEqual(['s1'])
+
+    vi.useRealTimers()
+  })
+
+  it('openSession marks read before any focus short-circuit', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    $selectedStoredSessionId.set('s1')
+    $unreadFinishedSessionIds.set(['s1'])
+
+    // A no-op navigate — openSession with 'in-place' against the already
+    // selected session hits focusOpenSession and returns without loading.
+    const { openSession } = await import('@/app/open-session')
+    openSession('s1', () => {}, 'in-place')
+
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+
+    vi.useRealTimers()
+  })
+
+  it('clears a persisted unread row when the session is opened', async () => {
+    $sessions.set([session({ id: 's1', unread: true })])
+
+    setSelectedStoredSessionId('s1')
+
+    // The optimistic flip is synchronous; the PATCH is fire-and-forget.
+    expect($sessions.get().find(s => s.id === 's1')?.unread).toBe(false)
+
+    await Promise.resolve()
+    expect(setUnreadRemote).toHaveBeenCalledWith('s1', false, undefined)
+  })
+
+  it('does not PATCH a read row when it is opened', async () => {
+    $sessions.set([session({ id: 's1', unread: false })])
+
+    setSelectedStoredSessionId('s1')
+
+    await Promise.resolve()
+    expect(setUnreadRemote).not.toHaveBeenCalled()
+  })
+})
+
+describe('remembered session id (per profile)', () => {
+  beforeEach(() => {
     localStorage.clear()
-    saveTranscriptTail(storedId, [cached('cached-1', body)])
-  }
+    _resetLegacyDiscardForTests()
+  })
 
-  it('paints the cached tail before any I/O, and the REST transcript replaces it', async () => {
-    seedTail('stored-9')
+  afterEach(() => {
+    localStorage.clear()
+  })
 
-    let painted: string[] = []
+  it('scopes the remembered session by profile so one profile cannot read another', () => {
+    setRememberedSessionId('work-session', 'ai-engineer')
+    setRememberedSessionId('personal-session', 'default')
 
-    vi.mocked(getSessionMessages).mockImplementation(async () => {
-      // Called after the paint, by construction: the paint is synchronous and
-      // precedes both promises.
-      painted = ($transcriptPaint.get()[hydratingKey('stored-9')]?.messages ?? []).map(m => m.id)
+    expect(getRememberedSessionId('ai-engineer')).toBe('work-session')
+    expect(getRememberedSessionId('default')).toBe('personal-session')
+    // A profile with nothing remembered does not inherit another's session.
+    expect(getRememberedSessionId('research')).toBeNull()
+  })
 
-      return { messages: [{ content: 'authoritative', role: 'user' }], session_id: 'stored-9' } as never
+  it('discards legacy unsuffixed keys on first read (zero-migration, refuse-to-guess)', () => {
+    // An existing install remembered its session under the pre-per-profile key.
+    localStorage.setItem('hermes.desktop.lastSessionId', 'legacy-session')
+
+    // Reading from any profile discards the legacy key — ownership is unknowable.
+    expect(getRememberedSessionId('default')).toBeNull()
+    expect(getRememberedSessionId('coder')).toBeNull()
+
+    // The legacy key must be cleared.
+    expect(localStorage.getItem('hermes.desktop.lastSessionId')).toBeNull()
+  })
+
+  it('uses encodeURIComponent so profile names with reserved chars are isolated', () => {
+    setRememberedSessionId('ops-session', 'research/ops')
+
+    expect(getRememberedSessionId('research/ops')).toBe('ops-session')
+    // Verify the storage key uses encoded form.
+    expect(localStorage.getItem('hermes.desktop.lastSessionId.profile.research%2Fops')).toBe('ops-session')
+    // Another profile with a different encoding cannot read it.
+    expect(getRememberedSessionId('research')).toBeNull()
+  })
+
+  it('clearing one profile leaves the others intact', () => {
+    setRememberedSessionId('work-session', 'ai-engineer')
+    setRememberedSessionId('personal-session', 'default')
+
+    setRememberedSessionId(null, 'ai-engineer')
+
+    expect(getRememberedSessionId('ai-engineer')).toBeNull()
+    expect(getRememberedSessionId('default')).toBe('personal-session')
+  })
+})
+
+describe('remembered route (per profile)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    _resetLegacyDiscardForTests()
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('scopes the remembered route by profile so one profile cannot restore another', () => {
+    // A session route embeds a session id. Remembered globally, a cold start
+    // under 'default' would navigate straight into ai-engineer's conversation.
+    setRememberedRoute('/session/work-session', 'ai-engineer')
+    setRememberedRoute('/session/personal-session', 'default')
+
+    expect(getRememberedRoute('ai-engineer')).toBe('/session/work-session')
+    expect(getRememberedRoute('default')).toBe('/session/personal-session')
+    expect(getRememberedRoute('research')).toBeNull()
+  })
+
+  it('discards legacy unsuffixed keys on first read (zero-migration, refuse-to-guess)', () => {
+    localStorage.setItem('hermes.desktop.lastRoute', '/capabilities')
+
+    // Reading from any profile discards the legacy key.
+    expect(getRememberedRoute('default')).toBeNull()
+    expect(getRememberedRoute('coder')).toBeNull()
+
+    expect(localStorage.getItem('hermes.desktop.lastRoute')).toBeNull()
+  })
+
+  it('uses encodeURIComponent so profile names with reserved chars are isolated', () => {
+    setRememberedRoute('/cron', 'research/ops')
+
+    expect(getRememberedRoute('research/ops')).toBe('/cron')
+    expect(localStorage.getItem('hermes.desktop.lastRoute.profile.research%2Fops')).toBe('/cron')
+    expect(getRememberedRoute('research')).toBeNull()
+  })
+
+  it('clearing one profile leaves the others intact', () => {
+    setRememberedRoute('/session/work-session', 'ai-engineer')
+    setRememberedRoute('/session/personal-session', 'default')
+
+    setRememberedRoute(null, 'ai-engineer')
+
+    expect(getRememberedRoute('ai-engineer')).toBeNull()
+    expect(getRememberedRoute('default')).toBe('/session/personal-session')
+  })
+
+  it('route and session id agree on the owner, so restore cannot cross profiles', () => {
+    // The cold-start restore prefers the route over the id, so the two keys
+    // must be written under the same owner or the id scoping is bypassed.
+    const owner = rememberedSessionProfile([session({ id: 'stored-1', profile: 'ai-engineer' })], 'stored-1', 'default')
+
+    setRememberedSessionId('stored-1', owner)
+    setRememberedRoute('/session/stored-1', owner)
+
+    expect(getRememberedRoute('default')).toBeNull()
+    expect(getRememberedSessionId('default')).toBeNull()
+    expect(getRememberedRoute('ai-engineer')).toBe('/session/stored-1')
+  })
+})
+
+describe('sessionBelongsToProfile', () => {
+  it('validates that a session row matches a stored id and target profile', () => {
+    const sessions = [
+      session({ id: 's1', profile: 'ai-engineer' }),
+      session({ id: 's2', profile: 'default' }),
+      session({ id: 's3', profile: 'ai-engineer' })
+    ]
+
+    expect(sessionBelongsToProfile(sessions, 's1', 'ai-engineer')).toBe(true)
+    expect(sessionBelongsToProfile(sessions, 's3', 'ai-engineer')).toBe(true)
+    expect(sessionBelongsToProfile(sessions, 's2', 'default')).toBe(true)
+    // Wrong profile.
+    expect(sessionBelongsToProfile(sessions, 's1', 'default')).toBe(false)
+    // Missing session.
+    expect(sessionBelongsToProfile(sessions, 's-missing', 'ai-engineer')).toBe(false)
+  })
+
+  it('matches on lineage root so compressed tips validate their owner', () => {
+    const sessions = [session({ id: 'tip-2', _lineage_root_id: 'root-1', profile: 'work' })]
+
+    expect(sessionBelongsToProfile(sessions, 'root-1', 'work')).toBe(true)
+    expect(sessionBelongsToProfile(sessions, 'tip-2', 'work')).toBe(true)
+    // Wrong profile even when lineage matches.
+    expect(sessionBelongsToProfile(sessions, 'root-1', 'personal')).toBe(false)
+  })
+
+  it('normalizes blank/empty profiles to default', () => {
+    const sessions = [session({ id: 's1', profile: '' }), session({ id: 's2', profile: null as unknown as string })]
+
+    expect(sessionBelongsToProfile(sessions, 's1', 'default')).toBe(true)
+    expect(sessionBelongsToProfile(sessions, 's1', '')).toBe(true)
+    expect(sessionBelongsToProfile(sessions, 's2', 'default')).toBe(true)
+  })
+
+  it('returns false for an empty session list', () => {
+    expect(sessionBelongsToProfile([], 'any-id', 'default')).toBe(false)
+  })
+})
+
+describe('rememberedSessionProfile', () => {
+  it('keys by the session row owning profile, not the active one', () => {
+    const sessions = [session({ id: 'stored-1', profile: 'ai-engineer' })]
+
+    expect(rememberedSessionProfile(sessions, 'stored-1', 'default')).toBe('ai-engineer')
+  })
+
+  it('matches on the lineage root so a compressed tip resolves its owner', () => {
+    const sessions = [session({ _lineage_root_id: 'root-1', id: 'tip-2', profile: 'work' })]
+
+    expect(rememberedSessionProfile(sessions, 'root-1', 'default')).toBe('work')
+  })
+
+  it('falls back to the active profile for a session not yet in the list', () => {
+    expect(rememberedSessionProfile([], 'uncached', 'research')).toBe('research')
+  })
+
+  it('consults the owner hint for a hidden session absent from the list (Bot Chat 4001 class)', () => {
+    // Bot Mode's canonical chats are born hidden: no sidebar row ever exists,
+    // so without the hint the router would fall back to the ACTIVE profile and
+    // land prompt.submit on a backend that never owned the session.
+    setSessionOwnerHint('hidden-bot-chat', { connectionId: 'local', mode: 'local', profile: 'developer' })
+
+    expect(rememberedSessionProfile([], 'hidden-bot-chat', 'default')).toBe('developer')
+  })
+
+  it('prefers the routed targetProfile over the route profile in the hint fallback', () => {
+    setSessionOwnerHint('hidden-remote-chat', {
+      connectionId: 'ssh-1',
+      profile: 'default',
+      targetProfile: 'clippy'
     })
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
 
-    await openSession('stored-9')
-
-    expect(painted).toEqual(['cached-1'])
-    // Replaced wholesale, and the lane is empty again.
-    expect($messages.get().map(m => m.parts[0])).toEqual([{ text: 'authoritative', type: 'text' }])
-    expect($transcriptPaint.get()).toEqual({})
+    expect(rememberedSessionProfile([], 'hidden-remote-chat', 'default')).toBe('clippy')
   })
 
-  // A paint left behind on a session whose resume failed is a transcript that
-  // looks healthy and cannot receive a message — and typing into it would open a
-  // brand-new chat. So the catch clears FIRST, before the fallback and before
-  // the toast.
-  it('clears the paint BEFORE the error is surfaced, leaving no ghost transcript', async () => {
-    seedTail('stored-9')
-    vi.mocked(getSessionMessages).mockResolvedValue(null as never)
-    vi.mocked(requestGateway).mockRejectedValue(new Error('session not found'))
+  it('still prefers a real session row over the hint', () => {
+    setSessionOwnerHint('rowed-session', { connectionId: 'local', profile: 'wrong-hint' })
+    const sessions = [session({ id: 'rowed-session', profile: 'right-owner' })]
 
-    // The ORDERING is the assertion: a toast raised while a healthy-looking
-    // transcript is still on screen tells the user the chat is fine and the
-    // error is incidental — the opposite of the truth.
-    let paintedWhenReported: string[] = []
-
-    const reported = vi.spyOn(notifications, 'notifyError').mockImplementation(() => {
-      paintedWhenReported = Object.keys($transcriptPaint.get())
-
-      return ''
-    })
-
-    await openSession('stored-9')
-
-    expect(reported).toHaveBeenCalled()
-    expect(paintedWhenReported).toEqual([])
-    expect($transcriptPaint.get()).toEqual({})
-    expect($messages.get()).toEqual([])
-    reported.mockRestore()
+    expect(rememberedSessionProfile(sessions, 'rowed-session', 'default')).toBe('right-owner')
   })
 
-  // Warm promote is synchronous and lossless (MJX-132): the slice is already
-  // whole, so a paint there would be a flicker on top of correct rows.
-  // Deliberately an EMPTY warm slice: a session opened, found empty and parked
-  // is still authoritative about being empty, and `paintCachedTail`'s own
-  // has-messages guard cannot save this path. Promotion is synchronous and
-  // lossless (MJX-132) — a paint here is a flicker on top of a correct answer.
-  it('paints nothing on a warm promote', async () => {
-    seedTail('stored-9')
-    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
-
-    await openSession('stored-9')
-
-    expect($transcriptPaint.get()).toEqual({})
-    expect(requestGateway).not.toHaveBeenCalled()
-  })
-
-  // A transport-only rebind: the transcript on screen is already correct and
-  // richer than any cache.
-  it('paints nothing on a warm reclaim', async () => {
-    seedTail('stored-9')
-    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
-    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
-
-    await openSession('stored-9', { forceResume: true })
-
-    expect($transcriptPaint.get()).toEqual({})
-  })
-
-  // A deleted conversation must not be able to paint itself back onto the next
-  // launch — under ANY of its lineage aliases.
-  it('drops the cached tail when the session is deleted', async () => {
-    seedTail('stored-9')
-    $sessions.set([{ _lineage_root_id: 'stored-root', id: 'stored-9' } as unknown as SessionInfo])
-    saveTranscriptTail('stored-root', [cached('cached-root', 'older identity')])
-    vi.mocked(deleteSession).mockResolvedValue(undefined as never)
-
-    await deleteSessionLocal('stored-9')
-
-    expect(readTranscriptTail('stored-9')).toBeNull()
-    expect(readTranscriptTail('stored-root')).toBeNull()
+  it('normalizes a blank active profile to default', () => {
+    expect(rememberedSessionProfile([], null, '')).toBe('default')
+    expect(rememberedSessionProfile([], null, null)).toBe('default')
   })
 })
 
-describe('adoptLiveSession — a session created a moment ago', () => {
-  it('binds the LIVE runtime id and focuses it, with no resume and no transcript read', () => {
-    resetSessionStates()
-    $sessions.set([])
-    vi.mocked(requestGateway).mockClear()
-    vi.mocked(getSessionMessages).mockClear()
+describe('knownSessionProfile', () => {
+  it('returns the row owner when the session is listed', () => {
+    const sessions = [session({ id: 'stored-1', profile: 'ai-engineer' })]
 
-    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-1', storedSessionId: 'stored-1' })
-
-    expect($activeSessionKey.get()).toBe('run-1')
-    expect($activeStoredSessionId.get()).toBe('stored-1')
-    expect($sessionStates.get()['run-1']).toMatchObject({
-      busy: false,
-      runtimeSessionId: 'run-1',
-      storedSessionId: 'stored-1'
-    })
-    // Found again by its durable id — what the router and the focus lookup use.
-    expect(runtimeKeyForStoredSession('stored-1')).toBe('run-1')
-    // There is nothing to wake: a resume here is what broke a hidden session.
-    expect(requestGateway).not.toHaveBeenCalled()
-    expect(getSessionMessages).not.toHaveBeenCalled()
+    expect(knownSessionProfile(sessions, 'stored-1')).toBe('ai-engineer')
   })
 
-  it('writes NO sidebar row — a hidden session stays out of the shared list', () => {
-    // A bot's forever-chat and an ordinary session are different modes of
-    // conversation; a row here is exactly the overlap hiding exists to prevent.
-    resetSessionStates()
-    $sessions.set([])
+  it('returns the owner hint for a hidden session absent from the list', () => {
+    setSessionOwnerHint('hidden-bot-chat', { connectionId: 'local', mode: 'local', profile: 'developer' })
 
-    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-2', storedSessionId: 'stored-2' })
-
-    expect($sessions.get()).toEqual([])
+    expect(knownSessionProfile([], 'hidden-bot-chat')).toBe('developer')
   })
 
-  it('remembers the owner that no listing could ever report', () => {
-    resetSessionStates()
-    $sessions.set([])
-
-    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-3', storedSessionId: 'stored-3' })
-
-    expect(knownSessionProfile('stored-3')).toBe('radar')
+  it('returns undefined for an unknown session — NEVER falls back to active', () => {
+    // This is the whole point of the no-active-fallback architecture: an
+    // unresolved owner must be undefined so the caller does a cross-profile
+    // probe, not silently route the RPC to whatever profile is on screen.
+    expect(knownSessionProfile([], 'totally-unknown')).toBeUndefined()
+    expect(knownSessionProfile([], null)).toBeUndefined()
   })
 })
 
-describe('openSession — a resume that fails never fakes a live binding', () => {
-  const liveKeyOf = (storedId: string) => {
-    const key = runtimeKeyForStoredSession(storedId)
-
-    return key ? ($sessionStates.get()[key]?.runtimeSessionId ?? null) : null
-  }
-
-  it('keeps the history on screen but leaves the session UNBOUND', async () => {
-    // A stored id posing as a runtime id made the open look successful, and the
-    // first keystroke then went out as prompt.submit with an id the gateway's
-    // runtime map has never held: "session not found".
-    resetSessionStates()
-    vi.mocked(getSessionMessages)
-      .mockReset()
-      .mockResolvedValue({
-        messages: [{ content: 'earlier words', role: 'user' }],
-        session_id: 'stored-dead'
-      } as never)
-    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
-
-    await openSession('stored-dead')
-
-    expect($messages.get().some(message => message.role === 'user')).toBe(true)
-    expect($sessionId.get()).toBeFalsy()
-    expect(liveKeyOf('stored-dead')).toBeFalsy()
+describe('knownSessionOwner', () => {
+  it('preserves a registry connection on a same-named session row', () => {
+    expect(
+      knownSessionOwner(
+        [session({ connection_id: 'source-b', id: 'shared-session', profile: 'default' })],
+        'shared-session'
+      )
+    ).toEqual({ connectionId: 'source-b', profile: 'default' })
   })
 
-  it('leaves it unbound when the transcript page is merely empty, too', async () => {
-    // `{messages: []}` is truthy — it took the same fake-binding branch.
-    resetSessionStates()
-    vi.mocked(getSessionMessages)
-      .mockReset()
-      .mockResolvedValue({ messages: [], session_id: 'stored-dead-2' } as never)
-    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
+  it('preserves a composite owner hint when the row is not listed', () => {
+    const owner = { connectionId: 'source-a', profile: 'default', targetProfile: 'backend-default' }
+    setSessionOwnerHint('hidden-session', owner)
 
-    await openSession('stored-dead-2')
-
-    expect($sessionId.get()).toBeFalsy()
-  })
-
-  it('re-opening an unbound session resumes again, and binds when it now succeeds', async () => {
-    // Promoting a warm-but-UNBOUND slice without a resume is a chat that can
-    // neither stream nor submit, and a plugin waiting on its binding ran out the
-    // clock as "exhausted".
-    resetSessionStates()
-    vi.mocked(getSessionMessages)
-      .mockReset()
-      .mockResolvedValue({ messages: [{ content: 'hi', role: 'user' }], session_id: 'stored-3' } as never)
-    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
-
-    await openSession('stored-3')
-    expect($sessionId.get()).toBeFalsy()
-
-    vi.mocked(requestGateway).mockReset().mockResolvedValue({ messages: [], session_id: 'runtime-3' })
-
-    await openSession('stored-3')
-
-    expect(requestGateway).toHaveBeenCalled()
-    expect($sessionId.get()).toBe('runtime-3')
-    expect(liveKeyOf('stored-3')).toBe('runtime-3')
-  })
-})
-
-describe('last-session memory — a hidden plugin session is never the place to land', () => {
-  it('remembers an ordinary session (the control) but never a hidden one', () => {
-    resetSessionStates()
-    $sessions.set([])
-
-    // CONTROL. If the last-session subscriber did not run under test at all, the
-    // hidden assertion below would pass for nothing.
-    adoptLiveSession({ runtimeSessionId: 'run-c', storedSessionId: 'stored-control' })
-    expect(lastOpenedSessionId()).toBe('stored-control')
-
-    // A bot's forever-chat restored into the main pane at boot is two modes of
-    // conversation overlapping.
-    adoptLiveSession({ hidden: true, runtimeSessionId: 'run-h', storedSessionId: 'stored-hidden' })
-    expect(lastOpenedSessionId()).toBe('stored-control')
-  })
-
-  it('forgets a hidden session that was ALREADY remembered', () => {
-    // An install that opened a bot's chat before this guard has that id persisted.
-    resetSessionStates()
-    $sessions.set([])
-
-    adoptLiveSession({ runtimeSessionId: 'run-p', storedSessionId: 'stored-polluted' })
-    expect(lastOpenedSessionId()).toBe('stored-polluted')
-
-    markPluginOwnedSession('stored-polluted')
-
-    expect(lastOpenedSessionId()).not.toBe('stored-polluted')
-  })
-})
-
-describe('adoptLiveSession — bound without activating', () => {
-  it('binds the live slice for a tab, and leaves the main chat where it was', () => {
-    resetSessionStates()
-    $sessions.set([])
-
-    adoptLiveSession({ runtimeSessionId: 'run-main', storedSessionId: 'stored-main' })
-    adoptLiveSession({ activate: false, runtimeSessionId: 'run-tab', storedSessionId: 'stored-tab' })
-
-    expect($activeStoredSessionId.get()).toBe('stored-main')
-    expect($activeSessionKey.get()).toBe('run-main')
-
-    const key = runtimeKeyForStoredSession('stored-tab')
-
-    expect(key ? $sessionStates.get()[key]?.runtimeSessionId : null).toBe('run-tab')
+    expect(knownSessionOwner([], 'hidden-session')).toEqual(owner)
   })
 })

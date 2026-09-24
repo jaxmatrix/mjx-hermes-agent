@@ -1,5 +1,13 @@
 export { TRANSLATIONS } from './catalog'
-export { $locale as $appLocale, type I18nContextValue, I18nProvider, LOCALE_META, useI18n } from './context'
+export {
+  getConfigDisplayLanguage,
+  type I18nConfigClient,
+  type I18nContextValue,
+  I18nProvider,
+  LOCALE_META,
+  useI18n,
+  withConfigDisplayLanguage
+} from './context'
 export {
   DEFAULT_LOCALE,
   isLocale,
@@ -8,13 +16,17 @@ export {
   localeConfigValue,
   normalizeLocale
 } from './languages'
-export { createPluginI18n, registerPluginLocales, translatePlugin, usePluginI18n } from './plugin-i18n'
-export type {
-  PluginI18n,
-  PluginLocaleBundles,
-  PluginMessages,
-  PluginMessageValue,
-  PluginTranslate
+export { LocalizedTabTitle } from './localized-tab-title'
+export {
+  createPluginI18n,
+  type PluginI18n,
+  type PluginLocaleBundles,
+  type PluginMessages,
+  type PluginMessageValue,
+  type PluginTranslate,
+  registerPluginLocales,
+  translatePlugin,
+  usePluginI18n
 } from './plugin-i18n'
-export { getRuntimeI18nLocale, setRuntimeI18nLocale, translateFrom, translateNow } from './runtime'
+export { setRuntimeI18nLocale, translateNow } from './runtime'
 export type { Locale, ToolTitleKey, Translations } from './types'

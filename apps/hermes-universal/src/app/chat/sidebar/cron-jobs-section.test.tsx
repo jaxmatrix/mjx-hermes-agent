@@ -15,6 +15,8 @@ import { confirm } from '@/store/confirm'
 import type { CronJob } from '@/types/hermes'
 
 const hermes = vi.hoisted(() => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   deleteCronJob: vi.fn(async () => ({ ok: true })),
   getCronJobRuns: vi.fn(async () => []),
   pauseCronJob: vi.fn(async (id: string) => ({ enabled: false, id })),
@@ -69,7 +71,10 @@ function openRowMenu(title: string) {
     button => button.getAttribute('aria-label') === 'Cron job actions'
   )!
 
+  // Radix DropdownMenu opens on click (pointerdown alone is not enough for
+  // item `onSelect` to fire when the menuitem is later clicked).
   fireEvent.pointerDown(kebab, { button: 0, pointerType: 'mouse' })
+  fireEvent.click(kebab)
 
   return kebab
 }
@@ -114,7 +119,7 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pause cron' }))
 
-    await waitFor(() => expect(hermes.pauseCronJob).toHaveBeenCalledWith('alpha-job', undefined))
+    await waitFor(() => expect(hermes.pauseCronJob).toHaveBeenCalledWith('alpha-job'))
     expect(hermes.pauseCronJob).toHaveBeenCalledTimes(1)
 
     openRowMenu('Alpha backup')
@@ -128,12 +133,12 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Trigger now' }))
 
-    expect(props.onTriggerJob).toHaveBeenLastCalledWith('alpha-job', undefined)
+    expect(props.onTriggerJob).toHaveBeenLastCalledWith('alpha-job')
 
     openRowMenu('Zulu digest')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Trigger now' }))
 
-    expect(props.onTriggerJob).toHaveBeenLastCalledWith('zulu-job', undefined)
+    expect(props.onTriggerJob).toHaveBeenLastCalledWith('zulu-job')
   })
 
   it('asks before deleting, and deletes the row it was opened on', async () => {
@@ -157,7 +162,7 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
 
-    await waitFor(() => expect(hermes.deleteCronJob).toHaveBeenCalledWith('alpha-job', undefined))
+    await waitFor(() => expect(hermes.deleteCronJob).toHaveBeenCalledWith('alpha-job'))
   })
 
   it('reaches the same actions by right-click, from one shared item set', async () => {

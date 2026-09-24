@@ -1,11 +1,11 @@
+import { atom } from 'nanostores'
+
 import { getStarmapGraph } from '@/hermes'
-import { atom } from '@/store/atom'
 import type { StarmapGraph } from '@/types/hermes'
 
-// On-demand cache for the memory graph. The scan touches the skills catalog +
-// usage ledger + memory files, so it's fetched only when the view opens (and on
-// explicit refresh). Ported from apps/desktop/src/store/starmap.ts (per-profile
-// eviction dropped — mobile is single-profile).
+// On-demand cache for the star map. The graph scan touches the skills catalog +
+// usage ledger + memory files, so we fetch it only when the panel opens (and on
+// an explicit refresh), never on a turn boundary.
 export const $starmapGraph = atom<StarmapGraph | null>(null)
 export const $starmapLoading = atom(false)
 export const $starmapError = atom<null | string>(null)
@@ -38,7 +38,7 @@ export async function loadStarmapGraph(force = false): Promise<void> {
   return inflight
 }
 
-/** Drop one node from the cached graph immediately; return a rollback. */
+/** Drop one node from the cached graph immediately; return rollback. */
 export function evictStarmapNode(id: string): () => void {
   const prev = $starmapGraph.get()
 
@@ -46,11 +46,20 @@ export function evictStarmapNode(id: string): () => void {
     return () => {}
   }
 
-  $starmapGraph.set({
+  const next: StarmapGraph = {
     ...prev,
     nodes: prev.nodes.filter(node => node.id !== id),
     edges: prev.edges.filter(edge => edge.source !== id && edge.target !== id)
-  })
+  }
+
+  $starmapGraph.set(next)
 
   return () => $starmapGraph.set(prev)
+}
+
+/** Drop the cache so the next open refetches against the now-active profile. */
+export function resetStarmapGraph(): void {
+  inflight = null
+  $starmapGraph.set(null)
+  $starmapError.set(null)
 }

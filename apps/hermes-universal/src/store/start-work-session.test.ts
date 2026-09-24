@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { requestComposerInsert } from '@/app/chat/composer/focus'
 import { $currentCwd, resetChat, setCurrentCwd } from '@/store/chat'
 import { $startWorkSessionRequest, requestStartWorkSession } from '@/store/projects'
-import { startSessionInWorkspace } from '@/store/session'
+import { startSessionInWorkspace } from '@/store/session-lifecycle'
 
 vi.mock('@/app/chat/composer/focus', () => ({ requestComposerInsert: vi.fn() }))
 

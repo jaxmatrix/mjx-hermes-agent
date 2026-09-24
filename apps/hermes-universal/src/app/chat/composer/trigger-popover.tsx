@@ -1,9 +1,10 @@
 import type { Unstable_TriggerItem } from '@assistant-ui/core'
-import { Fragment, useLayoutEffect, useRef } from 'react'
+import { Fragment, useEffect, useRef } from 'react'
 
 import { referenceKind, referenceStyle } from '@/components/assistant-ui/reference-kinds'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
@@ -43,7 +44,7 @@ function rowKind(item: Unstable_TriggerItem, isSlash: boolean): string {
 }
 
 const ROW_CLASS = [
-  'relative flex w-full cursor-default select-none items-center gap-2 rounded-md px-2 py-1 text-start',
+  'relative flex w-full cursor-default select-none items-center gap-2 rounded-md px-2 py-1 text-left',
   'outline-hidden transition-colors hover:bg-(--ui-bg-tertiary)',
   'data-[highlighted]:bg-(--ui-bg-tertiary) data-[highlighted]:text-foreground'
 ].join(' ')
@@ -51,46 +52,17 @@ const ROW_CLASS = [
 const GROUP_HEADER_CLASS =
   'select-none px-2 pb-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-(--ui-text-tertiary)'
 
-/**
- * Where the scrollport has to sit for the active row to be inside it.
- *
- * The drawer caps at 22rem — about twelve rows — and a bare `/` lists every
- * command, every skill and every theme, while `@` lists whatever the workspace
- * has. Arrowing past the twelfth row moved the highlight out of sight and left
- * the list motionless, so a keyboard user was navigating a menu they could no
- * longer see. The mouse never hit this (hovering a row means it is on screen),
- * which is why it survived the row unification unnoticed.
- *
- * Numbers in, number out — no DOM, so it unit-tests without layout, and the
- * caller writes `scrollTop` only when this returns something new (a no-op write
- * still cancels a smooth scroll in WebKit).
- */
-export function nearestScrollTop(view: { height: number; scrollTop: number }, row: { height: number; top: number }) {
-  if (row.top < view.scrollTop) {
-    return row.top
-  }
-
-  const overshoot = row.top + row.height - (view.scrollTop + view.height)
-
-  // A row taller than the scrollport must align to its TOP, not its bottom, or
-  // its label scrolls off the top edge to reveal empty padding.
-  return overshoot > 0 ? (row.height > view.height ? row.top : view.scrollTop + overshoot) : view.scrollTop
-}
-
-/** Stable id per row, so the listbox can name its active option. */
-const rowId = (index: number) => `composer-completion-row-${index}`
-
 interface ComposerTriggerPopoverProps {
   activeIndex: number
   items: readonly Unstable_TriggerItem[]
-  kind: ':' | '@' | '/'
+  kind: '@' | '/' | ':'
   loading: boolean
   onHover: (index: number) => void
   onPick: (item: Unstable_TriggerItem) => void
   placement?: 'bottom' | 'top'
   /** The `@kind:` browse the list is filtered to, when there is one. Rendered
    *  as a header so the scope reads as the mode it is — the raw `@folder:` in
-   *  the editor otherwise looks like syntax the user has to maintain. */
+   *  the editor otherwise looks like syntax the user has to finish by hand. */
   scope?: DirectiveScope
 }
 
@@ -101,18 +73,10 @@ interface ComposerTriggerPopoverProps {
  * to be two layouts in one file — `@` horizontal with an icon, `/` stacked with
  * none — which is why picking a file and picking a skill felt like features
  * from different apps. Icons and accents come from the shared reference
- * vocabulary (`reference-kinds`), so a row looks like the chip it will become;
- * the local `AT_ICON_BY_TYPE` this replaced had already drifted from it (it drew
- * a file as `book`, the chip as `file`).
+ * vocabulary, so a row looks like the chip it will become.
  *
  * `:` emoji is the one exception: the emoji IS the icon, so it renders as a
- * single display string. The old `@` branch drew it a `symbol-misc` glyph
- * beside the emoji, because `AT_ICON_BY_TYPE` had no emoji entry to find.
- *
- * Two things here are deliberately NOT desktop's (see MJXHRM-400): the list
- * follows the keyboard's highlight into view, and each row is a real
- * `role="option"` inside the `role="listbox"` it always claimed to be. Both are
- * reachability, which the row unification never covered on either app.
+ * single display string (Slack's exact shape).
  */
 export function ComposerTriggerPopover({
   activeIndex,
@@ -128,27 +92,61 @@ export function ComposerTriggerPopover({
   const copy = t.composer
   const isSlash = kind === '/'
   const isEmoji = kind === ':'
-  const listRef = useRef<HTMLDivElement | null>(null)
-  const activeRowRef = useRef<HTMLButtonElement | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const hoverIndexRef = useRef(-1)
 
-  // Follow the keyboard. Layout effect, not an effect: the scroll must land in
-  // the same frame the highlight moves, or the row visibly jumps.
-  useLayoutEffect(() => {
+  // Only keyboard navigation should move the drawer. A hover echo already points
+  // at a visible row and scrolling it can shift another row under the pointer.
+   
+  useEffect(() => {
     const list = listRef.current
-    const row = activeRowRef.current
 
-    if (!list || !row) {
+    if (!list) {
       return
     }
 
-    const next = nearestScrollTop(
-      { height: list.clientHeight, scrollTop: list.scrollTop },
-      { height: row.offsetHeight, top: row.offsetTop }
-    )
+    const isHoverEcho = activeIndex === hoverIndexRef.current
 
-    if (next !== list.scrollTop) {
-      list.scrollTop = next
+    hoverIndexRef.current = -1
+
+    if (isHoverEcho) {
+      return
     }
+
+    if (activeIndex === 0) {
+      // `nearest` keeps the first row visible but can leave its group header
+      // clipped, so wrapping to the beginning restores the complete top edge.
+      list.scrollTop = 0
+
+      return
+    }
+
+    const highlighted = list.querySelector<HTMLElement>('[data-highlighted]')
+
+    if (!highlighted) {
+      return
+    }
+
+    // Keep scrolling local to the drawer. `scrollIntoView` may also move the
+    // transcript or window because it operates on every scrollable ancestor.
+    const listRect = list.getBoundingClientRect()
+    const highlightedRect = highlighted.getBoundingClientRect()
+    const visibleTop = listRect.top + list.clientTop
+    const visibleBottom = visibleTop + list.clientHeight
+    const topDelta = highlightedRect.top - visibleTop
+    const bottomDelta = highlightedRect.bottom - visibleBottom
+    const overflowsTop = topDelta < 0
+    const overflowsBottom = bottomDelta > 0
+
+    // A row that is fully visible needs no movement. An oversized row that
+    // spans both edges already covers the viewport, so moving it would not
+    // reveal the whole row and would only add churn. Otherwise align whichever
+    // edge requires the shorter movement, matching `block: nearest` semantics.
+    if (overflowsTop === overflowsBottom) {
+      return
+    }
+
+    list.scrollTop += Math.abs(topDelta) < Math.abs(bottomDelta) ? topDelta : bottomDelta
   }, [activeIndex, items])
 
   let lastGroup: string | undefined
@@ -202,33 +200,38 @@ export function ComposerTriggerPopover({
           return (
             <Fragment key={item.id}>
               {showHeader && <div className={cn(GROUP_HEADER_CLASS, isFirstHeader ? 'pt-0.5' : 'pt-2')}>{group}</div>}
-              <button
-                aria-selected={active}
-                className={ROW_CLASS}
-                data-highlighted={active ? '' : undefined}
-                id={rowId(index)}
-                onClick={() => onPick(item)}
-                onMouseEnter={() => onHover(index)}
-                ref={active ? activeRowRef : undefined}
-                role="option"
-                type="button"
-              >
-                {isEmoji ? (
-                  // The emoji is its own icon — a glyph column beside it reads
-                  // as decoration.
-                  <span className="min-w-0 shrink truncate leading-5 text-foreground">{display}</span>
-                ) : (
-                  <>
-                    <span className="grid size-4 shrink-0 place-items-center text-(--ref-color)" data-ref={refKind}>
-                      <Codicon name={referenceStyle(refKind).codicon} size="0.875rem" />
-                    </span>
-                    <span className="min-w-0 shrink truncate font-medium leading-5 text-foreground">{display}</span>
-                    {description && (
-                      <span className="min-w-0 flex-1 truncate leading-5 text-(--ui-text-tertiary)">{description}</span>
-                    )}
-                  </>
-                )}
-              </button>
+              <Tip delayDuration={400} label={kind === '/' ? description : undefined} placement="row" sideOffset={4}>
+                <button
+                  className={ROW_CLASS}
+                  data-highlighted={active ? '' : undefined}
+                  onClick={() => onPick(item)}
+                  onMouseEnter={() => {
+                    // React bails out when hovering the already-active row. Do
+                    // not leave a marker behind for a later items refresh.
+                    hoverIndexRef.current = index === activeIndex ? -1 : index
+                    onHover(index)
+                  }}
+                  type="button"
+                >
+                  {isEmoji ? (
+                    // The emoji is its own icon — a glyph column beside it reads
+                    // as decoration.
+                    <span className="min-w-0 shrink truncate leading-5 text-foreground">{display}</span>
+                  ) : (
+                    <>
+                      <span className="grid size-4 shrink-0 place-items-center text-(--ref-color)" data-ref={refKind}>
+                        <Codicon name={referenceStyle(refKind).codicon} size="0.875rem" />
+                      </span>
+                      <span className="min-w-0 shrink truncate font-medium leading-5 text-foreground">{display}</span>
+                      {description && (
+                        <span className="min-w-0 flex-1 truncate leading-5 text-(--ui-text-tertiary)">
+                          {description}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </button>
+              </Tip>
             </Fragment>
           )
         })

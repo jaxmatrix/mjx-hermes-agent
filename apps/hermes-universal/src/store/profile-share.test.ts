@@ -1,221 +1,128 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/gateway-rest', () => ({
-  exportProfileArchive: vi.fn(),
-  importProfileArchive: vi.fn()
-}))
-vi.mock('@/lib/desktop-fs', () => ({ selectRemotePaths: vi.fn() }))
-vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
-vi.mock('@/store/profiles', async importActual => {
-  const actual = await importActual<Record<string, unknown>>()
+import type { DesktopTheme } from '@/themes/types'
+import type { ProfileDesktopOverlay } from '@/types/hermes'
 
-  return { ...actual, refreshProfiles: vi.fn().mockResolvedValue(undefined), setActiveProfile: vi.fn() }
+// Keep side-effecting transitive imports inert (gateway sockets, REST).
+vi.mock('@/store/gateway', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $gateway: atom<unknown>(null),
+    ensureGatewayForProfile: vi.fn(async () => undefined),
+    openGatewayForProfile: vi.fn(async () => undefined)
+  }
 })
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+  exportProfileArchive: vi.fn(async () => ({ archive: '/tmp/out.tar.gz', ok: true })),
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  importProfileArchive: vi.fn(async () => ({ desktop: null, name: 'imported', ok: true, path: '/tmp/p' })),
+  setApiRequestProfile: vi.fn()
+}))
+vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))
+vi.mock('@/store/starmap', () => ({ resetStarmapGraph: vi.fn() }))
 
-import { $layoutTree } from '@/components/pane-shell/tree/store'
-import { selectRemotePaths } from '@/lib/desktop-fs'
-import { exportProfileArchive, importProfileArchive, type ProfileDesktopOverlay } from '@/lib/gateway-rest'
-import { $mode, $skin } from '@/themes/context'
-import { $userThemes, resolveTheme } from '@/themes/user-themes'
+const { applyDesktopOverlay, buildDesktopOverlay, exportProfileBundle } = await import('./profile-share')
+const { $profileColors, setProfileColor } = await import('./profile')
+const { modePref, skinPref } = await import('@/themes/context')
+const { $userThemes } = await import('@/themes/user-themes')
+const { $layoutTree } = await import('@/components/pane-shell/tree/store')
+const { exportProfileArchive } = await import('@/hermes')
 
-import { notify, notifyError } from './notifications'
-import { $profileColors, setProfileColor } from './profile'
-import {
-  applyDesktopOverlay,
-  buildDesktopOverlay,
-  DESKTOP_OVERLAY_FILENAME,
-  exportProfileBundle,
-  importProfileBundle,
-  runExportProfileFlow,
-  runImportProfileFlow
-} from './profile-share'
-
-const mockExport = vi.mocked(exportProfileArchive)
-const mockImport = vi.mocked(importProfileArchive)
-
-// A minimal but complete user theme, so installUserTheme accepts it and the
-// round-trip has something non-built-in to carry.
-const userTheme = {
-  name: 'ocean',
-  label: 'Ocean',
-  description: 'A bundled theme',
-  colors: { background: '#001018', foreground: '#e6f2ff', primary: '#3aa0ff' }
-}
-
-const tree = { id: 'root', type: 'group' as const, panes: ['chat'], active: 'chat' }
+// isValidTheme only requires background/foreground/primary at runtime; the
+// static type wants the full palette, hence the cast.
+const roseTheme = {
+  name: 'rose-quartz',
+  label: 'Rose Quartz',
+  description: 'test theme',
+  colors: { background: '#fff0f5', foreground: '#221122', primary: '#e91e63' }
+} as unknown as DesktopTheme
 
 beforeEach(() => {
-  vi.clearAllMocks()
-  localStorage.clear()
-  $skin.set('nous')
-  $mode.set('system')
+  window.localStorage.clear()
   $userThemes.set({})
   $profileColors.set({})
-  $layoutTree.set(null)
-  mockExport.mockResolvedValue({ ok: true, archive: '/home/h/.hermes/profile-exports/work.tar.gz' })
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
 })
 
 describe('buildDesktopOverlay', () => {
-  it('snapshots the appearance the receiver needs to reproduce the look', () => {
-    $skin.set('nous')
-    $mode.set('dark')
-    setProfileColor('work', '#ff8800')
+  it('snapshots skin, mode, rail color, and the layout tree for the profile', () => {
+    skinPref.assign('glam', 'mono')
+    modePref.assign('glam', 'dark')
+    setProfileColor('glam', '#e91e63')
 
-    const overlay = buildDesktopOverlay('work')
+    const overlay = buildDesktopOverlay('glam')
 
-    expect(overlay).toMatchObject({ version: 1, skin: 'nous', mode: 'dark', profileColor: '#ff8800' })
+    expect(overlay.version).toBe(1)
+    expect(overlay.skin).toBe('mono')
+    expect(overlay.mode).toBe('dark')
+    expect(overlay.profileColor).toBe('#e91e63')
+    // Built-in skin → no bundled theme definitions.
+    expect(overlay.themes).toBeUndefined()
   })
 
-  it('bundles the full definition of a non-built-in skin, and nothing for a built-in', () => {
-    $userThemes.set({ ocean: userTheme as never })
-    $skin.set('ocean')
+  it('bundles the full definition of a non-built-in skin', () => {
+    $userThemes.set({ 'rose-quartz': roseTheme })
+    skinPref.assign('glam', 'rose-quartz')
 
-    expect(buildDesktopOverlay('work').themes).toEqual({ ocean: userTheme })
+    const overlay = buildDesktopOverlay('glam')
 
-    $skin.set('nous')
-    expect(buildDesktopOverlay('work').themes).toBeUndefined()
-  })
-
-  it('normalizes the profile key, so `default` and empty agree', () => {
-    setProfileColor('default', '#123456')
-
-    expect(buildDesktopOverlay('').profileColor).toBe('#123456')
-  })
-})
-
-describe('export → import round trip', () => {
-  it('stages the overlay into the archive under the agreed filename', async () => {
-    $skin.set('nous')
-    $mode.set('light')
-    setProfileColor('work', '#00ccaa')
-
-    const archive = await exportProfileBundle('work')
-
-    expect(archive).toBe('/home/h/.hermes/profile-exports/work.tar.gz')
-    const [name, opts] = mockExport.mock.calls[0]
-    expect(name).toBe('work')
-    const staged = JSON.parse(opts?.extraFiles?.[DESKTOP_OVERLAY_FILENAME] ?? '{}')
-    expect(staged).toMatchObject({ version: 1, skin: 'nous', mode: 'light', profileColor: '#00ccaa' })
-  })
-
-  it('restores skin, mode, bundled theme and rail color on the receiving side', async () => {
-    // Sender.
-    $userThemes.set({ ocean: userTheme as never })
-    $skin.set('ocean')
-    $mode.set('dark')
-    setProfileColor('work', '#ff0066')
-    await exportProfileBundle('work')
-
-    const overlay = JSON.parse(
-      mockExport.mock.calls[0][1]?.extraFiles?.[DESKTOP_OVERLAY_FILENAME] ?? '{}'
-    ) as ProfileDesktopOverlay
-
-    // Receiver: a clean machine that has never seen this theme.
-    $userThemes.set({})
-    $skin.set('nous')
-    $mode.set('system')
-    $profileColors.set({})
-    mockImport.mockResolvedValue({ ok: true, name: 'work', path: '/p/work', desktop: overlay })
-
-    const name = await importProfileBundle('/tmp/work.tar.gz')
-
-    expect(name).toBe('work')
-    expect(resolveTheme('ocean')?.label).toBe('Ocean')
-    expect($skin.get()).toBe('ocean')
-    expect($mode.get()).toBe('dark')
-    expect($profileColors.get().work).toBe('#ff0066')
-  })
-
-  it('adopts a bundled layout tree', async () => {
-    mockImport.mockResolvedValue({
-      ok: true,
-      name: 'work',
-      path: '/p/work',
-      desktop: { version: 1, layoutTree: tree }
-    })
-
-    await importProfileBundle('/tmp/work.tar.gz')
-
-    expect($layoutTree.get()).toMatchObject({ type: 'group', panes: ['chat'] })
+    expect(overlay.skin).toBe('rose-quartz')
+    expect(overlay.themes).toEqual({ 'rose-quartz': roseTheme })
   })
 })
 
-describe('applyDesktopOverlay — hostile input', () => {
-  it('is a no-op for an archive that carried no overlay (a plain CLI export)', () => {
-    applyDesktopOverlay('work', null)
-    applyDesktopOverlay('work', undefined)
-
-    expect($skin.get()).toBe('nous')
-    expect($mode.get()).toBe('system')
-  })
-
-  it('refuses a skin that resolves to nothing rather than pointing the pref at air', () => {
-    applyDesktopOverlay('work', { version: 1, skin: 'not-a-theme-anyone-has' })
-
-    expect($skin.get()).toBe('nous')
-  })
-
-  it('refuses a mode that is not one of the three', () => {
-    applyDesktopOverlay('work', { version: 1, mode: 'chartreuse' })
-
-    expect($mode.get()).toBe('system')
-  })
-
-  it('keeps the current layout when the bundled tree is junk', () => {
-    $layoutTree.set(null)
-    applyDesktopOverlay('work', { version: 1, layoutTree: { nope: true } })
-
-    expect($layoutTree.get()).toBeNull()
-  })
-
-  it('applies the good half of a half-malformed overlay', () => {
-    applyDesktopOverlay('work', {
+describe('applyDesktopOverlay', () => {
+  it('installs bundled themes and assigns skin/mode/color to the new profile', () => {
+    applyDesktopOverlay('glam-copy', {
       version: 1,
+      skin: 'rose-quartz',
       mode: 'dark',
-      skin: 'not-a-theme',
-      themes: { junk: { name: 42 } as never },
-      profileColor: '#abcdef'
+      themes: { 'rose-quartz': roseTheme },
+      profileColor: '#e91e63'
     })
 
-    expect($mode.get()).toBe('dark')
-    expect($skin.get()).toBe('nous')
-    expect($profileColors.get().work).toBe('#abcdef')
+    expect($userThemes.get()['rose-quartz']).toEqual(roseTheme)
+    expect(skinPref.resolve('glam-copy')).toBe('rose-quartz')
+    expect(modePref.resolve('glam-copy')).toBe('dark')
+    expect($profileColors.get()['glam-copy']).toBe('#e91e63')
+  })
+
+  it('ignores a skin that resolves to nothing and junk layout trees', () => {
+    const before = $layoutTree.get()
+
+    applyDesktopOverlay('glam-copy', {
+      skin: 'no-such-skin',
+      layoutTree: { bogus: true }
+    } as ProfileDesktopOverlay)
+
+    // Unresolvable skin → pref falls back to the default resolution.
+    expect(skinPref.resolve('glam-copy')).toBe(skinPref.resolve('some-unassigned'))
+    expect($layoutTree.get()).toBe(before)
+  })
+
+  it('is a no-op for a plain CLI archive (no overlay)', () => {
+    expect(() => applyDesktopOverlay('glam-copy', null)).not.toThrow()
+    expect(() => applyDesktopOverlay('glam-copy', undefined)).not.toThrow()
   })
 })
 
-describe('flows', () => {
-  it('export reports the BACKEND path it landed on', async () => {
-    const archive = await runExportProfileFlow('work')
+describe('exportProfileBundle', () => {
+  it('stages desktop.json into the archive through extra_files', async () => {
+    skinPref.assign('glam', 'mono')
 
-    expect(archive).toBe('/home/h/.hermes/profile-exports/work.tar.gz')
-    expect(notify).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'success', message: '/home/h/.hermes/profile-exports/work.tar.gz' })
-    )
-    // No `output` — the backend names the file, because on a remote gateway the
-    // archive is written on that machine.
-    expect(mockExport.mock.calls[0][1]?.output).toBeUndefined()
-  })
+    const archive = await exportProfileBundle('glam', '/tmp/glam.tar.gz')
 
-  it('export surfaces a failure instead of throwing at the caller', async () => {
-    mockExport.mockRejectedValue(new Error('no such profile'))
-
-    await expect(runExportProfileFlow('gone')).resolves.toBeNull()
-    expect(notifyError).toHaveBeenCalled()
-  })
-
-  it('import picks on the BACKEND filesystem, not through a native dialog', async () => {
-    vi.mocked(selectRemotePaths).mockResolvedValue(['/srv/hermes/work.tar.gz'])
-    mockImport.mockResolvedValue({ ok: true, name: 'work', path: '/p/work', desktop: null })
-
-    await expect(runImportProfileFlow()).resolves.toBe('work')
-    expect(selectRemotePaths).toHaveBeenCalled()
-    expect(mockImport).toHaveBeenCalledWith('/srv/hermes/work.tar.gz', undefined)
-  })
-
-  it('import is a clean cancel when nothing is picked', async () => {
-    vi.mocked(selectRemotePaths).mockResolvedValue([])
-
-    await expect(runImportProfileFlow()).resolves.toBeNull()
-    expect(mockImport).not.toHaveBeenCalled()
+    expect(archive).toBe('/tmp/out.tar.gz')
+    const call = vi.mocked(exportProfileArchive).mock.calls[0]
+    expect(call[0]).toBe('glam')
+    const overlay = JSON.parse(call[1]?.extraFiles?.['desktop.json'] ?? '{}') as ProfileDesktopOverlay
+    expect(overlay.skin).toBe('mono')
+    expect(call[1]?.output).toBe('/tmp/glam.tar.gz')
   })
 })
