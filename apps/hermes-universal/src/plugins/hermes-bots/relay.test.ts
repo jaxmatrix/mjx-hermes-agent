@@ -972,3 +972,86 @@ describe('the drain loop does not let one delivery hold every other gateway’s 
     stopBotRelay()
   })
 })
+
+describe('connect-on-demand / unreachable stay quiet until opened', () => {
+  it('skips background sync/drain for connect-on-demand until a bot is opened', async () => {
+    hostMock.agents = vi.fn(async () => ({
+      agents: [],
+      sources: [
+        { connectionId: 'a', observed: true, ok: true },
+        { connectionId: 'b', error: 'connect-on-demand', observed: false, ok: true }
+      ]
+    }))
+    hostMock.profileRoutes = vi.fn(async () => [route('a'), route('b')])
+
+    const calls = respondWith(call => {
+      if (call.method === 'profiles.list') {
+        return { profiles: [{ name: call.connectionId === 'a' ? 'default' : 'ops' }] }
+      }
+
+      return { envelopes: [] }
+    })
+    const { noteBotConnectionOpened, startBotRelay, stopBotRelay } = await loadRelay()
+
+    startBotRelay()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Only one eligible source → clear-only sync on A; B never dialled.
+    expect(calls.filter(call => call.method === 'bot_relay.roster.sync').map(call => call.connectionId)).toEqual([
+      'a'
+    ])
+    expect(calls.filter(call => call.method === 'bot_relay.roster.sync')[0]?.params.agents).toEqual([])
+
+    calls.length = 0
+    await pushAndSettle()
+    expect(calls.filter(call => call.method === 'bot_relay.outbox.drain')).toEqual([])
+
+    noteBotConnectionOpened('b')
+    calls.length = 0
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(calls.filter(call => call.method === 'bot_relay.roster.sync').map(call => call.connectionId).sort()).toEqual(
+      ['a', 'b']
+    )
+
+    calls.length = 0
+    await pushAndSettle()
+    expect(
+      calls.filter(call => call.method === 'bot_relay.outbox.drain').map(call => call.connectionId).sort()
+    ).toEqual(['a', 'b'])
+
+    stopBotRelay()
+    delete hostMock.agents
+  })
+
+  it('skips unreachable (ok:false) sources in the background', async () => {
+    hostMock.agents = vi.fn(async () => ({
+      agents: [],
+      sources: [
+        { connectionId: 'a', observed: true, ok: true },
+        { connectionId: 'b', error: 'unreachable', observed: true, ok: false }
+      ]
+    }))
+    hostMock.profileRoutes = vi.fn(async () => [route('a'), route('b')])
+
+    const calls = respondWith(call => {
+      if (call.method === 'profiles.list') {
+        return { profiles: [{ name: 'default' }] }
+      }
+
+      return { envelopes: [] }
+    })
+    const { startBotRelay, stopBotRelay } = await loadRelay()
+
+    startBotRelay()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(calls.filter(call => call.method === 'bot_relay.roster.sync').map(call => call.connectionId)).toEqual([
+      'a'
+    ])
+    expect(calls.some(call => call.connectionId === 'b')).toBe(false)
+
+    stopBotRelay()
+    delete hostMock.agents
+  })
+})

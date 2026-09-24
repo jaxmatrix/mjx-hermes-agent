@@ -13,6 +13,7 @@ import { universalHost as host } from '@hermes/plugin-sdk'
 
 import { $botMeta, botMetaKey, botOwner, persistBotMetaSnapshot } from './data'
 import { botsText } from './i18n'
+import { noteBotConnectionOpened } from './relay'
 import { backendTargetProfile, botConnectionRoute, botRosterMeta, botWorkspaceOwnerKey, requestForBot } from './routing'
 import type { RpcErrorLike } from './routing'
 import { getPluginCtx } from './shared'
@@ -598,10 +599,19 @@ export async function prepareBotSource(bot: RosterRow) {
     )
   }
 
+  // Mark the home gateway warm so the cross-connection relay may background-
+  // dial it; until then connect-on-demand sources stay out of the 30s drain.
+  if (bot.connectionId) {
+    noteBotConnectionOpened(bot.connectionId)
+  }
+
   if (!route && typeof host.ensureAgent === 'function') {
     // Source-annotated row on the ACTIVE connection (no captured route):
     // legacy activation path, unchanged. An absent connectionId is fine —
     // ensureGatewayAgent normalizes it with `(connectionId ?? '').trim() || null`.
+    await host.ensureAgent(bot.connectionId, bot.name)
+  } else if (route && typeof host.ensureAgent === 'function' && bot.connectionId) {
+    // Remote / other gateway: ensure a secondary lease exists before chat.
     await host.ensureAgent(bot.connectionId, bot.name)
   }
 }
