@@ -2955,8 +2955,7 @@ export const en: Translations = {
     fieldPromptPlaceholder: 'Instructions for the agent when this webhook fires (optional)',
     nameRequired: 'Name required',
     nameInvalid: 'Use lowercase letters, numbers, hyphens, and underscores; start with a letter or number.',
-    deliverOnlyNeedsTarget:
-      'Direct delivery needs a real target (Telegram, Discord, …), not log-only delivery.',
+    deliverOnlyNeedsTarget: 'Direct delivery needs a real target (Telegram, Discord, …), not log-only delivery.',
     create: 'Create',
     creating: 'Creating...',
     created: 'Created',
@@ -4456,10 +4455,8 @@ export const en: Translations = {
   },
 
   resourcePressure: {
-    diskCritical:
-      "Your agent's disk is almost full. New messages, memories, and settings may fail to save.",
-    diskElevated:
-      "Your agent's disk is filling up. Consider clearing old sessions or expanding its storage.",
+    diskCritical: "Your agent's disk is almost full. New messages, memories, and settings may fail to save.",
+    diskElevated: "Your agent's disk is filling up. Consider clearing old sessions or expanding its storage.",
     diskFree: mb => ` (${mb} MB free)`,
     dismiss: 'Dismiss',
     memoryCritical:
@@ -5162,7 +5159,8 @@ export const en: Translations = {
       'Review the command before entering your sudo password. Your password is sent to the agent running it and cached for this session.',
     sudoCommandUnavailable:
       'This agent did not provide the command. Cancel if you cannot verify it in the conversation.',
-    sudoInstallDesc: 'Hermes needs your sudo password to install the Bot Screen packages (TigerVNC + Xfce) on the gateway host. It is sent only to that host.',
+    sudoInstallDesc:
+      'Hermes needs your sudo password to install the Bot Screen packages (TigerVNC + Xfce) on the gateway host. It is sent only to that host.',
     sudoPlaceholder: 'sudo password',
     secretTitle: 'Secret required',
     secretDesc: 'Hermes needs a credential to continue.',

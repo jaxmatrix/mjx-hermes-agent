@@ -18,8 +18,14 @@ vi.mock('@/components/ui/copy-button', async importOriginal => ({
   writeClipboardText: clipboard.writeClipboardText
 }))
 
-const { editableCommand, editableSelectionText, imageFileName, noteComposition, selectAllInEditable, withEditableFocus } =
-  await import('./actions')
+const {
+  editableCommand,
+  editableSelectionText,
+  imageFileName,
+  noteComposition,
+  selectAllInEditable,
+  withEditableFocus
+} = await import('./actions')
 
 const { resolveDomTarget } = await import('./target')
 

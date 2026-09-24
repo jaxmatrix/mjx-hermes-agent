@@ -11,7 +11,29 @@
  */
 
 import * as sdk from '@hermes/plugin-sdk'
-import { atom, Button, cn, Codicon, ConfirmDialog, CopyButton, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, universalHost as host, Input, queryClient, relativeTime, RowButton, Switch, Tip, useI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  atom,
+  Button,
+  cn,
+  Codicon,
+  ConfirmDialog,
+  CopyButton,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  universalHost as host,
+  Input,
+  queryClient,
+  relativeTime,
+  RowButton,
+  Switch,
+  Tip,
+  useI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 import type { ClipboardEvent, DragEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -619,7 +641,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
   // already near the bottom, so reading history is never yanked away.
   const bottomSentinelRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
-   
+
   useEffect(() => {
     const sentinel = bottomSentinelRef.current
 
@@ -655,7 +677,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
   // hidden → visible edge — an explicit reopen, so it overrides a stale
   // read-position and mirrors what a fresh open does.
   const wasVisibleRef = useRef(visible)
-   
+
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
       stickToBottomRef.current = true

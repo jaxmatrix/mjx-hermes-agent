@@ -104,14 +104,14 @@ const u = parse(universalFile)
 // Universal-only keys whose parent desktop DOES have. A key whose parent is
 // itself universal-only rides along inside its parent's block, so inserting it
 // separately would duplicate it.
-const missing = [...u.nodes.keys()].filter((k) => !d.nodes.has(k))
+const missing = [...u.nodes.keys()].filter(k => !d.nodes.has(k))
 // A key can only be spliced into a desktop parent that is actually a block.
 // Where universal has a section and desktop has a plain string under the same
 // name, there is no place to put it and no safe automatic answer — the two
 // apps modelled that key differently. Collect those and refuse, rather than
 // splice at a null offset (which silently prepends the block to the file).
 const shapeConflicts = []
-const toInsert = missing.filter((k) => {
+const toInsert = missing.filter(k => {
   const parent = k.split('.').slice(0, -1).join('.')
   if (parent === '') return true
   const p = d.nodes.get(parent)
@@ -158,7 +158,7 @@ const edits = [...byParent.entries()]
 let out = d.text
 let added = 0
 for (const e of edits) {
-  const blocks = e.keys.map((k) => {
+  const blocks = e.keys.map(k => {
     const n = u.nodes.get(k)
     added += 1
     return ' '.repeat(e.indent) + reindent(u.text.slice(n.start, n.end), n.indent, e.indent)

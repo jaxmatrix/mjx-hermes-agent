@@ -26,10 +26,7 @@ import type { PendingApprovalPayload, SessionResumeResult } from '@/types/hermes
 
 /** The client-side request an `approval.request` payload (or its replay
  *  snapshot) describes. Both shapes come from `_approval_request_payload`. */
-export function readApprovalPayload(
-  payload: PendingApprovalPayload,
-  sessionId: string | null = null
-): ApprovalRequest {
+export function readApprovalPayload(payload: PendingApprovalPayload, sessionId: string | null = null): ApprovalRequest {
   return {
     requestId: typeof payload.request_id === 'string' ? payload.request_id : undefined,
     command: typeof payload.command === 'string' ? payload.command : '',

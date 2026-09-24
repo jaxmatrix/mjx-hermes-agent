@@ -31,7 +31,6 @@ export function useGatewayRequest() {
   // message instead of the opaque "connection closed" that triggered the retry.
   const reauthErrorRef = useRef<unknown>(null)
 
-   
   useEffect(() => {
     gatewayStateRef.current = gatewayState
   }, [gatewayState])

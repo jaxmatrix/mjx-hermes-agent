@@ -11,11 +11,9 @@ async function invokeNative<T>(command: string, args?: Record<string, unknown>):
   return invoke<T>(command, args)
 }
 
-const revealLogs: NonNullable<Bridge['revealLogs']> = async () =>
-  invokeNative('logs_reveal')
+const revealLogs: NonNullable<Bridge['revealLogs']> = async () => invokeNative('logs_reveal')
 
-const getRecentLogs: NonNullable<Bridge['getRecentLogs']> = async () =>
-  invokeNative('logs_recent')
+const getRecentLogs: NonNullable<Bridge['getRecentLogs']> = async () => invokeNative('logs_recent')
 
 const logsRoot: NonNullable<Bridge['logsRoot']> = async () => invokeNative('logs_root')
 
@@ -24,10 +22,7 @@ const reportRendererError: NonNullable<Bridge['reportRendererError']> = report =
   void invokeNative('report_renderer_error', { report }).catch(() => undefined)
 }
 
-export const logsBridge: Pick<
-  Bridge,
-  'revealLogs' | 'getRecentLogs' | 'logsRoot' | 'reportRendererError'
-> = {
+export const logsBridge: Pick<Bridge, 'revealLogs' | 'getRecentLogs' | 'logsRoot' | 'reportRendererError'> = {
   revealLogs,
   getRecentLogs,
   logsRoot,

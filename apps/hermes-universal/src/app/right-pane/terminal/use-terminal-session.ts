@@ -432,7 +432,6 @@ export function useTerminalSession({
   const [selectionStyle, setSelectionStyle] = useState<CSSProperties | null>(null)
   const [shellName, setShellName] = useState('shell')
 
-   
   useEffect(() => {
     onAddSelectionToChatRef.current = onAddSelectionToChat
     onShellRef.current = onShell
@@ -490,7 +489,6 @@ export function useTerminalSession({
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
   }, [addSelectionToChat, readSelection])
 
-   
   useEffect(() => {
     const host = hostRef.current
     const terminalApi = window.hermesDesktop?.terminal
@@ -1013,7 +1011,7 @@ export function useTerminalSession({
   // Only the active terminal observes its host. Every terminal stays mounted
   // (PTY + scrollback preserved), but hidden tabs do no FitAddon/layout work.
   // Re-activation owns one fit + atlas rebuild + redraw.
-   
+
   useEffect(() => {
     if (!active || status !== 'open') {
       if (!active) {
@@ -1050,7 +1048,7 @@ export function useTerminalSession({
   // the subscribe fires immediately, so a command set before this pane mounted
   // runs as soon as the session is ready. Cleared after writing so a later
   // remount can't replay a stale command.
-   
+
   useEffect(() => {
     if (!active || status !== 'open') {
       return

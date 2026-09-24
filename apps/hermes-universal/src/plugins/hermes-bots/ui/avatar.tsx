@@ -150,7 +150,14 @@ export function RoomAvatar({ name, roomId, size = 28 }: { name: string; roomId: 
 
   if (image) {
     return (
-      <img alt="" className="shrink-0 rounded-md object-cover" data-glass-opaque="" height={size} src={image} width={size} />
+      <img
+        alt=""
+        className="shrink-0 rounded-md object-cover"
+        data-glass-opaque=""
+        height={size}
+        src={image}
+        width={size}
+      />
     )
   }
 

@@ -59,7 +59,6 @@ export function NotificationStack() {
     }
   }, [defaultStack.length])
 
-   
   useEffect(() => {
     const latest = notifications[0]
 

@@ -18,7 +18,33 @@ import { useStoreSelector } from '@/lib/use-session-slice'
 import { useStore } from '@/store/atom'
 import { $busy, $sessionId } from '@/store/chat'
 import { $cronJobs } from '@/store/cron'
-import { $dismissedAutoProjectIds, $pinnedSessionIds, $sidebarAgentsGrouped, $sidebarMessagingOpenIds, $sidebarOrdering, $sidebarPinsOpen, $sidebarPrFilter, $sidebarProjectFilter, $sidebarProjectOrderIds, $sidebarRecentsOpen, $sidebarSessionOrderIds, $sidebarSessionOrderManual, $sidebarShowArchived, $sidebarStatusFilter, pinSession, setPinnedSessionOrder, setSidebarAgentsGrouped, setSidebarPinsOpen, setSidebarProjectOrderIds, setSidebarRecentsOpen, setSidebarSessionOrderIds, setSidebarSessionOrderManual, type SidebarOrdering, toggleSidebarMessagingOpen, unpinSession } from '@/store/layout'
+import {
+  $dismissedAutoProjectIds,
+  $pinnedSessionIds,
+  $sidebarAgentsGrouped,
+  $sidebarMessagingOpenIds,
+  $sidebarOrdering,
+  $sidebarPinsOpen,
+  $sidebarPrFilter,
+  $sidebarProjectFilter,
+  $sidebarProjectOrderIds,
+  $sidebarRecentsOpen,
+  $sidebarSessionOrderIds,
+  $sidebarSessionOrderManual,
+  $sidebarShowArchived,
+  $sidebarStatusFilter,
+  pinSession,
+  setPinnedSessionOrder,
+  setSidebarAgentsGrouped,
+  setSidebarPinsOpen,
+  setSidebarProjectOrderIds,
+  setSidebarRecentsOpen,
+  setSidebarSessionOrderIds,
+  setSidebarSessionOrderManual,
+  type SidebarOrdering,
+  toggleSidebarMessagingOpen,
+  unpinSession
+} from '@/store/layout'
 import { $sidebarCronOpen, setSidebarCronOpen } from '@/store/layout'
 import { livePollIntervalMs } from '@/store/live-poll'
 import { $changeEventsAvailable, $cronChangeTick } from '@/store/live-sync'

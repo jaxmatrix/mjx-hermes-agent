@@ -93,7 +93,6 @@ export function useComposerVoice({
   const previousSessionIdRef = useRef(sessionId)
   const voiceStartRequest = useStore($voiceConversationStartRequest)
 
-   
   useEffect(() => {
     adoptSpokenReplySession(previousSessionIdRef.current, sessionId)
     previousSessionIdRef.current = sessionId
@@ -272,7 +271,6 @@ export function useComposerVoice({
     }
   }, [voiceConversationActive])
 
-   
   useEffect(() => {
     if (target !== 'main') {
       return

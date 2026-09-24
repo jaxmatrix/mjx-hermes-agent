@@ -40,7 +40,16 @@ import { clearPreviewArtifacts } from '@/store/preview-status'
 import { normalizeProfileKey } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { resolveNewSessionCwd } from '@/store/project-scope'
-import { type ApprovalRequest, type ClarifyRequest, clearSessionApproval, clearSessionClarify, clearSessionSecret, clearSessionSudo, type SecretRequest, type SudoRequest } from '@/store/prompt-session-bridge'
+import {
+  type ApprovalRequest,
+  type ClarifyRequest,
+  clearSessionApproval,
+  clearSessionClarify,
+  clearSessionSecret,
+  clearSessionSudo,
+  type SecretRequest,
+  type SudoRequest
+} from '@/store/prompt-session-bridge'
 import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
 import {
   $activeSessionKey,

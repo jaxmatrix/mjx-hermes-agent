@@ -52,7 +52,6 @@ export function ScreenshotSettings() {
     [api]
   )
 
-   
   useEffect(() => {
     if (!api) {
       return

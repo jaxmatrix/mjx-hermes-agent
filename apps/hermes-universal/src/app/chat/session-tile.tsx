@@ -431,7 +431,7 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
   }, [hasMessages, ownerRoute, runtimeId, storedSessionId, storedSessionStillExists])
 
   // Gating lives in shouldResumeSessionTile (unit-tested there).
-   
+
   useEffect(() => {
     if (
       !shouldResumeSessionTile({

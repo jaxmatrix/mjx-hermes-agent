@@ -589,10 +589,7 @@ export function ensureSessionSlice(site: SessionSliceSite, seed?: Partial<Sessio
  *  publish it. Creates the slice when absent — the previous version returned
  *  `undefined` cast to a state, a latent crash the moment the visible chat
  *  started reading from the map. Mirrors desktop's `updateSession`. */
-export function updateSession(
-  key: string,
-  updater: (state: SessionKeyState) => SessionKeyState
-): SessionKeyState {
+export function updateSession(key: string, updater: (state: SessionKeyState) => SessionKeyState): SessionKeyState {
   // A slice created here inherits the KEY's scope, which `publishSessionState`
   // would enforce anyway — this is the one path that reaches a key without a
   // site, because it is a write to a session that should already exist.

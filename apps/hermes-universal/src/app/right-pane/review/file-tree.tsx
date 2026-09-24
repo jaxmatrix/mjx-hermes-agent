@@ -143,7 +143,6 @@ export function ReviewFileTree() {
   const [animate, setAnimate] = useState(false)
   const armed = useRef(false)
 
-   
   useEffect(() => {
     if (!open) {
       armed.current = false
@@ -151,7 +150,6 @@ export function ReviewFileTree() {
     }
   }, [open])
 
-   
   useEffect(() => {
     if (open && !loading && !armed.current) {
       armed.current = true

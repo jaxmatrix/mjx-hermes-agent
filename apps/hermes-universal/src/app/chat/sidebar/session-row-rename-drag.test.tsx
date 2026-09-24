@@ -59,10 +59,13 @@ vi.mock('@/components/pane-shell/tree/store', async importOriginal => {
 vi.mock('@/hermes', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>()
 
-  return { getApiRequestConnection: () => null,
-  setApiRequestProfile: vi.fn(),
+  return {
+    getApiRequestConnection: () => null,
+    setApiRequestProfile: vi.fn(),
     getApiRequestProfile: () => 'default',
-    ...actual, renameSession: vi.fn() }
+    ...actual,
+    renameSession: vi.fn()
+  }
 })
 vi.mock('@/i18n', () => ({
   useI18n: () => ({

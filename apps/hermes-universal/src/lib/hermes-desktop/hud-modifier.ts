@@ -66,7 +66,6 @@ const onStatus: HudModifier['onStatus'] = callback =>
     }
   })
 
-
 const api: HudModifier = {
   getSettings,
   setEnabled,

@@ -173,12 +173,10 @@ export function useVoiceLiveConversation({
     seedHistory
   }
 
-   
   useEffect(() => {
     enabledRef.current = enabled
   }, [enabled])
 
-   
   useEffect(() => {
     busyRef.current = busy
   }, [busy])
@@ -377,7 +375,7 @@ export function useVoiceLiveConversation({
   // Drive the reply back into the voice: stream commentary as Hermes writes
   // it (sentence-chunked), quiet tool progress as thinking appends, and clear
   // the delegation when the turn settles.
-   
+
   useEffect(() => {
     const session = sessionRef.current
     const delegationId = delegationRef.current
@@ -475,7 +473,6 @@ export function useVoiceLiveConversation({
     sessionRef.current?.instruct('The user has finished speaking. Respond now to what they said.')
   }, [])
 
-   
   useEffect(() => {
     if (enabled && !wasEnabledRef.current) {
       void start()

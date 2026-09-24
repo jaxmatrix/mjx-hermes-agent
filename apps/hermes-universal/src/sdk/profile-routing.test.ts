@@ -20,10 +20,15 @@ vi.mock('@/components/pane-shell/tree/store', async importOriginal => {
   }
 })
 vi.mock('@/contrib/events', () => ({ onGatewayEvent: vi.fn() }))
-vi.mock('@/hermes', () => ({  setApiRequestProfile: vi.fn(),
+vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
   getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- deleteProfile: vi.fn(), getLogs: vi.fn(), getStatus: vi.fn(), hermesApi: vi.fn() }))
+  deleteProfile: vi.fn(),
+  getLogs: vi.fn(),
+  getStatus: vi.fn(),
+  hermesApi: vi.fn()
+}))
 vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
 vi.mock('@/store/system-actions', () => ({ runGatewayRestart: vi.fn() }))
 vi.mock('@/store/session', async importOriginal => {

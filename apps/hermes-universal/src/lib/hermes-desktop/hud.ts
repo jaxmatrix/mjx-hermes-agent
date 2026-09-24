@@ -93,16 +93,15 @@ const windowing: NonNullable<Hud['windowing']> = syncWindowing()
 
 const open: Hud['open'] = async request => {
   try {
-    const [{ openSatelliteWindow, HUD_SURFACE, doesSatelliteWindowExist }, { sessionRoute }] =
-      await Promise.all([import('@/store/windows'), import('@/app/routes')])
+    const [{ openSatelliteWindow, HUD_SURFACE, doesSatelliteWindowExist }, { sessionRoute }] = await Promise.all([
+      import('@/store/windows'),
+      import('@/app/routes')
+    ])
 
     const sessionId =
-      typeof request?.sessionId === 'string' && request.sessionId.trim()
-        ? request.sessionId.trim()
-        : null
+      typeof request?.sessionId === 'string' && request.sessionId.trim() ? request.sessionId.trim() : null
 
-    const profile =
-      typeof request?.profile === 'string' && request.profile.trim() ? request.profile.trim() : null
+    const profile = typeof request?.profile === 'string' && request.profile.trim() ? request.profile.trim() : null
 
     const existed = await doesSatelliteWindowExist(HUD_SURFACE)
     const route = sessionId ? sessionRoute(sessionId) : undefined
@@ -245,16 +244,13 @@ const onChanged: Hud['onChanged'] = callback => {
         return
       }
 
-      stopChanged = await listen<{ open: boolean; sessionId: null | string }>(
-        CHANGED_EVENT,
-        message => {
-          const state = message.payload
+      stopChanged = await listen<{ open: boolean; sessionId: null | string }>(CHANGED_EVENT, message => {
+        const state = message.payload
 
-          if (state && typeof state === 'object' && typeof state.open === 'boolean') {
-            callback({ open: state.open, sessionId: state.sessionId ?? null })
-          }
+        if (state && typeof state === 'object' && typeof state.open === 'boolean') {
+          callback({ open: state.open, sessionId: state.sessionId ?? null })
         }
-      )
+      })
 
       if (cancelled) {
         stopChanged()
@@ -325,6 +321,4 @@ void invokeNative<NonNullable<Hud['windowing']>>('hud_windowing')
   })
   .catch(() => undefined)
 
-export const hudBridge: Pick<Bridge, 'hud'> | Record<string, never> = IS_DESKTOP
-  ? { hud: hudApi }
-  : {}
+export const hudBridge: Pick<Bridge, 'hud'> | Record<string, never> = IS_DESKTOP ? { hud: hudApi } : {}

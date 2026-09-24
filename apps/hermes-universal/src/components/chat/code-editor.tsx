@@ -209,7 +209,6 @@ export function CodeEditor({
   onSaveRef.current = onSave
   formatJsonRef.current = formatJson
 
-   
   useEffect(() => {
     const host = hostRef.current
 

@@ -15,7 +15,15 @@
  * bot-initiated sends use `hermes -p <bot> chat --in ~ -c "Bot Chat"`.
  */
 
-import { CHAT_EMPTY_AREA, COMPOSER_AREAS, universalHost as host, LocalizedTabTitle, PALETTE_AREA, SIDEBAR_PROFILE_GROUP_HEADER_AREA, translateNow } from '@hermes/plugin-sdk'
+import {
+  CHAT_EMPTY_AREA,
+  COMPOSER_AREAS,
+  universalHost as host,
+  LocalizedTabTitle,
+  PALETTE_AREA,
+  SIDEBAR_PROFILE_GROUP_HEADER_AREA,
+  translateNow
+} from '@hermes/plugin-sdk'
 import type { ChatEmptyProps, PluginContext, ProfileGroupRoute } from '@hermes/plugin-sdk'
 
 import { startFaceClock, stopFaceClock } from './avatar'

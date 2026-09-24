@@ -216,9 +216,7 @@ export function connectionRows(
   return raw.flatMap(entry => {
     const slug = typeof entry === 'string' ? entry.trim() : connectorText((entry as { name?: unknown }).name)?.trim()
 
-    return slug
-      ? [{ connector: slug.toLowerCase(), connected: false, enabled: true } satisfies ConnectorRow]
-      : []
+    return slug ? [{ connector: slug.toLowerCase(), connected: false, enabled: true } satisfies ConnectorRow] : []
   })
 }
 

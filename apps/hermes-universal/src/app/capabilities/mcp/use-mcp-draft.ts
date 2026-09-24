@@ -75,7 +75,6 @@ export function useMcpDraft({ config, names, profilePending, servers, writable }
 
   const draftSeeded = useRef(false)
 
-   
   useEffect(() => {
     if (!config || profilePending) {
       return

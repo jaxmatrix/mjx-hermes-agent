@@ -10,7 +10,10 @@ vi.mock('@hermes/plugin-sdk', async () => {
 
   return {
     atom,
-    universalHost: { request: vi.fn(), state: { connectionId: { get: () => 'local' }, profile: { get: () => 'default' } } },
+    universalHost: {
+      request: vi.fn(),
+      state: { connectionId: { get: () => 'local' }, profile: { get: () => 'default' } }
+    },
     queryClient: { invalidateQueries: vi.fn() },
     useQuery: vi.fn(),
     useValue: vi.fn()

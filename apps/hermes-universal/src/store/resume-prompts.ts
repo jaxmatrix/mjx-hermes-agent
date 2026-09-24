@@ -15,11 +15,7 @@ import {
 } from '@/store/clarify'
 import { requestGateway } from '@/store/gateway-client'
 import type { McpSetupRequest } from '@/store/mcp-setup'
-import {
-  clearMcpSetupRequest,
-  sessionMcpSetupRequest,
-  setMcpSetupRequest
-} from '@/store/mcp-setup'
+import { clearMcpSetupRequest, sessionMcpSetupRequest, setMcpSetupRequest } from '@/store/mcp-setup'
 import { notifyError } from '@/store/notifications'
 import { setPetActivity } from '@/store/pet'
 import { setSessionClarify, setSessionMcpSetup } from '@/store/prompt-session-bridge'
@@ -27,11 +23,7 @@ import { reduceSessionState } from '@/store/session-reducer'
 import { updateSession } from '@/store/session-state-types'
 import type { SessionResumeResult } from '@/types/hermes'
 
-export function readChoices(
-  source: 'gateway' | 'tool_args',
-  question: string,
-  rawChoices: unknown
-): string[] | null {
+export function readChoices(source: 'gateway' | 'tool_args', question: string, rawChoices: unknown): string[] | null {
   const choices = normalizeChoices(rawChoices)
 
   if (Array.isArray(rawChoices) && rawChoices.length > 0 && choices.length === 0) {

@@ -67,9 +67,11 @@ beforeEach(() => {
     return { applied: { ui_meta: true }, ok: true }
   })
   notifyError.mockReset()
-  requestProfile.mockReset().mockImplementation(async (_route: unknown, method: string) =>
-    method === 'session.create' ? { session_id: 's-remote' } : { applied: { ui_meta: true }, ok: true }
-  )
+  requestProfile
+    .mockReset()
+    .mockImplementation(async (_route: unknown, method: string) =>
+      method === 'session.create' ? { session_id: 's-remote' } : { applied: { ui_meta: true }, ok: true }
+    )
   $roster.set([])
   $rooms.set([])
 })
@@ -86,10 +88,7 @@ describe('replicating a room to its members', () => {
     const room = await createRoom('Ops', members as never)
 
     expect(room).not.toBeNull()
-    expect(notifyError).toHaveBeenCalledWith(
-      expect.any(Error),
-      'Some agents did not accept the room change'
-    )
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), 'Some agents did not accept the room change')
     expect((notifyError.mock.calls[0][0] as Error).message).toContain('radar')
   })
 

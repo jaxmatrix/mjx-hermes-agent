@@ -7,7 +7,7 @@ import { triggerHaptic } from '@/lib/haptics'
 import { Check, Palette } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/themes'
-import { type ThemeMode } from '@/themes/context';
+import { type ThemeMode } from '@/themes/context'
 import { resolveTheme } from '@/themes/user-themes'
 
 // Mobile appearance picker: a bottom Sheet with a light/dark/system segmented

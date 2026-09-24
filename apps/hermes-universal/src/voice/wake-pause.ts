@@ -34,4 +34,3 @@ export function resumeWakeIfPaused(): void {
   wakePauseBarrier = null
   void resumeWakeAfterVoice()
 }
-

@@ -10,10 +10,21 @@ import type { RoomLine, RoomLog } from '../model/transcript'
 
 import { createFakeRunner, type FakeRunner } from './fake-runner'
 import { setRoomTurnRunner } from './registry'
-import { type DriveEvent, type DriveMember, harvestStranded, plannedSpeakers, type RoomDriveDeps, runRoomDrive } from './rounds'
+import {
+  type DriveEvent,
+  type DriveMember,
+  harvestStranded,
+  plannedSpeakers,
+  type RoomDriveDeps,
+  runRoomDrive
+} from './rounds'
 import { GROUP_CHAT_MAX_MESSAGES, GROUP_CHAT_MAX_ROUNDS, type PauseReason } from './types'
 
-const memberOf = (profile: string): DriveMember => ({ profile, storedSessionId: `s-${profile}`, runtimeSessionId: `rt-${profile}` })
+const memberOf = (profile: string): DriveMember => ({
+  profile,
+  storedSessionId: `s-${profile}`,
+  runtimeSessionId: `rt-${profile}`
+})
 
 const line = (text: string, over: Partial<RoomLine> = {}): RoomLine => ({
   at: 100,
@@ -335,7 +346,10 @@ describe('the stranded harvest', () => {
     // read would plan the round against a log that is already stale, and owl
     // would never be asked.
     vi.spyOn(h.deps, 'harvest').mockImplementation(async () => {
-      h.setLog([line('@radar what is the plan?'), line('@owl over to you', { at: 200, from: { kind: 'member', profile: 'radar' } })])
+      h.setLog([
+        line('@radar what is the plan?'),
+        line('@owl over to you', { at: 200, from: { kind: 'member', profile: 'radar' } })
+      ])
 
       return '@owl over to you'
     })

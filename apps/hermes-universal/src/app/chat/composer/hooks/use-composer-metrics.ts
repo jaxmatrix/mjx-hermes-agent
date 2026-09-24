@@ -190,7 +190,6 @@ export function useComposerMetrics({
     syncComposerMetrics()
   }, [poppedOut, syncComposerMetrics])
 
-   
   useEffect(() => {
     // Resolve the owning surface while the composer is still attached; the
     // unmount cleanup runs after React detached the node, where closest() can

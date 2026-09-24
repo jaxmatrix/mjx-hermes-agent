@@ -37,8 +37,7 @@ function registerAccent() {
   dispose = () => disposers.forEach(fn => fn())
 }
 
-const contribution = (area: string, localId: string) =>
-  registry.getArea(area).find(c => c.id === `accent:${localId}`)
+const contribution = (area: string, localId: string) => registry.getArea(area).find(c => c.id === `accent:${localId}`)
 
 beforeEach(() => {
   setAccentOverride(null)

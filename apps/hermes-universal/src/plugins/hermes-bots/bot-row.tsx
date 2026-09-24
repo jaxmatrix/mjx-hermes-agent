@@ -6,7 +6,29 @@
  * and the row decides only how it reads.
  */
 
-import { cn, coarseElapsed, Codicon, ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger, haptic, universalHost as host, queryClient, RowButton, SessionStatusDot, SidebarRowLead, Tip, useI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  cn,
+  coarseElapsed,
+  Codicon,
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+  haptic,
+  universalHost as host,
+  queryClient,
+  RowButton,
+  SessionStatusDot,
+  SidebarRowLead,
+  Tip,
+  useI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'
 import { isBackfilledFacePng } from './avatar-image'
@@ -311,7 +333,9 @@ export function BotRow({ bot, onDelete, onEdit, onGroup, onNewSection, showHandl
                 void saveBotMeta(bot, { screenAutoOpen: next })
                 host.notify({
                   kind: 'info',
-                  message: next ? b.screen.autoOpenOnToast(displayName(bot, current)) : b.screen.autoOpenOffToast(displayName(bot, current))
+                  message: next
+                    ? b.screen.autoOpenOnToast(displayName(bot, current))
+                    : b.screen.autoOpenOffToast(displayName(bot, current))
                 })
               })
               .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))

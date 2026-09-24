@@ -134,7 +134,11 @@ export function MobileStatusList() {
   const activeConnectionId = useStore($activeConnectionId)
   const activeGatewayProfile = useStore($activeGatewayProfile)
   const gatewayScope = `${activeConnectionId ?? ''}\0${activeGatewayProfile}`
-  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, async () => undefined as never, gatewayScope)
+  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(
+    gatewayState,
+    async () => undefined as never,
+    gatewayScope
+  )
 
   const { leftStatusbarItems, statusbarItems } = useStatusbarItems({
     agentsOpen: false,

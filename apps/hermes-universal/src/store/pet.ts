@@ -255,11 +255,8 @@ export const $petAtRest = computed(
  * a roam pose (walking → `run`, hopping → `jump`) show through, so the wander
  * reads as deliberate movement.
  */
-export const $petState = computed(
-  [$petActivity, $primaryBusy, $petMotion],
-  (activity, busy, motion): PetState => {
-    const base = deriveLivePetState(activity, busy)
+export const $petState = computed([$petActivity, $primaryBusy, $petMotion], (activity, busy, motion): PetState => {
+  const base = deriveLivePetState(activity, busy)
 
-    return base === 'idle' && motion ? motion : base
-  }
-)
+  return base === 'idle' && motion ? motion : base
+})

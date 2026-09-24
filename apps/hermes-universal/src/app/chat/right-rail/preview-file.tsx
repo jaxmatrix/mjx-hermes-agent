@@ -704,7 +704,6 @@ export function LocalFilePreview({
   const isImage = target.previewKind === 'image'
   const isPdf = target.previewKind === 'pdf'
 
-   
   useEffect(() => {
     setUserMode(null)
     setEditing(false)

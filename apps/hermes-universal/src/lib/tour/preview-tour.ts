@@ -33,8 +33,7 @@ interface PreviewTourState {
 let live: null | PreviewTourState = null
 
 const NO_GUEST =
-  'There is no page open in the in-app browser, so there is nothing to tour. ' +
-  'Open one with open_preview first.'
+  'There is no page open in the in-app browser, so there is nothing to tour. ' + 'Open one with open_preview first.'
 
 export async function runPreviewTour(action: TourAction): Promise<TourResult> {
   if (!$browserSupported.get() || !$browserState.get().url) {
@@ -89,7 +88,11 @@ async function targets(): Promise<TourResult> {
   // The engine's own `targets` verb, not `elements`: a tour target carries a
   // rect and a selector, and paying for a rect on every drive inventory to
   // share one code path would be the wrong trade.
-  const result = (await actInGuest({ action: 'targets' })) as { error?: string; success: boolean; targets?: TourTarget[] }
+  const result = (await actInGuest({ action: 'targets' })) as {
+    error?: string
+    success: boolean
+    targets?: TourTarget[]
+  }
 
   if (!result.success) {
     return { error: result.error ?? 'The page did not answer.', success: false }

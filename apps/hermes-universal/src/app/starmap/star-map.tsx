@@ -266,7 +266,7 @@ export function StarMap({
   }, [])
 
   // (Re)build the radial simulation whenever the graph or size changes.
-   
+
   useEffect(() => {
     sizeRef.current = size
 
@@ -302,7 +302,6 @@ export function StarMap({
     }
   }, [graph, invalidate, resetFades, size])
 
-   
   useEffect(() => {
     adjacencyRef.current = adjacency
     memByIdRef.current = memById
@@ -315,14 +314,13 @@ export function StarMap({
     document.fonts?.load('1em "JetBrains Mono"').then(invalidate, () => {})
   }, [invalidate])
 
-   
   useEffect(() => {
     selectedIdRef.current = selectedId
     invalidate()
   }, [invalidate, selectedId])
 
   // A fresh graph resets the scrubber to "fully built" (the idle default).
-   
+
   useEffect(() => {
     camRadiusRef.current = RING_OUTER
     snapMotionRef.current = false
@@ -368,7 +366,7 @@ export function StarMap({
   )
 
   // Playback: sweep reveal 0 → 1 over SWEEP_MS, then stop (play once).
-   
+
   useEffect(() => {
     if (!playing) {
       return
@@ -485,7 +483,7 @@ export function StarMap({
 
   // Repaint + repalette when the theme/mode repaints (the shared observer fires
   // after applyTheme rewrites the class + inline vars on <html>).
-   
+
   useEffect(() => {
     themeDirtyRef.current = true
     invalidate()
@@ -495,7 +493,7 @@ export function StarMap({
   // the window is visible — but each frame is cheap (live scramble + a blit of the
   // cached static layer). The expensive scene only re-renders when invalidate()
   // marks it dirty. Capped to ~30fps; interaction (force) bypasses the cap.
-   
+
   useEffect(() => {
     let raf = 0
     const ANIM_MS = 1000 / 30
@@ -666,7 +664,7 @@ export function StarMap({
   }, [])
 
   // Size the backing canvas (DPR-aware).
-   
+
   useEffect(() => {
     sizeRef.current = size
     dprRef.current = Math.min(2, window.devicePixelRatio || 1)

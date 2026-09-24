@@ -40,7 +40,7 @@ const apply = process.argv.includes('--apply')
 /** Every file under `root`, as paths relative to it, sorted. */
 function walk(root) {
   const out = []
-  const visit = (dir) => {
+  const visit = dir => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const abs = path.join(dir, entry.name)
       if (entry.isDirectory()) visit(abs)
@@ -56,8 +56,8 @@ function manifest(file) {
   return fs
     .readFileSync(path.join(SYNC_DIR, file), 'utf8')
     .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'))
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
 }
 
 /**
@@ -82,8 +82,8 @@ function globToRegExp(glob) {
 }
 
 const renames = manifest('renames.txt')
-  .map((line) => {
-    const [from, to] = line.split('->').map((s) => s.trim())
+  .map(line => {
+    const [from, to] = line.split('->').map(s => s.trim())
     if (!from || !to) throw new Error(`bad rename line: ${line}`)
     return { from, to }
   })
@@ -93,23 +93,23 @@ const renames = manifest('renames.txt')
 // A `!` line carves an exception out of a broader glob above it, so a whole
 // subsystem can be protected without having to spell out the one file inside it
 // that desktop should still own. Last match wins, as in .gitignore.
-const protectedRules = manifest('protected.txt').map((line) =>
+const protectedRules = manifest('protected.txt').map(line =>
   line.startsWith('!')
     ? { negate: true, re: globToRegExp(line.slice(1).trim()) }
     : { negate: false, re: globToRegExp(line) }
 )
 
-const rename = (p) => {
-  const hit = renames.find((r) => p.startsWith(r.from))
+const rename = p => {
+  const hit = renames.find(r => p.startsWith(r.from))
   return hit ? hit.to + p.slice(hit.from.length) : p
 }
-const isProtected = (p) => {
+const isProtected = p => {
   let verdict = false
   for (const rule of protectedRules) if (rule.re.test(p)) verdict = !rule.negate
   return verdict
 }
 
-const sha = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+const sha = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 
 /**
  * Markers that mean universal's copy of a file carries platform work desktop
@@ -128,12 +128,11 @@ const PATCH_MARKERS =
  * fails somewhere else entirely. This is how `lib/platform.ts` quietly lost
  * IS_MOBILE and `lib/query-client.ts` lost the helper `test-setup.ts` calls.
  */
-const EXPORT_RE =
-  /^export\s+(?:async\s+)?(?:const|let|var|function|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/gm
+const EXPORT_RE = /^export\s+(?:async\s+)?(?:const|let|var|function|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/gm
 
 function exportedNames(file) {
   try {
-    return new Set([...fs.readFileSync(file, 'utf8').matchAll(EXPORT_RE)].map((m) => m[1]))
+    return new Set([...fs.readFileSync(file, 'utf8').matchAll(EXPORT_RE)].map(m => m[1]))
   } catch {
     return new Set()
   }
@@ -167,8 +166,7 @@ for (const src of desktopFiles) {
   targets.set(dest, src)
 
   const exists = universalFiles.has(dest)
-  const identical =
-    exists && sha(path.join(DESKTOP_SRC, src)) === sha(path.join(UNIVERSAL_SRC, dest))
+  const identical = exists && sha(path.join(DESKTOP_SRC, src)) === sha(path.join(UNIVERSAL_SRC, dest))
 
   let bucket
   if (!isProtected(dest)) bucket = 'AUTO'
@@ -186,7 +184,7 @@ for (const src of desktopFiles) {
   let dropped = []
   if (overwriting && /\.tsx?$/.test(dest)) {
     const after = exportedNames(path.join(DESKTOP_SRC, src))
-    dropped = [...exportedNames(path.join(UNIVERSAL_SRC, dest))].filter((n) => !after.has(n))
+    dropped = [...exportedNames(path.join(UNIVERSAL_SRC, dest))].filter(n => !after.has(n))
   }
 
   rows.push({ bucket, src, dest, identical, exists, patch, dropped })
@@ -206,8 +204,8 @@ for (const p of universalFiles) {
 // chose desktop; MERGE means we chose a human. Nothing else is acceptable —
 // a conflicting file quietly landing in SKIP or KEEP would be a silent drop.
 
-const conflicts = rows.filter((r) => r.exists && !r.identical && r.src)
-const unaccounted = conflicts.filter((r) => r.bucket !== 'AUTO' && r.bucket !== 'MERGE')
+const conflicts = rows.filter(r => r.exists && !r.identical && r.src)
+const unaccounted = conflicts.filter(r => r.bucket !== 'AUTO' && r.bucket !== 'MERGE')
 if (unaccounted.length) {
   for (const r of unaccounted) console.error(`unaccounted conflict: ${r.dest} (${r.bucket})`)
   throw new Error(`${unaccounted.length} conflicting files are neither AUTO nor MERGE`)
@@ -218,7 +216,7 @@ fs.writeFileSync(
   REPORT,
   [
     'bucket\tpatch\tdesktop\tuniversal',
-    ...rows.map((r) => `${r.bucket}\t${r.patch ? 'PATCH' : '-'}\t${r.src}\t${r.dest}`)
+    ...rows.map(r => `${r.bucket}\t${r.patch ? 'PATCH' : '-'}\t${r.src}\t${r.dest}`)
   ].join('\n') + '\n'
 )
 
@@ -226,27 +224,29 @@ fs.writeFileSync(
 // classification above still saw universal's pre-copy files. A dry run AFTER one
 // compares desktop against itself and finds nothing — writing that would erase a
 // worklist still being worked through, which is exactly what happened to both.
-const patched = rows.filter((r) => r.patch)
-if (apply || patched.length) fs.writeFileSync(
-  path.join(SYNC_DIR, 'patch-worklist.txt'),
-  '# Phase 3 worklist: AUTO files whose universal version carried platform work\n' +
-    "# (Tauri, observability, mobile, WebKit) that desktop's version overwrites.\n" +
-    '# Recover each from the phase-1 commit: git show <phase1>^:<path>\n' +
-    patched.map((r) => r.dest).join('\n') +
-    '\n'
-)
+const patched = rows.filter(r => r.patch)
+if (apply || patched.length)
+  fs.writeFileSync(
+    path.join(SYNC_DIR, 'patch-worklist.txt'),
+    '# Phase 3 worklist: AUTO files whose universal version carried platform work\n' +
+      "# (Tauri, observability, mobile, WebKit) that desktop's version overwrites.\n" +
+      '# Recover each from the phase-1 commit: git show <phase1>^:<path>\n' +
+      patched.map(r => r.dest).join('\n') +
+      '\n'
+  )
 
-const losing = rows.filter((r) => r.dropped?.length)
-if (apply || losing.length) fs.writeFileSync(
-  path.join(SYNC_DIR, 'dropped-exports.txt'),
-  '# Symbols universal exported that desktop\'s version of the same file does not.\n' +
-    '# Each is either a symbol desktop MOVED (re-point the caller at its new home)\n' +
-    '# or one desktop dropped (delete or rewrite the caller). Never restore onto\n' +
-    '# an AUTO file — that re-forks the absorb cycle. Recover archaeology with:\n' +
-    '#   git show archive/hermes-universal-pre-pipeline:apps/hermes-universal/<path>\n' +
-    losing.map((r) => `\n${r.dest}\n` + r.dropped.map((n) => `    ${n}`).join('\n')).join('') +
-    '\n'
-)
+const losing = rows.filter(r => r.dropped?.length)
+if (apply || losing.length)
+  fs.writeFileSync(
+    path.join(SYNC_DIR, 'dropped-exports.txt'),
+    "# Symbols universal exported that desktop's version of the same file does not.\n" +
+      '# Each is either a symbol desktop MOVED (re-point the caller at its new home)\n' +
+      '# or one desktop dropped (delete or rewrite the caller). Never restore onto\n' +
+      '# an AUTO file — that re-forks the absorb cycle. Recover archaeology with:\n' +
+      '#   git show archive/hermes-universal-pre-pipeline:apps/hermes-universal/<path>\n' +
+      losing.map(r => `\n${r.dest}\n` + r.dropped.map(n => `    ${n}`).join('\n')).join('') +
+      '\n'
+  )
 
 // Two blind spots of a path-by-path comparison, reported rather than thrown
 // because resolving them takes judgement: `x.ts` beside `x.tsx` (desktop changed
@@ -263,8 +263,8 @@ for (const p of [...tree].sort()) {
   }
 }
 
-const added = rows.filter((r) => r.bucket === 'AUTO' && !r.exists).length
-const churn = rows.filter((r) => r.bucket === 'AUTO' && r.exists && !r.identical).length
+const added = rows.filter(r => r.bucket === 'AUTO' && !r.exists).length
+const churn = rows.filter(r => r.bucket === 'AUTO' && r.exists && !r.identical).length
 const noop = counts.AUTO - added - churn
 
 console.log(`desktop     ${desktopFiles.length} files`)
@@ -332,11 +332,9 @@ function rewriteSpecifier(spec, fileDir) {
   const abs = alias ? spec.slice(2) : path.posix.normalize(path.posix.join(fileDir, spec))
   // A directory rename also has to catch the bare form — `@/app/right-sidebar`
   // resolving to that directory's index is just as common as naming a file in it.
-  const hit = renames.find((r) => abs.startsWith(r.from) || abs === r.from.replace(/\/$/, ''))
+  const hit = renames.find(r => abs.startsWith(r.from) || abs === r.from.replace(/\/$/, ''))
   if (!hit) return spec
-  const moved = abs.startsWith(hit.from)
-    ? hit.to + abs.slice(hit.from.length)
-    : hit.to.replace(/\/$/, '')
+  const moved = abs.startsWith(hit.from) ? hit.to + abs.slice(hit.from.length) : hit.to.replace(/\/$/, '')
 
   if (alias) return `@/${moved}`
   // Re-relativize against the importing file so the result still points at it.

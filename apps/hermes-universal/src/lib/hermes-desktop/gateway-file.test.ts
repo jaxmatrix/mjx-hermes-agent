@@ -31,17 +31,16 @@ describe('hermesDesktop.saveGatewayFile', () => {
       })
     ).resolves.toEqual({ saved: true, path: '/out/report.md' })
 
-    expect(native.calls).toEqual([
-      ['download_file', { path: '/gateway/files/report.md', dest: '/out/report.md' }]
-    ])
+    expect(native.calls).toEqual([['download_file', { path: '/gateway/files/report.md', dest: '/out/report.md' }]])
   })
 
   it('returns canceled when the save dialog is dismissed', async () => {
     native.dest = null
 
-    await expect(
-      gatewayFileBridge.saveGatewayFile!({ path: '/gateway/a.bin' })
-    ).resolves.toEqual({ canceled: true, saved: false })
+    await expect(gatewayFileBridge.saveGatewayFile!({ path: '/gateway/a.bin' })).resolves.toEqual({
+      canceled: true,
+      saved: false
+    })
 
     expect(native.calls).toEqual([])
   })

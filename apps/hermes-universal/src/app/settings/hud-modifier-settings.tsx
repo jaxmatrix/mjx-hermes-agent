@@ -54,7 +54,6 @@ export function HudModifierSettings() {
     [api, common.loadFailed, common.saveFailed]
   )
 
-   
   useEffect(() => {
     if (!api) {
       return

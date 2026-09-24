@@ -557,7 +557,6 @@ function GatewayConnectionSettings({ embedded, standalone }: { embedded: boolean
     return () => void (cancelled = true)
   }, [state.mode])
 
-   
   useEffect(() => {
     contextSeq.current += 1
     sshTestSeq.current += 1

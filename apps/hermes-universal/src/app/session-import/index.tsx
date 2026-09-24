@@ -35,7 +35,7 @@ export function SessionImportView({ owner, onClose, onOpenSession }: SessionImpo
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const lifetime = useRef<AbortController | null>(null)
-   
+
   useEffect(() => {
     const controller = new AbortController()
     lifetime.current = controller

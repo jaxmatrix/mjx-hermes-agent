@@ -21,7 +21,7 @@ import { requestGateway } from '@/store/gateway-client'
 import { $currentFastMode, $currentModel, $currentProvider, $currentReasoningEffort } from '@/store/model'
 import { $petActivity } from '@/store/pet'
 import { $activeProfile } from '@/store/profiles'
-import { $activeSessionAwaitingInput } from '@/store/prompt-session-bridge';
+import { $activeSessionAwaitingInput } from '@/store/prompt-session-bridge'
 import { clearAllPrompts, sessionApprovalRequest } from '@/store/prompts'
 import { $sessionKeyStates, newDraftKey, rekeySession, updateSession } from '@/store/session-state-types'
 import { $subagentsBySession } from '@/store/subagents'

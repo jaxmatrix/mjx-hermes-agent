@@ -46,7 +46,8 @@ type AgentReadRespondResult = { status?: string }
 const respondAgentRead = (method: string, requestId: string, text: string) =>
   requestGateway<AgentReadRespondResult>(method, { request_id: requestId, text })
 
-const respondPreviewRead = (requestId: string, text: string) => respondAgentRead('preview.read.respond', requestId, text)
+const respondPreviewRead = (requestId: string, text: string) =>
+  respondAgentRead('preview.read.respond', requestId, text)
 
 const respondTerminalRead = (requestId: string, text: string) =>
   respondAgentRead('terminal.read.respond', requestId, text)

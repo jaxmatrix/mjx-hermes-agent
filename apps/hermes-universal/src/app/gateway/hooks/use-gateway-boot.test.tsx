@@ -4,10 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopConnectionsRegistry } from '@/global'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { $desktopBoot } from '@/store/boot'
-import {
-  $connectionsRegistry,
-  _resetConnectionsForTests
-} from '@/store/connections'
+import { $connectionsRegistry, _resetConnectionsForTests } from '@/store/connections'
 import {
   activeGateway,
   closeSecondaryGateways,

@@ -67,7 +67,6 @@ function useRecentActivity(): [boolean, () => void] {
 
   const bumpRef = useRef(() => {})
 
-   
   useEffect(() => {
     let signature = ''
 

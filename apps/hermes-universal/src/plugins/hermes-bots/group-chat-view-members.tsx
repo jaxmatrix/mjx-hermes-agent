@@ -7,7 +7,20 @@
  * through whichever source the edit skipped.
  */
 
-import { Button, cn, Codicon, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, universalHost as host, RowButton, useValue } from '@hermes/plugin-sdk'
+import {
+  Button,
+  cn,
+  Codicon,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  universalHost as host,
+  RowButton,
+  useValue
+} from '@hermes/plugin-sdk'
 import { useEffect, useMemo, useState } from 'react'
 
 import { $botMeta, $lastRoster, botHandle, botRosterKey, saveBotMeta } from './data'

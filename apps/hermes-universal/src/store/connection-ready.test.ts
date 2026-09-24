@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- getStatus: vi.fn(), setApiRequestProfile: vi.fn() }))
+  getStatus: vi.fn(),
+  setApiRequestProfile: vi.fn()
+}))
 
 import { $activeConnection, describeConnection } from './active-connection'
 import { $connection, $connectionPhase, $hasConnected } from './connection'

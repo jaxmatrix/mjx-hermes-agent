@@ -1,4 +1,15 @@
-import { Button, cn, Codicon, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, SearchField, Tip } from '@hermes/plugin-sdk'
+import {
+  Button,
+  cn,
+  Codicon,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  SearchField,
+  Tip
+} from '@hermes/plugin-sdk'
 
 import { botSourceStatus } from './data'
 import type { useBots } from './i18n'

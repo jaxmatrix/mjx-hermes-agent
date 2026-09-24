@@ -19,7 +19,7 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undef
 import type { ToolCallPart } from '@/lib/session-key-messages'
 import { $clarifyRequests, sessionClarifyRequest } from '@/store/clarify'
 import { routeGatewayEvent } from '@/store/event-router'
-import { clearAllPrompts } from '@/store/prompts';
+import { clearAllPrompts } from '@/store/prompts'
 import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 const event = (type: string, payload: Record<string, unknown>): GatewayEvent =>

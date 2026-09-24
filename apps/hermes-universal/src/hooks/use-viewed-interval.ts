@@ -10,7 +10,6 @@ import { useEffect, useRef } from 'react'
 export function useViewedInterval(callback: () => void, intervalMs: number, enabled = true): void {
   const callbackRef = useRef(callback)
 
-   
   useEffect(() => {
     callbackRef.current = callback
   }, [callback])

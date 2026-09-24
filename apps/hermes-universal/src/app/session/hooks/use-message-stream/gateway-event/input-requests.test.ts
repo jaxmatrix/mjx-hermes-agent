@@ -43,7 +43,14 @@ describe('Bot Screen install password card', () => {
     const respond = vi.fn()
     expect(
       handleServerRequest(
-        { fail: vi.fn(), id: 'srq-1', method: 'display.install.sudo', params: { profile_key: '/home/h/.hermes', session_id: '' }, profile: 'default', respond },
+        {
+          fail: vi.fn(),
+          id: 'srq-1',
+          method: 'display.install.sudo',
+          params: { profile_key: '/home/h/.hermes', session_id: '' },
+          profile: 'default',
+          respond
+        },
         deps,
         'chat-a'
       )

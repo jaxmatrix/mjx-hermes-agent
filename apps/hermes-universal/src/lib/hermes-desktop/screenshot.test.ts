@@ -49,8 +49,6 @@ describe('screenshotBridge', () => {
     expect(listen.mock.calls.some(c => c[0] === 'hermes://screenshot-request')).toBe(true)
 
     stop()
-    await vi.waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith('screenshot_subscribe', { subscribed: false })
-    )
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('screenshot_subscribe', { subscribed: false }))
   })
 })

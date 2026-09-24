@@ -130,7 +130,6 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
     }
   }
 
-   
   useEffect(() => {
     let cancelled = false
     mounted.current = true

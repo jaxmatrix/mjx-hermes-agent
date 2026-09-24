@@ -248,9 +248,7 @@ export async function runRoomDrive(
       const running = await harvestStranded(deps)
       const log = await deps.readLog()
 
-      const speakers = plannedSpeakers(log, thread, deps.members, round).filter(
-        member => !running.has(member.profile)
-      )
+      const speakers = plannedSpeakers(log, thread, deps.members, round).filter(member => !running.has(member.profile))
 
       deps.report({ kind: 'round', round, speakers: speakers.map(member => member.profile) })
 

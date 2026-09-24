@@ -166,13 +166,12 @@ function PetSpriteImpl({ info, zoom = 1, stateOverride, rowOverride, pauseWhenUn
   const kickAnimationRef = useRef<() => void>(() => undefined)
 
   // Keep the override current without re-running the RAF setup effect.
-   
+
   useEffect(() => {
     overrideRef.current = stateOverride
     kickAnimationRef.current()
   }, [stateOverride])
 
-   
   useEffect(() => {
     rowOverrideRef.current = rowOverride
     kickAnimationRef.current()
@@ -204,7 +203,6 @@ function PetSpriteImpl({ info, zoom = 1, stateOverride, rowOverride, pauseWhenUn
     return img
   }, [info.spritesheetBase64, info.mime])
 
-   
   useEffect(() => {
     const canvas = canvasRef.current
 

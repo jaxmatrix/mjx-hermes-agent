@@ -33,7 +33,8 @@ const { hostMock, persistMock, pluginCtx, requestForBotMock, saveBotMetaMock } =
 
 vi.mock('@hermes/plugin-sdk', () => ({
   BOT_CHAT_SESSION_HYDRATION_TIMEOUT_MS: 15_000,
-  host: hostMock, universalHost: hostMock
+  host: hostMock,
+  universalHost: hostMock
 }))
 
 vi.mock('./routing', () => ({

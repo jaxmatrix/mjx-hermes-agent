@@ -7,7 +7,30 @@
  * that outlives a dialog.
  */
 
-import { Button, cn, Codicon, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger, Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Input, isSubmitEnter, useI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  Button,
+  cn,
+  Codicon,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Input,
+  isSubmitEnter,
+  useI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 import { type DragEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 
 import { useBots } from './i18n'

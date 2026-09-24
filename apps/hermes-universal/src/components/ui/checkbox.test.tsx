@@ -32,10 +32,9 @@ function shownGlyphs(container: HTMLElement) {
 }
 
 beforeAll(() => {
-   
   const style = document.createElement('style')
   style.textContent = `${CODICON_CSS}\n${TAILWIND_CSS}`
-   
+
   document.head.append(style)
 })
 

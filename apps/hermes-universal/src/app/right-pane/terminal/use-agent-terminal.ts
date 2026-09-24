@@ -42,7 +42,6 @@ export function useAgentTerminal({ active, id, procId }: { active: boolean; id: 
     return { ...base, background: surface, cursorAccent: surface }
   }
 
-   
   useEffect(() => {
     const host = hostRef.current
 
@@ -198,7 +197,7 @@ export function useAgentTerminal({ active, id, procId }: { active: boolean; id: 
 
   // Keep inactive agent terminals mounted for their backlog, but do not observe
   // or fit them until they become the visible tab.
-   
+
   useEffect(() => {
     if (!active) {
       initialActiveFitRef.current = false

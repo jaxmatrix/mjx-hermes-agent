@@ -58,9 +58,7 @@ export interface PluginProfileRoute {
   profile: string
 }
 
-export type PluginAgentHandle =
-  | { ok: false; error: string }
-  | { ok: true; connectionId: string; profile: string }
+export type PluginAgentHandle = { ok: false; error: string } | { ok: true; connectionId: string; profile: string }
 
 /** Agent routing beyond the live connection does not exist yet. Deliberately NOT
  *  i18n'd: it is read by a PLUGIN, not shown to a user (recipe 6.10's last

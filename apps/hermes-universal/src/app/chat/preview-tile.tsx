@@ -172,9 +172,7 @@ function PreviewTabLead({ tabId }: { tabId: string }) {
   return (
     <span className="inline-flex items-center gap-0.5">
       {lead}
-      {dirty[target.url] ? (
-        <span aria-hidden className="size-1.5 rounded-full bg-(--ui-yellow)" />
-      ) : null}
+      {dirty[target.url] ? <span aria-hidden className="size-1.5 rounded-full bg-(--ui-yellow)" /> : null}
     </span>
   )
 }

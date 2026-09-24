@@ -3,7 +3,12 @@
  * EFFECTS half. Every decision they execute is a pure function in `model/`.
  */
 
-import { universalHost as host, livePollIntervalMs, type PluginAgentRoster, type PluginOpenSessionResult } from '@hermes/plugin-sdk'
+import {
+  universalHost as host,
+  livePollIntervalMs,
+  type PluginAgentRoster,
+  type PluginOpenSessionResult
+} from '@hermes/plugin-sdk'
 
 import { BOT_CHAT_TITLE, BOT_KICKOFF_TEXT, botHandle, groupSessionTitle, isOwnedSessionTitle } from '../ids'
 import { maySweep, type RegistryAnswer, resolveCanonicalChat, sweepHidesSession } from '../model/canonical'

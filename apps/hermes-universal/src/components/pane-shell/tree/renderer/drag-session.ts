@@ -39,7 +39,15 @@ import { guardGuestPointers } from '@/lib/guest-pointer-guard'
 import { reorderCommitHaptic, reorderStepHaptic } from '@/lib/reorder'
 
 import { type DropPosition, findGroup } from '../model'
-import { $dropHint, $layoutTree, $treeDragging, type DropHint, mergeTreeZones, moveTreePanes, reorderTreePanes } from '../store'
+import {
+  $dropHint,
+  $layoutTree,
+  $treeDragging,
+  type DropHint,
+  mergeTreeZones,
+  moveTreePanes,
+  reorderTreePanes
+} from '../store'
 import { clearTabSelection } from '../tab-selection'
 import { type EngineZone, HighlightedZones, primaryZone, type ZoneRect } from '../zones-engine'
 

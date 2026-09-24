@@ -6,10 +6,7 @@
 
 export type TauriEventMock = {
   emit: (event: string, payload?: unknown) => Promise<void>
-  listen: <T>(
-    event: string,
-    handler: (event: { payload: T }) => void
-  ) => Promise<() => void>
+  listen: <T>(event: string, handler: (event: { payload: T }) => void) => Promise<() => void>
 }
 
 let mock: TauriEventMock = {
@@ -30,5 +27,4 @@ export function resetTauriEventMock(): void {
 
 export const emit = (event: string, payload?: unknown) => mock.emit(event, payload)
 
-export const listen = <T>(event: string, handler: (event: { payload: T }) => void) =>
-  mock.listen(event, handler)
+export const listen = <T>(event: string, handler: (event: { payload: T }) => void) => mock.listen(event, handler)

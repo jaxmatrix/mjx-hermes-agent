@@ -89,39 +89,32 @@ export function useVoiceConversation({
   const onStopWordRef = useRef(onStopWord)
   const onInterruptRef = useRef(onInterrupt)
 
-   
   useEffect(() => {
     onInterruptRef.current = onInterrupt
   }, [onInterrupt])
 
-   
   useEffect(() => {
     onStopWordRef.current = onStopWord
   }, [onStopWord])
 
   const beforeMicOpenRef = useRef(beforeMicOpen)
 
-   
   useEffect(() => {
     beforeMicOpenRef.current = beforeMicOpen
   }, [beforeMicOpen])
 
-   
   useEffect(() => {
     enabledRef.current = enabled
   }, [enabled])
 
-   
   useEffect(() => {
     mutedRef.current = muted
   }, [muted])
 
-   
   useEffect(() => {
     busyRef.current = busy
   }, [busy])
 
-   
   useEffect(() => {
     statusRef.current = status
   }, [status])
@@ -690,7 +683,7 @@ export function useVoiceConversation({
   // Drive the loop: when a voice-submitted reply appears, open a live speech
   // session (which feeds itself from then on). Otherwise start listening when
   // idle between turns.
-   
+
   useEffect(() => {
     if (!enabled || muted) {
       return
@@ -733,7 +726,6 @@ export function useVoiceConversation({
     }
   }, [busy, enabled, muted, ensureBargeMonitor, openLiveSpeech, pendingResponse, startListening, status])
 
-   
   useEffect(() => {
     if (enabled && !wasEnabledRef.current) {
       void start()

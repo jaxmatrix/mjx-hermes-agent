@@ -756,11 +756,7 @@ interface TerminalTranscriptProps {
   exitCode?: number
 }
 
-function SpilloverReference({
-  reference
-}: {
-  reference: { path: string; preview: string; sizeLabel?: string }
-}) {
+function SpilloverReference({ reference }: { reference: { path: string; preview: string; sizeLabel?: string } }) {
   return (
     <div className="max-w-full space-y-1 text-xs leading-relaxed text-(--ui-text-secondary)">
       <div className="font-mono text-[0.7rem] wrap-anywhere">{reference.path}</div>

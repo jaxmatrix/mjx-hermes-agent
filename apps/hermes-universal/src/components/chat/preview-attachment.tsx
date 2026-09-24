@@ -29,7 +29,6 @@ export function PreviewAttachment({ target }: { target: string }) {
   cwdRef.current = cwd
   targetRef.current = target
 
-   
   useEffect(() => {
     mountedRef.current = true
 
@@ -39,7 +38,6 @@ export function PreviewAttachment({ target }: { target: string }) {
     }
   }, [])
 
-   
   useEffect(() => {
     requestTokenRef.current += 1
     setOpening(false)

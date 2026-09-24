@@ -58,7 +58,9 @@ export const MAX_REMOTE_MEMBERS = 5
  * its sixth remote member when the connection pool evicts a lease is exactly
  * the failure the user cannot diagnose.
  */
-export function roomSizeRefusal(members: readonly RoomMemberRef[]): null | { limit: number; reason: 'members' | 'remote' } {
+export function roomSizeRefusal(
+  members: readonly RoomMemberRef[]
+): null | { limit: number; reason: 'members' | 'remote' } {
   if (members.length > GROUP_CHAT_MAX_MEMBERS) {
     return { limit: GROUP_CHAT_MAX_MEMBERS, reason: 'members' }
   }
@@ -247,7 +249,10 @@ export function withThread(room: RoomMembership, thread: { at: number; id: strin
 }
 
 /** Read a roster row into the shape `roomsFromRoster` takes. */
-export const rosterMetaSource = (row: { name: string; ui_meta?: unknown }, connectionId?: string): RosterMetaSource => ({
+export const rosterMetaSource = (
+  row: { name: string; ui_meta?: unknown },
+  connectionId?: string
+): RosterMetaSource => ({
   ...(connectionId ? { connectionId } : {}),
   meta: decodeBotMeta(row.ui_meta),
   profile: row.name

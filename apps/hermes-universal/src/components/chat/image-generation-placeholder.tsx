@@ -274,7 +274,6 @@ export const DiffusionCanvas: FC = () => {
 
   useResizeObserver(fitToContainer, canvasRef)
 
-   
   useEffect(() => {
     const probe = document.createElement('span')
     probe.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden;pointer-events:none'
@@ -296,7 +295,6 @@ export const DiffusionCanvas: FC = () => {
     }
   }, [])
 
-   
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')

@@ -76,13 +76,11 @@ it.each([
 
   await vi.waitFor(
     () => {
-       
       expect(document.querySelector('[data-slot="tooltip-content"]')).not.toBeNull()
     },
     { timeout: 2000 }
   )
 
-   
   const wrapper = document.querySelector<HTMLElement>('[data-radix-popper-content-wrapper]')
 
   expect(wrapper).not.toBeNull()

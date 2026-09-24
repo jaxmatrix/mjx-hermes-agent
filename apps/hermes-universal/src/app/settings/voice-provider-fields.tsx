@@ -79,7 +79,6 @@ export function VoiceProviderFields({
   const [baseline, setBaseline] = useState<HermesConfigRecord | null>(null)
   const seeded = useRef(false)
 
-   
   useEffect(() => {
     if (loadedConfig && !seeded.current) {
       seeded.current = true

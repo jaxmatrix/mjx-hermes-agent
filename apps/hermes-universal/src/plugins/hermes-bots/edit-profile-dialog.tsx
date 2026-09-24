@@ -3,7 +3,22 @@
  * config disclosure for an existing bot.
  */
 
-import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DisclosureCaret, universalHost as host, Input, queryClient, Textarea, useI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DisclosureCaret,
+  universalHost as host,
+  Input,
+  queryClient,
+  Textarea,
+  useI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'

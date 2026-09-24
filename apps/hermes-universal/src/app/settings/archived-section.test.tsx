@@ -60,8 +60,7 @@ import { ArchivedSection } from './archived-section'
 const unarchive = vi.mocked(setSessionArchived)
 const pinned = vi.mocked(isSessionPinned)
 
-const PINNED_WARNING =
-  'This chat is pinned — unpin it first if you did not mean to delete it.'
+const PINNED_WARNING = 'This chat is pinned — unpin it first if you did not mean to delete it.'
 
 /** Open the permanent-delete confirm on the first archived row. */
 const openDeleteConfirm = async () => {

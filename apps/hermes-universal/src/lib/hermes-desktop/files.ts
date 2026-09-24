@@ -241,11 +241,7 @@ const normalizePreviewTarget: Bridge['normalizePreviewTarget'] = async (target, 
     baseDir: baseDir ?? null
   })
 
-
-export const filesBridge: Pick<
-  Bridge,
-  'dataUrlReadMax' | 'readFileDataUrl' | 'readFileDataUrlForAttach'
-> = {
+export const filesBridge: Pick<Bridge, 'dataUrlReadMax' | 'readFileDataUrl' | 'readFileDataUrlForAttach'> = {
   dataUrlReadMax,
   readFileDataUrl,
   readFileDataUrlForAttach

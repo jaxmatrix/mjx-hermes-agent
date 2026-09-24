@@ -84,8 +84,7 @@ const contextMenuCopyImage: NonNullable<Bridge['contextMenuCopyImage']> = async 
 
   const hit = document.elementFromPoint(lastContextPoint.x, lastContextPoint.y)
 
-  const img =
-    hit instanceof HTMLImageElement ? hit : hit instanceof Element ? hit.closest('img') : null
+  const img = hit instanceof HTMLImageElement ? hit : hit instanceof Element ? hit.closest('img') : null
 
   if (!(img instanceof HTMLImageElement)) {
     return

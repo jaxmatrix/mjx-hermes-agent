@@ -92,14 +92,11 @@ const onProgress: Bridge['updates']['onProgress'] = callback => {
         const { downloaded, total } = event.payload
 
         const percent =
-          typeof total === 'number' && total > 0
-            ? Math.min(100, Math.round((downloaded / total) * 100))
-            : null
+          typeof total === 'number' && total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : null
 
         const payload: DesktopUpdateProgress = {
           stage: 'fetch',
-          message:
-            percent == null ? 'Downloading update…' : `Downloading update… ${percent}%`,
+          message: percent == null ? 'Downloading update…' : `Downloading update… ${percent}%`,
           percent,
           error: null,
           at: Date.now()

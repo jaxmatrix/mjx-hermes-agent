@@ -27,7 +27,8 @@ vi.mock('@/hermes', () => ({
   }
 }))
 vi.mock('@/store/session', () => ({
-  setConnection: vi.fn(), setGatewayState: vi.fn(),
+  setConnection: vi.fn(),
+  setGatewayState: vi.fn(),
   $gatewayState: atom('closed')
 }))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))

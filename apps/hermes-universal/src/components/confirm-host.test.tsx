@@ -45,9 +45,8 @@ describe('confirm()', () => {
 
     const { dialog, pending, read } = await ask()
 
-     
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
-     
+
     fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
 
     await pending

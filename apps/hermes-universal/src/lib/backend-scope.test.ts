@@ -61,7 +61,10 @@ describe('backendScopeKey', () => {
   // the formatter and this test silently matched three rows out of eight.
   it('agrees with the Rust mirror on every row of one shared table', () => {
     const rust = fs.readFileSync(path.resolve(process.cwd(), 'src-tauri/src/connections/registry.rs'), 'utf8')
-    const table = rust.slice(rust.indexOf('const SCOPE_KEY_PIN'), rust.indexOf('];', rust.indexOf('const SCOPE_KEY_PIN')))
+    const table = rust.slice(
+      rust.indexOf('const SCOPE_KEY_PIN'),
+      rust.indexOf('];', rust.indexOf('const SCOPE_KEY_PIN'))
+    )
     const rows = [...table.matchAll(/^\s*"([^"]*)",$/gmu)].map(match => match[1].split('|'))
 
     expect(rows.length).toBeGreaterThanOrEqual(8)

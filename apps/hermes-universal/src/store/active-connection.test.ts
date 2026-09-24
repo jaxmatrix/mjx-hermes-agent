@@ -50,11 +50,14 @@ describe('publishActiveConnection', () => {
     })
 
     publishActiveConnection(
-      describeConnection({ ...REMOTE, baseUrl: 'https://other.test', mode: 'cloud' }, {
-        connectionId: 'box-2',
-        dialConnectionId: 'box-2',
-        label: 'Box'
-      })
+      describeConnection(
+        { ...REMOTE, baseUrl: 'https://other.test', mode: 'cloud' },
+        {
+          connectionId: 'box-2',
+          dialConnectionId: 'box-2',
+          label: 'Box'
+        }
+      )
     )
 
     stop()
@@ -85,7 +88,9 @@ describe('$activeConnectionId', () => {
   it('does NOT fall back to a registry primary', () => {
     expect($activeConnectionId.get()).toBeNull()
 
-    publishActiveConnection(describeConnection(REMOTE, { connectionId: 'box-2', dialConnectionId: 'box-2', label: 'Box' }))
+    publishActiveConnection(
+      describeConnection(REMOTE, { connectionId: 'box-2', dialConnectionId: 'box-2', label: 'Box' })
+    )
     expect($activeConnectionId.get()).toBe('box-2')
   })
 })

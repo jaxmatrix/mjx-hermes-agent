@@ -277,7 +277,6 @@ function SoulEditor({ profileName }: { profileName: string }) {
   const [error, setError] = useState<null | string>(null)
   const requestRef = useRef<string>(profileName)
 
-   
   useEffect(() => {
     requestRef.current = profileName
     setLoading(true)

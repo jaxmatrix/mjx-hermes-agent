@@ -238,7 +238,6 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
   // rows can't be toggled against the wrong backend.
   const scopeSeenRef = useRef(scopeProfile)
 
-   
   useEffect(() => {
     if (scopeSeenRef.current === scopeProfile) {
       return

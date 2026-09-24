@@ -303,7 +303,7 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
   // Restore a popped-out pet on boot, once the pet has loaded (so we never spawn
   // an empty overlay window). Primary window only; runs at most once.
   const restoredRef = useRef(false)
-   
+
   useEffect(() => {
     if (isSecondaryWindow() || restoredRef.current || !active) {
       return

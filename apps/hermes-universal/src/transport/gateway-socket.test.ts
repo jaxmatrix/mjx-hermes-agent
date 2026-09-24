@@ -420,14 +420,7 @@ describe('a tunnelled socket', () => {
 describe('HermesGateway', () => {
   it("is desktop's client, option for option", () => {
     const options = (gateway: object) => {
-      const {
-        createRequestId,
-        onRequestHandlerError,
-        onSocketClose,
-        onUnhandledRequest,
-        socketFactory,
-        ...rest
-      } = (
+      const { createRequestId, onRequestHandlerError, onSocketClose, onUnhandledRequest, socketFactory, ...rest } = (
         gateway as unknown as {
           options: Record<string, unknown> & { createRequestId: (next: number) => unknown }
         }

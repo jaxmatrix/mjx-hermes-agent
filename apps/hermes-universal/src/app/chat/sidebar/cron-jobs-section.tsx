@@ -98,7 +98,6 @@ export function SidebarCronJobsSection({
   const [triggeringJobIds, setTriggeringJobIds] = useState<ReadonlySet<string>>(() => new Set())
   const triggerControllerRef = useRef<CronTriggerController | null>(null)
 
-   
   useEffect(() => {
     const controller = createCronTriggerController((jobId, running) => {
       if (triggerControllerRef.current !== controller) {

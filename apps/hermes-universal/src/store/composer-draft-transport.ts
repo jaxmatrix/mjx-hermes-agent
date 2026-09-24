@@ -122,22 +122,19 @@ function ensureTransport(): void {
       requestComposerDraftSync('reload')
     })
 
-    void listen<{ nonce: string; origin: string; surface: null | string; tile: null | string }>(
-      FLUSH_EVENT,
-      event => {
-        const payload = event.payload
+    void listen<{ nonce: string; origin: string; surface: null | string; tile: null | string }>(FLUSH_EVENT, event => {
+      const payload = event.payload
 
-        if (!payload || payload.origin === WEBVIEW_ORIGIN || !addressesThisWindow(payload)) {
-          return
-        }
-
-        requestComposerDraftSync('flush')
-
-        void import('@tauri-apps/api/event').then(({ emit }) =>
-          emit(FLUSHED_EVENT, { nonce: payload.nonce, origin: WEBVIEW_ORIGIN })
-        )
+      if (!payload || payload.origin === WEBVIEW_ORIGIN || !addressesThisWindow(payload)) {
+        return
       }
-    )
+
+      requestComposerDraftSync('flush')
+
+      void import('@tauri-apps/api/event').then(({ emit }) =>
+        emit(FLUSHED_EVENT, { nonce: payload.nonce, origin: WEBVIEW_ORIGIN })
+      )
+    })
   })
 }
 

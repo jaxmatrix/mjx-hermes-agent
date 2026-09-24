@@ -7,9 +7,11 @@ const { getGatewayClient, leaseSecondary, releaseSecondary, requestGateway } = v
   requestGateway: vi.fn(async () => 'ambient')
 }))
 
-vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- setApiRequestProfile: vi.fn() }))
+  setApiRequestProfile: vi.fn()
+}))
 vi.mock('@/store/gateway-secondaries', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   leaseSecondary,

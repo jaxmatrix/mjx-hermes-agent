@@ -104,10 +104,7 @@ export function useHudDrag(): {
                 const pos = await win.outerPosition()
 
                 if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
-                  window.localStorage.setItem(
-                    HUD_POSITION_STORAGE_KEY,
-                    JSON.stringify({ x: pos.x, y: pos.y })
-                  )
+                  window.localStorage.setItem(HUD_POSITION_STORAGE_KEY, JSON.stringify({ x: pos.x, y: pos.y }))
                 }
               } catch {
                 // Ignore

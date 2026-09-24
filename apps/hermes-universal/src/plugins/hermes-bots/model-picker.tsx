@@ -6,7 +6,17 @@
  * Shared by the advanced profile editor and the create dialog.
  */
 
-import { Button, GlyphSpinner, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, useQuery } from '@hermes/plugin-sdk'
+import {
+  Button,
+  GlyphSpinner,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  useQuery
+} from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import { labeled } from './dialog-parts'

@@ -55,7 +55,6 @@ export function useElapsedSeconds(active = true, timerKey?: string, since?: numb
     lastKey.current = timerKey
   }
 
-   
   useEffect(() => {
     if (since !== undefined) {
       start.current = since

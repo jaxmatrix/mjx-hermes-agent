@@ -3,7 +3,12 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import { APP_ROUTES, contributedRoutes } from '@/app/routes'
 import { translateNow } from '@/i18n'
-import { type DeepLinkPayload, HERMES_URL_PREFIX, parseHermesDeepLink, resolveDeepLinkAction } from '@/lib/deep-link-routes'
+import {
+  type DeepLinkPayload,
+  HERMES_URL_PREFIX,
+  parseHermesDeepLink,
+  resolveDeepLinkAction
+} from '@/lib/deep-link-routes'
 import { normalizeHermesOpenString } from '@/lib/hermes-open-target'
 
 import { notify, notifyError } from './notifications'

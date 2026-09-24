@@ -7,12 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -145,9 +140,7 @@ describe('overlay ladder — rendered surfaces', () => {
       </I18nProvider>
     )
 
-    expect(zOf(query('select-content'), 'select')).toBeGreaterThan(
-      zOf(query('dialog-content'), 'dialog content')
-    )
+    expect(zOf(query('select-content'), 'select')).toBeGreaterThan(zOf(query('dialog-content'), 'dialog content'))
   })
 
   it.each([

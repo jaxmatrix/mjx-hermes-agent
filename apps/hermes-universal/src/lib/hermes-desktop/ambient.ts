@@ -11,7 +11,6 @@ async function invokeNative<T>(command: string, args?: Record<string, unknown>):
   return invoke<T>(command, args)
 }
 
-const claimAmbientCue: NonNullable<Bridge['claimAmbientCue']> = async key =>
-  invokeNative('claim_ambient_cue', { key })
+const claimAmbientCue: NonNullable<Bridge['claimAmbientCue']> = async key => invokeNative('claim_ambient_cue', { key })
 
 export const ambientBridge: Pick<Bridge, 'claimAmbientCue'> = { claimAmbientCue }

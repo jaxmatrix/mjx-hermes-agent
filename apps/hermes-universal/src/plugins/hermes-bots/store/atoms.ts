@@ -59,7 +59,8 @@ export function patchRoomRuntime(roomId: string, patch: Partial<RoomRuntime>): R
 
 /** Bump a room's epoch. Synchronous by contract — a drive that awaits before
  *  this runs would not see the supersede. */
-export const bumpEpoch = (roomId: string): number => patchRoomRuntime(roomId, { epoch: roomRuntime(roomId).epoch + 1 }).epoch
+export const bumpEpoch = (roomId: string): number =>
+  patchRoomRuntime(roomId, { epoch: roomRuntime(roomId).epoch + 1 }).epoch
 
 /** The derived transcript, per room. Never authority (§6.2). */
 export const $roomLogs = atom<Readonly<Record<string, RoomLog>>>({})
@@ -165,9 +166,7 @@ export function watchCaches(storage: PluginStorage): () => void {
     }
   }
 
-  const stops = [$stranded, $watermarks, $roomImages, $showHidden, $activityToasts].map(store =>
-    store.listen(schedule)
-  )
+  const stops = [$stranded, $watermarks, $roomImages, $showHidden, $activityToasts].map(store => store.listen(schedule))
 
   return () => {
     stops.forEach(stop => stop())

@@ -44,8 +44,7 @@ const saveImageBuffer: Bridge['saveImageBuffer'] = async (data, ext, name) =>
 const savePastedText: Bridge['savePastedText'] = async text =>
   invokeNative('save_pasted_text', { text: String(text ?? '') })
 
-const saveClipboardImage: Bridge['saveClipboardImage'] = async () =>
-  invokeNative('save_clipboard_image')
+const saveClipboardImage: Bridge['saveClipboardImage'] = async () => invokeNative('save_clipboard_image')
 
 export const imagesBridge: Pick<
   Bridge,

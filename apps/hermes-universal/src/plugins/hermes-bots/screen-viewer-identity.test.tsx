@@ -19,7 +19,9 @@ vi.mock('@hermes/plugin-sdk', async () => {
   const { onGatewayEvent } = await import('../../contrib/events')
 
   return {
-    Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
+    Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+      <button {...props}>{children}</button>
+    ),
     Codicon: () => null,
     GlyphSpinner: () => null,
     Tip: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -60,7 +62,7 @@ vi.mock('@novnc/novnc', () => ({
 }))
 
 // Real event bus, so the pane's listener path is the one under test.
- 
+
 import { emitGatewayEvent } from '../../contrib/events'
 
 import { displayRequest, viewerHash } from './screen-connection'

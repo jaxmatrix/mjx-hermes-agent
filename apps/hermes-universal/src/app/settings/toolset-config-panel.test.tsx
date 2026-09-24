@@ -83,7 +83,7 @@ vi.mock('@/hermes', () => ({
   // @/store/profile (pulled in transitively via use-config-record's
   // normalizeProfileKey import) calls this at module-init; the full-replacement
   // mock must provide it or the module graph throws on load.
-  setApiRequestProfile: () => undefined,
+  setApiRequestProfile: () => undefined
 }))
 
 vi.mock('@/store/notifications', () => ({

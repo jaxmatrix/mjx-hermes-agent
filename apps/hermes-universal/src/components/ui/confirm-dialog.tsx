@@ -82,7 +82,7 @@ export function ConfirmDialog({
   // ReferenceError.
   // The write below is a timer handle, and not a mirror of a reactive value.
   // It happens on unmount only, and it clears the handle this component owns.
-   
+
   useEffect(() => {
     return () => {
       if (closeTimerRef.current !== null) {

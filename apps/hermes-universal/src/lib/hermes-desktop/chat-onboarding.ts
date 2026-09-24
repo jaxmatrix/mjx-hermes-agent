@@ -42,9 +42,8 @@ const soloBoot: NonNullable<ChatOnboarding['soloBoot']> = () => {
   void invokeNative('chat_onboarding_solo_boot').catch(() => undefined)
 }
 
-export const chatOnboardingBridge: Pick<Bridge, 'chatOnboarding'> | Record<string, never> =
-  IS_DESKTOP
-    ? {
-        chatOnboarding: { grow, soloBoot }
-      }
-    : {}
+export const chatOnboardingBridge: Pick<Bridge, 'chatOnboarding'> | Record<string, never> = IS_DESKTOP
+  ? {
+      chatOnboarding: { grow, soloBoot }
+    }
+  : {}

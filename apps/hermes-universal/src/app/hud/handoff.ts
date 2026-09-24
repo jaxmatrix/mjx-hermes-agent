@@ -28,12 +28,7 @@ import { getActiveComposer, requestComposerFocus } from '../chat/composer/focus'
 import { openSession, type OpenSessionNavigate } from '../open-session'
 import { sessionRoute } from '../routes'
 
-import {
-  installHudHandoff,
-  noteHudSummoned,
-  reportHudSession,
-  resetHudHandoff
-} from './handoff-satellite'
+import { installHudHandoff, noteHudSummoned, reportHudSession, resetHudHandoff } from './handoff-satellite'
 
 export { installHudHandoff, noteHudSummoned, reportHudSession, resetHudHandoff }
 
@@ -140,4 +135,3 @@ export function useReportHudSession(): void {
     }
   }, [selectedStoredSessionId])
 }
-

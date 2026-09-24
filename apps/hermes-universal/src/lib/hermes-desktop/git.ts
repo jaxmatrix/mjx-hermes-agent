@@ -103,8 +103,7 @@ const review: GitBridge['review'] = {
       message: String(message ?? ''),
       push: Boolean(push)
     }),
-  commitContext: repoPath =>
-    invokeNative('git_review_commit_context', { repoPath: String(repoPath ?? '') }),
+  commitContext: repoPath => invokeNative('git_review_commit_context', { repoPath: String(repoPath ?? '') }),
   push: repoPath => invokeNative('git_review_push', { repoPath: String(repoPath ?? '') }),
   shipInfo: repoPath => invokeNative('git_review_ship_info', { repoPath: String(repoPath ?? '') }),
   prList: (repoPath, branches, numbers) =>

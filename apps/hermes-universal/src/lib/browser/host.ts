@@ -181,10 +181,7 @@ export interface GuestSubscribers {
  * MUST be awaited before `openGuest`, or the first `nav`/`load` is dropped —
  * the same subscribe-then-open rule `voice_open` and `ws_open` already state.
  */
-export async function subscribeGuest(
-  subscribers: GuestSubscribers,
-  guestId = BROWSER_GUEST_ID
-): Promise<() => void> {
+export async function subscribeGuest(subscribers: GuestSubscribers, guestId = BROWSER_GUEST_ID): Promise<() => void> {
   if (!IS_TAURI) {
     return () => {}
   }

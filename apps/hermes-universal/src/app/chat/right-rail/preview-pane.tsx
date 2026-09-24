@@ -834,7 +834,6 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     })
   }, [isRemoteHtml, isWebPreview, tabId])
 
-   
   useEffect(() => {
     if (!consoleOpen) {
       return
@@ -850,7 +849,6 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     return () => window.cancelAnimationFrame(handle)
   }, [consoleOpen])
 
-   
   useEffect(() => {
     if (
       !previewServerRestart ||
@@ -909,7 +907,6 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     return () => window.clearTimeout(timer)
   }, [copy.stillWorking, previewServerRestart, restartingServer])
 
-   
   useEffect(() => {
     if (reloadRequest === lastReloadRequestRef.current) {
       return
@@ -1018,7 +1015,6 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     }
   }, [appendConsoleEntry, copy, reloadPreview, target.kind, target.url])
 
-   
   useEffect(() => {
     const host = hostRef.current
 

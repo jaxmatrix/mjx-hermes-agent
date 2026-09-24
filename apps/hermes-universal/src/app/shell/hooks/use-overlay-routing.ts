@@ -32,7 +32,6 @@ export function useOverlayRouting() {
   // so closing them returns there instead of bouncing to /.
   const returnPathRef = useRef(NEW_CHAT_ROUTE)
 
-   
   useEffect(() => {
     if (!overlayOpen) {
       returnPathRef.current = `${location.pathname}${location.search}${location.hash}`

@@ -3,7 +3,19 @@
  * swatches, the Generate and Upload tabs, and the petdex Pet tab.
  */
 
-import { Button, cn, Codicon, ColorSwatches, GlyphSpinner, universalHost as host, PROFILE_SWATCHES, RowButton, SegmentedControl, Textarea, useValue } from '@hermes/plugin-sdk'
+import {
+  Button,
+  cn,
+  Codicon,
+  ColorSwatches,
+  GlyphSpinner,
+  universalHost as host,
+  PROFILE_SWATCHES,
+  RowButton,
+  SegmentedControl,
+  Textarea,
+  useValue
+} from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import {

@@ -4,7 +4,39 @@
  * detail dialogs, and the pane the right tile renders.
  */
 
-import { atom, Button, Checkbox, cn, Codicon, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, GlyphSpinner, universalHost as host, Input, nextRunOverdueMs, PanelEmpty, queryClient, relativeTime, RowButton, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, Textarea, Tip, translateNow, useI18n, useQuery, useValue } from '@hermes/plugin-sdk'
+import {
+  atom,
+  Button,
+  Checkbox,
+  cn,
+  Codicon,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  GlyphSpinner,
+  universalHost as host,
+  Input,
+  nextRunOverdueMs,
+  PanelEmpty,
+  queryClient,
+  relativeTime,
+  RowButton,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Switch,
+  Textarea,
+  Tip,
+  translateNow,
+  useI18n,
+  useQuery,
+  useValue
+} from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'

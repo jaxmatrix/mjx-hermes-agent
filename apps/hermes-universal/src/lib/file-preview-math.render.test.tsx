@@ -13,11 +13,7 @@ const KatexHtml = memo(function KatexHtml({ node }: { node?: Element }) {
   const display = node?.properties?.dataDisplay === 'true'
 
   return (
-    <span
-      className="katex-host"
-      dangerouslySetInnerHTML={{ __html: html }}
-      data-display={display ? 'true' : 'false'}
-    />
+    <span className="katex-host" dangerouslySetInnerHTML={{ __html: html }} data-display={display ? 'true' : 'false'} />
   )
 })
 
@@ -50,7 +46,8 @@ describe('file-preview math rendering', () => {
 
     await waitFor(() => {
       expect(
-        container.querySelector('.katex-host[data-display="true"] .katex') || container.querySelector('.katex-host .katex')
+        container.querySelector('.katex-host[data-display="true"] .katex') ||
+          container.querySelector('.katex-host .katex')
       ).not.toBeNull()
     })
   })

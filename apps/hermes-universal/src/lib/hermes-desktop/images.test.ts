@@ -45,16 +45,11 @@ describe('hermesDesktop.saveImageFromUrl', () => {
 
 describe('hermesDesktop.saveImageBuffer / savePastedText / saveClipboardImage', () => {
   it('base64-encodes the payload the renderer actually holds', async () => {
-    await expect(
-      imagesBridge.saveImageBuffer(new Uint8Array([65, 66, 67]), '.png', 'Screen Shot.png')
-    ).resolves.toBe('/tmp/save_image_buffer')
+    await expect(imagesBridge.saveImageBuffer(new Uint8Array([65, 66, 67]), '.png', 'Screen Shot.png')).resolves.toBe(
+      '/tmp/save_image_buffer'
+    )
 
-    expect(native.calls).toEqual([
-      [
-        'save_image_buffer',
-        { dataBase64: 'QUJD', ext: '.png', name: 'Screen Shot.png' }
-      ]
-    ])
+    expect(native.calls).toEqual([['save_image_buffer', { dataBase64: 'QUJD', ext: '.png', name: 'Screen Shot.png' }]])
   })
 
   it('forwards pasted text and clipboard reads to Rust', async () => {

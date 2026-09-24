@@ -9,13 +9,7 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { useDisplayPath } from '@/store/display-home'
 import { $rightRailActiveTabId, selectRightRailTab } from '@/store/layout'
-import {
-  $previewTabs,
-  $previewTarget,
-  closeRightRailTab,
-  type PreviewTab,
-  type PreviewTarget
-} from '@/store/preview'
+import { $previewTabs, $previewTarget, closeRightRailTab, type PreviewTab, type PreviewTarget } from '@/store/preview'
 import { $dirtyPreviewUrls } from '@/store/preview-edit'
 
 import { ArtifactPreview } from './preview-artifact'
@@ -150,7 +144,10 @@ function PreviewRailTab({ active, dirty, tab }: { active: boolean; dirty: boolea
             type="button"
           >
             {dirty ? (
-              <span aria-hidden className="size-1.5 rounded-full bg-(--ui-yellow) group-hover/tab:hidden coarse:hidden" />
+              <span
+                aria-hidden
+                className="size-1.5 rounded-full bg-(--ui-yellow) group-hover/tab:hidden coarse:hidden"
+              />
             ) : null}
             <Codicon
               className={cn(dirty && 'hidden group-hover/tab:inline coarse:inline')}

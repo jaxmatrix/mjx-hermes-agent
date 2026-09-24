@@ -67,93 +67,73 @@ afterEach(() => {
 })
 
 describe('opening a side in a window that does not own the layout', () => {
-  it(
-    'does not un-dismiss the main window`s closed panes on disk — tile window',
-    async () => {
-      atSearch('?win=tile&tile=session-tile:abc')
+  it('does not un-dismiss the main window`s closed panes on disk — tile window', async () => {
+    atSearch('?win=tile&tile=session-tile:abc')
 
-      const tree = await setup()
+    const tree = await setup()
 
-      tree.setTreeSideCollapsed('left', false)
+    tree.setTreeSideCollapsed('left', false)
 
-      // The tile window's own view may forget the dismissal — it is showing one
-      // tile, not the tree — but the shared record must survive it.
-      expect(storedDismissed()).toEqual(['files'])
-    },
-    15_000
-  )
+    // The tile window's own view may forget the dismissal — it is showing one
+    // tile, not the tree — but the shared record must survive it.
+    expect(storedDismissed()).toEqual(['files'])
+  }, 15_000)
 
-  it(
-    'does not un-dismiss them from the HUD either',
-    async () => {
-      atSearch('?win=hud')
+  it('does not un-dismiss them from the HUD either', async () => {
+    atSearch('?win=hud')
 
-      const tree = await setup()
+    const tree = await setup()
 
-      tree.setTreeSideCollapsed('left', false)
+    tree.setTreeSideCollapsed('left', false)
 
-      expect(storedDismissed()).toEqual(['files'])
-    },
-    15_000
-  )
+    expect(storedDismissed()).toEqual(['files'])
+  }, 15_000)
 
-  it(
-    'DOES write it in the primary window, which owns the layout',
-    async () => {
-      atSearch('')
+  it('DOES write it in the primary window, which owns the layout', async () => {
+    atSearch('')
 
-      const tree = await setup()
+    const tree = await setup()
 
-      tree.setTreeSideCollapsed('left', false)
+    tree.setTreeSideCollapsed('left', false)
 
-      // Opening a side is an intent to SEE it, so the primary window really does
-      // heal the stale dismissal — the control that stops the guard above from
-      // passing by simply never writing.
-      expect(storedDismissed()).toBeNull()
-    },
-    15_000
-  )
+    // Opening a side is an intent to SEE it, so the primary window really does
+    // heal the stale dismissal — the control that stops the guard above from
+    // passing by simply never writing.
+    expect(storedDismissed()).toBeNull()
+  }, 15_000)
 })
 
 describe('the other side tables', () => {
-  it(
-    'withholds the preset marker and the user-placed pins from a tile window',
-    async () => {
-      atSearch('?win=tile&tile=terminal')
+  it('withholds the preset marker and the user-placed pins from a tile window', async () => {
+    atSearch('?win=tile&tile=terminal')
 
-      const tree = await setup()
-      const model = await import('@/components/pane-shell/tree/model')
+    const tree = await setup()
+    const model = await import('@/components/pane-shell/tree/model')
 
-      tree.applyTree(model.group(['workspace'], { id: 'grp-preset' }), 'focus')
+    tree.applyTree(model.group(['workspace'], { id: 'grp-preset' }), 'focus')
 
-      expect(window.localStorage.getItem(PRESET_KEY)).toBeNull()
-      expect(window.localStorage.getItem(USER_PLACED_KEY)).toBeNull()
-    },
-    15_000
-  )
+    expect(window.localStorage.getItem(PRESET_KEY)).toBeNull()
+    expect(window.localStorage.getItem(USER_PLACED_KEY)).toBeNull()
+  }, 15_000)
 
-  it(
-    'writes them in the primary window',
-    async () => {
-      atSearch('')
+  it('writes them in the primary window', async () => {
+    atSearch('')
 
-      const tree = await setup()
-      const model = await import('@/components/pane-shell/tree/model')
+    const tree = await setup()
+    const model = await import('@/components/pane-shell/tree/model')
 
-      // A pin to clear, so the user-placed write has something to say. `files`
-      // has to be in the tree for a move to be a real move, and it is dismissed
-      // by `setup`, so re-declare a default that carries it.
-      tree.declareDefaultTree(model.group(['workspace', 'files'], { id: 'grp-main' }))
-      tree.moveTreePane('files', { groupId: 'grp-main', pos: 'right' })
-      expect(JSON.parse(window.localStorage.getItem(USER_PLACED_KEY) ?? 'null')).toEqual(['files'])
+    // A pin to clear, so the user-placed write has something to say. `files`
+    // has to be in the tree for a move to be a real move, and it is dismissed
+    // by `setup`, so re-declare a default that carries it.
+    tree.declareDefaultTree(model.group(['workspace', 'files'], { id: 'grp-main' }))
+    tree.moveTreePane('files', { groupId: 'grp-main', pos: 'right' })
+    expect(JSON.parse(window.localStorage.getItem(USER_PLACED_KEY) ?? 'null')).toEqual(['files'])
 
-      tree.applyTree(model.group(['workspace'], { id: 'grp-preset' }), 'focus')
+    tree.applyTree(model.group(['workspace'], { id: 'grp-preset' }), 'focus')
 
-      expect(window.localStorage.getItem(PRESET_KEY)).toBe('focus')
-      // Picking a layout hands placement back to the app — the pin is cleared,
-      // and the clear reaches disk.
-      expect(window.localStorage.getItem(USER_PLACED_KEY)).toBeNull()
-    },
-    15_000
-  )
+    expect(window.localStorage.getItem(PRESET_KEY)).toBe('focus')
+    // Picking a layout hands placement back to the app — the pin is cleared,
+    // and the clear reaches disk.
+    expect(window.localStorage.getItem(USER_PLACED_KEY)).toBeNull()
+  }, 15_000)
 })

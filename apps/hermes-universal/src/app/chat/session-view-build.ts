@@ -76,4 +76,3 @@ export function buildSessionView(storedSessionId: string): SessionView {
     $reasoningEffortWire: computed($state, () => '')
   }
 }
-

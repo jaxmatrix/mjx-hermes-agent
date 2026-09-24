@@ -34,13 +34,7 @@ import { $currentCwd, ensureSession, resetChat } from '@/store/chat'
 import { $chatBubbles, newChatBubble } from '@/store/chat-bubbles'
 import { $defaultProjectDir } from '@/store/default-project-dir'
 import { requestGateway } from '@/store/gateway-client'
-import {
-  $projectScope,
-  $projectTree,
-  ALL_PROJECTS,
-  NO_PROJECT_ID,
-  resolveNewSessionCwd
-} from '@/store/project-scope'
+import { $projectScope, $projectTree, ALL_PROJECTS, NO_PROJECT_ID, resolveNewSessionCwd } from '@/store/project-scope'
 import { $activeStoredSessionId, newSession } from '@/store/session-lifecycle'
 import { resetSessionStates } from '@/test-sessions'
 

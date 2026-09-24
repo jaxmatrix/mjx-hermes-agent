@@ -265,10 +265,7 @@ export default defineConfig(({ command }) => ({
       // Resolve the main entry and point at its sibling. Both keys on purpose:
       // alias matching is exact, and the id keeps the `?raw` query in dev but
       // loses it on some build paths.
-      'driver.js/dist/driver.js.iife.js?raw': `${join(
-        dirname(require.resolve('driver.js')),
-        'driver.js.iife.js'
-      )}?raw`,
+      'driver.js/dist/driver.js.iife.js?raw': `${join(dirname(require.resolve('driver.js')), 'driver.js.iife.js')}?raw`,
       'driver.js/dist/driver.js.iife.js': join(dirname(require.resolve('driver.js')), 'driver.js.iife.js'),
       // React MUST be a singleton: sdk/runtime.ts hands plugins the app's own
       // React namespace, and a second copy reaching the bundle would break every

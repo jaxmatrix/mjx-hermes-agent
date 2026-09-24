@@ -148,7 +148,6 @@ function ConfigSettingsInner({
   // data — each save's diff+request only starts once the previous one lands.
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
 
-   
   useEffect(() => {
     if (loadedConfig && !configSeeded.current) {
       configSeeded.current = true
@@ -195,7 +194,6 @@ function ConfigSettingsInner({
     // scopeProfile is constant per mount (the inner component is keyed on it).
   }, [scopeProfile])
 
-   
   useEffect(() => {
     if (!config || saveVersion === 0) {
       return

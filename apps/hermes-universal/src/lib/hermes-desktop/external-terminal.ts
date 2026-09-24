@@ -11,10 +11,8 @@ async function invokeNative<T>(command: string, args?: Record<string, unknown>):
   return invoke<T>(command, args)
 }
 
-const openSessionInTerminal: NonNullable<Bridge['openSessionInTerminal']> = async (
-  sessionId,
-  opts
-) => invokeNative('open_session_in_terminal', { sessionId, opts })
+const openSessionInTerminal: NonNullable<Bridge['openSessionInTerminal']> = async (sessionId, opts) =>
+  invokeNative('open_session_in_terminal', { sessionId, opts })
 
 export const externalTerminalBridge: Pick<Bridge, 'openSessionInTerminal'> = {
   openSessionInTerminal

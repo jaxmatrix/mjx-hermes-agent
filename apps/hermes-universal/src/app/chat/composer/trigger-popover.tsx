@@ -97,7 +97,7 @@ export function ComposerTriggerPopover({
 
   // Only keyboard navigation should move the drawer. A hover echo already points
   // at a visible row and scrolling it can shift another row under the pointer.
-   
+
   useEffect(() => {
     const list = listRef.current
 

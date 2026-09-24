@@ -827,7 +827,6 @@ const ThreadMessageListInner: FC<ThreadMessageListProps> = ({
   // session's live state and must not file it under the new key).
   const restoredContentKeyRef = useRef<string | null | undefined>(undefined)
 
-   
   useEffect(() => {
     const el = scrollRef.current
     const content = contentRef.current

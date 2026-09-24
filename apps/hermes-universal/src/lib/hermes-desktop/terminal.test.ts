@@ -40,16 +40,11 @@ describe('hermesDesktop.terminal', () => {
     const session = await terminalBridge.terminal.start({ cols: 100, cwd: '/tmp', rows: 40 })
 
     expect(session).toMatchObject({ cwd: '/tmp', shell: '/bin/zsh' })
-    expect(session.id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    )
+    expect(session.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 
     expect(native.listeners.has(`pty://${session.id}/data`)).toBe(true)
     expect(native.listeners.has(`pty://${session.id}/exit`)).toBe(true)
-    expect(native.calls[0]).toEqual([
-      'pty_spawn',
-      { id: session.id, cols: 100, rows: 40, cwd: '/tmp' }
-    ])
+    expect(native.calls[0]).toEqual(['pty_spawn', { id: session.id, cols: 100, rows: 40, cwd: '/tmp' }])
   })
 
   it('buffers data until onData attaches, then flushes', async () => {
@@ -74,9 +69,7 @@ describe('hermesDesktop.terminal', () => {
 
     await expect(terminalBridge.terminal.attach(session.id)).resolves.toBe(true)
     await expect(terminalBridge.terminal.write(session.id, 'ls\n')).resolves.toBe(true)
-    await expect(terminalBridge.terminal.resize(session.id, { cols: 80, rows: 24 })).resolves.toBe(
-      true
-    )
+    await expect(terminalBridge.terminal.resize(session.id, { cols: 80, rows: 24 })).resolves.toBe(true)
     await expect(terminalBridge.terminal.cwd(session.id)).resolves.toBe('/work')
     await expect(terminalBridge.terminal.dispose(session.id)).resolves.toBe(true)
     await expect(terminalBridge.terminal.attach(session.id)).resolves.toBe(false)

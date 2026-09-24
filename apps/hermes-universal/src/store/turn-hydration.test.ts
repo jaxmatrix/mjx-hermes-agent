@@ -178,10 +178,7 @@ describe('the journaling pass', () => {
     ensureSessionSlice(localSite(runtime), { storedSessionId: stored })
     await Promise.resolve()
 
-    const persist = vi.spyOn(
-      await import('@/lib/inflight-turn-journal'),
-      'persistInFlightTurnState'
-    )
+    const persist = vi.spyOn(await import('@/lib/inflight-turn-journal'), 'persistInFlightTurnState')
 
     persist.mockClear()
 

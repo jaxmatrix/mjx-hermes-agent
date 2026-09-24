@@ -221,7 +221,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
 
   // Generic in-app route intents raised by toast recovery buttons (Open Keys,
   // Open Gateways, Maintenance …) fired from stores with no router context.
-   
+
   useEffect(() => {
     if (!routeRequest || routeRequest.seq === routeRequestSeenRef.current) {
       return
@@ -235,7 +235,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   // looking at (same IPC the Models page uses), then let the boot hook re-dial.
   // A remote/cloud connection has no local process to recycle — there the
   // only meaningful "restart" is re-dialing the connection.
-   
+
   useEffect(() => {
     if (backendRestartRequest === backendRestartSeenRef.current) {
       return
@@ -256,7 +256,6 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     }
   }, [backendRestartRequest])
 
-   
   useEffect(() => {
     if (billingSettingsRequest === billingSettingsSeenRef.current) {
       return
@@ -272,7 +271,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   // Pool-cap recovery is fired by the notification action, which has no router
   // context. Keep navigation user-initiated: the counter changes only when the
   // user clicks "Open Advanced Settings" on a pool-slot failure.
-   
+
   useEffect(() => {
     if (poolLimitsSettingsRequest === poolLimitsSettingsSeenRef.current) {
       return
@@ -285,7 +284,6 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     }
   }, [navigate, poolLimitsSettingsRequest])
 
-   
   useEffect(() => {
     if (cronReviewRequest === cronReviewSeenRef.current) {
       return
@@ -589,7 +587,6 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   const freshSessionRequest = useStore($freshSessionRequest)
   const lastFreshRef = useRef(freshSessionRequest)
 
-   
   useEffect(() => {
     if (freshSessionRequest === lastFreshRef.current) {
       return
@@ -605,7 +602,6 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   const gatewayScope = `${activeConnectionId ?? ''}\0${activeGatewayProfile}`
   const lastGatewayScopeRef = useRef(gatewayScope)
 
-   
   useEffect(() => {
     if (gatewayScope === lastGatewayScopeRef.current) {
       return
@@ -657,7 +653,6 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   const startWorkSessionRequest = useStore($startWorkSessionRequest)
   const lastStartWorkTokenRef = useRef(startWorkSessionRequest?.token ?? 0)
 
-   
   useEffect(() => {
     if (!startWorkSessionRequest || startWorkSessionRequest.token === lastStartWorkTokenRef.current) {
       return

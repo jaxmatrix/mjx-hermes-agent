@@ -19,8 +19,7 @@ const saveGatewayFile: NonNullable<Bridge['saveGatewayFile']> = async payload =>
   const { invoke } = await import('@tauri-apps/api/core')
   const { save } = await import('@tauri-apps/plugin-dialog')
 
-  const suggested =
-    (payload.suggestedName || '').trim() || basename(payload.path) || 'download'
+  const suggested = (payload.suggestedName || '').trim() || basename(payload.path) || 'download'
 
   const dest = await save({
     defaultPath: suggested,

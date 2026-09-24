@@ -274,7 +274,6 @@ function PostSetupRunner({ toolset, postSetupKey, installed = false, onComplete,
   // Guard against overlapping polls / state updates after unmount.
   const activeRef = useRef(false)
 
-   
   useEffect(() => {
     return () => {
       activeRef.current = false
@@ -540,7 +539,6 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: Too
   // Guard the Nous Portal sign-in poll loop against unmount/state updates.
   const mountedRef = useRef(true)
 
-   
   useEffect(() => {
     mountedRef.current = true
 
@@ -582,7 +580,7 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: Too
   // first fully-configured provider, else the first provider. Without this the
   // panel highlighted the first keyless provider (e.g. Nous Portal) even when
   // the user had already selected another (e.g. DuckDuckGo).
-   
+
   useEffect(() => {
     if (providerChoiceClaimedRef.current || expandedProvider || providers.length === 0) {
       return

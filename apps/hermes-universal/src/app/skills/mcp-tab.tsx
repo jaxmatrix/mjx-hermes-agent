@@ -488,7 +488,6 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   // in-progress edit — the draft is the user's until they save or reset.
   const draftSeeded = useRef(false)
 
-   
   useEffect(() => {
     // profilePending: config still holds the PREVIOUS profile's record right
     // after a switch — seeding from it would latch the wrong profile's doc.
@@ -561,7 +560,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   // on a fresh success, errorUpdatedAt on a fresh failure. Releasing on error too
   // means a failed refetch surfaces the retry UI instead of leaving mutations
   // silently no-op forever.
-   
+
   useEffect(() => {
     if (
       profilePending &&

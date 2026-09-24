@@ -808,7 +808,6 @@ export function useBackgroundSync({
     [activeSessionId, activeStoredSessionId, refreshActiveTranscript]
   )
 
-   
   useEffect(() => {
     if (gatewayState !== 'open' || !activeSessionId || !activeStoredSessionId) {
       return

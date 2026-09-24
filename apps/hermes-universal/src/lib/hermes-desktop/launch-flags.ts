@@ -12,10 +12,7 @@ import { IS_DESKTOP } from '@/lib/platform'
 
 type Bridge = NonNullable<typeof window.hermesDesktop>
 
-export const launchFlagsBridge: Pick<
-  Bridge,
-  'localModelsEnabled' | 'guestOnboardingEnabled' | 'skipIntro'
-> = {
+export const launchFlagsBridge: Pick<Bridge, 'localModelsEnabled' | 'guestOnboardingEnabled' | 'skipIntro'> = {
   // Electron: `--local` OR win32 OR darwin. Universal enables local models on
   // every desktop host — the settings / tips surfaces already gate on this.
   localModelsEnabled: IS_DESKTOP,

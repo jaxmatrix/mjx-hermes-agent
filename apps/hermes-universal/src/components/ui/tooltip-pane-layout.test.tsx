@@ -67,13 +67,11 @@ it('opens a tip whose nearest tree-group host has no layout', async () => {
 
   await vi.waitFor(
     () => {
-       
       expect(document.querySelector('[data-slot="tooltip-content"]')).not.toBeNull()
     },
     { timeout: 2000 }
   )
 
-   
   const wrapper = document.querySelector<HTMLElement>('[data-radix-popper-content-wrapper]')
 
   expect(wrapper).not.toBeNull()
@@ -105,14 +103,12 @@ it('resolves the pane at open time, not at mount', async () => {
 
   await vi.waitFor(
     () => {
-       
       expect(document.querySelector('[data-radix-popper-content-wrapper]')).not.toBeNull()
     },
     { timeout: 2000 }
   )
 
   await vi.waitFor(() => {
-     
     expect(document.querySelector<HTMLElement>('[data-radix-popper-content-wrapper]')?.style.visibility).not.toBe(
       'hidden'
     )

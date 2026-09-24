@@ -36,9 +36,9 @@ describe('latchBackendFailure', () => {
   })
 
   it('recognises a host-key change that crossed a stringifying boundary', () => {
-    expect(
-      latchBackendFailure('a', { attemptedRemote: true, error: new Error('Host key verification failed') })
-    ).toBe('host-key-changed')
+    expect(latchBackendFailure('a', { attemptedRemote: true, error: new Error('Host key verification failed') })).toBe(
+      'host-key-changed'
+    )
   })
 
   it('is PER CONNECTION, so one dead source does not stand the others down', () => {

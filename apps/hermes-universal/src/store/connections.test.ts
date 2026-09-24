@@ -58,9 +58,11 @@ const {
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen }))
-vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- setApiRequestProfile: vi.fn() }))
+  setApiRequestProfile: vi.fn()
+}))
 vi.mock('@/lib/auth', () => ({
   oauthStatus,
   oauthStatusIsUnknown: (status: { reachable?: boolean }) => status.reachable === false,

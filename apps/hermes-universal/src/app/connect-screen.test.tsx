@@ -79,7 +79,7 @@ describe('the welcome step', () => {
     mockGet.mockResolvedValue(false)
     renderScreen()
 
-    fireEvent.click(await screen.findByRole('button', { name: "Get started" }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Get started' }))
 
     expect(await screen.findByText('Connect to Hermes')).toBeInTheDocument()
     expect(mockSet).toHaveBeenCalledWith('connectWelcomed', true)
@@ -90,7 +90,7 @@ describe('the welcome step', () => {
     mockSet.mockRejectedValue(new Error('disk full'))
     renderScreen()
 
-    fireEvent.click(await screen.findByRole('button', { name: "Get started" }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Get started' }))
 
     // Showing the welcome twice is a cheaper failure than a dead button.
     expect(await screen.findByText('Connect to Hermes')).toBeInTheDocument()
@@ -217,7 +217,7 @@ describe('connection errors', () => {
     await screen.findByText('Welcome to Hermes')
     expect(screen.queryByText('gateway unreachable')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: "Get started" }))
+    fireEvent.click(screen.getByRole('button', { name: 'Get started' }))
     await waitFor(() => expect(screen.getByText('gateway unreachable')).toBeInTheDocument())
 
     $connectionError.set(null)

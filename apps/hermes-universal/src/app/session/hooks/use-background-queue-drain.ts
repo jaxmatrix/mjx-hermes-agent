@@ -54,7 +54,6 @@ export function useBackgroundQueueDrain({
   const retryTimersRef = useRef<number[]>([])
   const [retryTick, setRetryTick] = useState(0)
 
-   
   useEffect(() => {
     submitTextRef.current = submitText
   }, [submitText])

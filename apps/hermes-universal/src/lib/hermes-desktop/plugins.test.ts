@@ -68,10 +68,7 @@ describe('hermesDesktop plugin roots', () => {
 
     expect(native.calls).toEqual([
       ['plugins_root', { profile: null, root: 'desktop-plugins' }],
-      [
-        'plugins_read',
-        { profile: null, root: 'desktop-plugins', name: 'demo' }
-      ]
+      ['plugins_read', { profile: null, root: 'desktop-plugins', name: 'demo' }]
     ])
   })
 

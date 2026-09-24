@@ -30,17 +30,13 @@ describe('pluginRest', () => {
   it('scopes the call to the plugin namespace', async () => {
     await pluginRest('kanban', '/board')
 
-    expect(api).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/api/plugins/kanban/board' })
-    )
+    expect(api).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/plugins/kanban/board' }))
   })
 
   it('accepts a path with no leading slash', async () => {
     await pluginRest('kanban', 'board')
 
-    expect(api).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/api/plugins/kanban/board' })
-    )
+    expect(api).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/plugins/kanban/board' }))
   })
 
   it('rejects traversal out of the namespace', async () => {
@@ -54,9 +50,7 @@ describe('pluginRest', () => {
   it('allows `..` inside a query string — only the path portion is the boundary', async () => {
     await pluginRest('kanban', '/search?q=../x')
 
-    expect(api).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/api/plugins/kanban/search?q=../x' })
-    )
+    expect(api).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/plugins/kanban/search?q=../x' }))
   })
 
   it('threads the active profile', async () => {

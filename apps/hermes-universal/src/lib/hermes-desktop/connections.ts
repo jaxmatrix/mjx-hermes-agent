@@ -838,9 +838,8 @@ export const connectionBridge: Pick<
           return
         }
 
-        void listen<DesktopProfileRoute | null>(
-          'hermes://profile-default-changed',
-          event => callback(event.payload)
+        void listen<DesktopProfileRoute | null>('hermes://profile-default-changed', event =>
+          callback(event.payload)
         ).then(fn => {
           if (cancelled) {
             fn()

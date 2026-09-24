@@ -21,6 +21,7 @@ const announceProfileChatScope = vi.fn()
 // Local atom — importing `@/store/profile` pulls the whole gateway graph and
 // times out under vitest's 5s budget.
 const $activeGatewayProfile = atom('default')
+
 const normalizeProfileKey = (value: null | string | undefined) => {
   const trimmed = (value ?? '').trim().toLowerCase()
 

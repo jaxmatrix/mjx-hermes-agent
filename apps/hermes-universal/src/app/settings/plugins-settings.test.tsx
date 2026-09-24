@@ -42,7 +42,7 @@ import {
   $agentPlugins,
   $agentPluginsError,
   $agentPluginsStatus,
-  type AgentPluginRow,
+  type AgentPluginRow
 } from '@/store/agent-plugins'
 import { $connection } from '@/store/connection'
 
@@ -273,9 +273,11 @@ describe('PluginsSettings ▸ agent plugins', () => {
 
     expect(await screen.findByText('legacy')).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Disable legacy' })).toBeDisabled()
-    expect(screen.getByText(
-      'This is the desktop half of a bundled plugin, but its agent half is not installed on the currently connected backend/profile. Install it from Capabilities → Plugins.'
-    )).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'This is the desktop half of a bundled plugin, but its agent half is not installed on the currently connected backend/profile. Install it from Capabilities → Plugins.'
+      )
+    ).toBeInTheDocument()
   })
 
   // `busy === row.key` compares undefined to undefined, so an unrelated in-flight
@@ -407,4 +409,3 @@ describe('PluginsSettings ▸ agent plugins', () => {
     expect(screen.getAllByRole('button', { name: /Open Desktop plugins folder/ })).toHaveLength(1)
   })
 })
-

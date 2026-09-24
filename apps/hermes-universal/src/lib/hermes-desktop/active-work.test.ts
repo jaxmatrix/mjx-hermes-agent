@@ -21,9 +21,7 @@ describe('hermesDesktop.setActiveWork', () => {
     activeWorkBridge.setActiveWork!({ count: 1, titles: ['Fix login'] })
 
     await vi.waitFor(() => {
-      expect(native.calls).toEqual([
-        ['set_active_work', { payload: { count: 1, titles: ['Fix login'] } }]
-      ])
+      expect(native.calls).toEqual([['set_active_work', { payload: { count: 1, titles: ['Fix login'] } }]])
     })
   })
 })

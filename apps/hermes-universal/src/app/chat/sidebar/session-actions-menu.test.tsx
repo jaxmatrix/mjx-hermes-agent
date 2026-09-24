@@ -160,9 +160,8 @@ describe('SessionActionsMenu', () => {
     const dialog = await screen.findByRole('dialog')
     const input = within(dialog).getByRole('textbox')
 
-     
     await waitFor(() => expect(document.activeElement).toBe(input))
-     
+
     expect(document.activeElement).not.toBe(trigger)
   })
 
@@ -258,9 +257,9 @@ describe('SessionActionsMenu', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /delete/i }))
 
     const reopened = await screen.findByRole('dialog')
-     
+
     await waitFor(() => expect(reopened.contains(document.activeElement)).toBe(true))
-     
+
     fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
 
     expect(await screen.findByText('Session deleted')).toBeTruthy()

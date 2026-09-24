@@ -436,7 +436,6 @@ export function useSessionActions({
   // by A's delayed session.info event and visibly jump back to A.
   const storedIdRotation = useStore($activeSessionStoredIdRotation)
 
-   
   useEffect(() => {
     if (!storedIdRotation) {
       return

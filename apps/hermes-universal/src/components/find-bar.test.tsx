@@ -595,7 +595,7 @@ describe('FindBar', () => {
     renderFindBar()
 
     const input = await screen.findByRole('searchbox', { name: /find in page/i })
-     
+
     await waitFor(() => expect(document.activeElement).toBe(input))
   })
 
@@ -652,7 +652,7 @@ describe('FindBar', () => {
 
       await act(async () => resolveFind?.())
       expect(input.inert).toBe(false)
-       
+
       expect(document.activeElement).toBe(input)
       expect(input.selectionStart).toBe(6)
     } finally {
@@ -903,19 +903,17 @@ describe('view.findInPage keybind gate', () => {
 
 describe('FindBar files pane positioning', () => {
   function mountAside(width = 240) {
-     
     const aside = document.createElement('aside')
     aside.setAttribute('aria-label', 'Right sidebar')
     // jsdom has no layout — stub the rect the component measures.
     aside.getBoundingClientRect = () => ({ left: window.innerWidth - width, width }) as DOMRect
-     
+
     document.body.appendChild(aside)
 
     return aside
   }
 
   afterEach(() => {
-     
     for (const aside of document.querySelectorAll('aside[aria-label="Right sidebar"]')) {
       aside.remove()
     }

@@ -22,10 +22,9 @@ import { pluginActive, publishPlugin } from './plugins-store'
 import { watchRuntimePlugins } from './runtime-loader'
 
 const modules = {
-  ...import.meta.glob<{ default: HermesPlugin }>(
-    '../../../../packages/hermes-sample-plugins/*/plugin.{ts,tsx}',
-    { eager: true }
-  ),
+  ...import.meta.glob<{ default: HermesPlugin }>('../../../../packages/hermes-sample-plugins/*/plugin.{ts,tsx}', {
+    eager: true
+  }),
   ...import.meta.glob<{ default: HermesPlugin }>('../plugins/*/plugin.{js,ts,tsx}', { eager: true })
 }
 

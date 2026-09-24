@@ -7,7 +7,35 @@
  * the name pattern that gates the draft.
  */
 
-import { Badge, Button, Checkbox, cn, Codicon, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DisclosureCaret, GlyphSpinner, universalHost as host, Input, queryClient, RowButton, SearchField, SegmentedControl, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, useI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  Badge,
+  Button,
+  Checkbox,
+  cn,
+  Codicon,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DisclosureCaret,
+  GlyphSpinner,
+  universalHost as host,
+  Input,
+  queryClient,
+  RowButton,
+  SearchField,
+  SegmentedControl,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+  useI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 
 import { avatarColor, blobatarSvg, botAppearance, BotFace } from './avatar'

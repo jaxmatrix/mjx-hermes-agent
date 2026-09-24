@@ -34,7 +34,14 @@ vi.mock('@/store/gateway-client', async () => {
 })
 
 import { GatewayRpcError } from '@/gateway/rpc-error'
-import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, listProfileSessionsPage, renameSession } from '@/hermes'
+import {
+  deleteSession,
+  getSession,
+  getSessionMessages,
+  listAllProfileSessions,
+  listProfileSessionsPage,
+  renameSession
+} from '@/hermes'
 import { ApiError } from '@/lib/api'
 import type { ChatMessage } from '@/lib/session-key-messages'
 import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
@@ -170,7 +177,11 @@ describe('session store', () => {
       session_id: 'runtime-1'
     })
     await openSession('stored-9')
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-9', cols: 96, source: 'desktop' })
+    expect(requestGateway).toHaveBeenCalledWith('session.resume', {
+      session_id: 'stored-9',
+      cols: 96,
+      source: 'desktop'
+    })
     expect($activeStoredSessionId.get()).toBe('stored-9')
     expect($sessionId.get()).toBe('runtime-1')
     expect($busy.get()).toBe(false)
@@ -408,7 +419,11 @@ describe('openSession — forceResume', () => {
     await openSession('stored-warm', { forceResume: true })
 
     expect(requestGateway).toHaveBeenCalledTimes(1)
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-warm', cols: 96, source: 'desktop' })
+    expect(requestGateway).toHaveBeenCalledWith('session.resume', {
+      session_id: 'stored-warm',
+      cols: 96,
+      source: 'desktop'
+    })
     expect($activeStoredSessionId.get()).toBe('stored-warm')
   })
 
@@ -466,7 +481,11 @@ describe('reclaimSessionTransport', () => {
 
     await reclaimSessionTransport('stored-popped')
 
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-popped', cols: 96, source: 'desktop' })
+    expect(requestGateway).toHaveBeenCalledWith('session.resume', {
+      session_id: 'stored-popped',
+      cols: 96,
+      source: 'desktop'
+    })
     // The pane never moves. `openSession(…, { forceResume: true })` would have
     // dragged it onto a conversation the user closed a window on.
     expect($activeStoredSessionId.get()).toBe('stored-here')

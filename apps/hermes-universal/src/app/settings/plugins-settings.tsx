@@ -240,9 +240,7 @@ function AgentPluginsSection() {
         <EmptyState description={error ?? undefined} title="Failed to load plugins" />
       ) : sorted.length === 0 ? (
         needle ? (
-          <p className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-            No matches
-          </p>
+          <p className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">No matches</p>
         ) : (
           <EmptyState title={p.empty} />
         )
@@ -354,7 +352,11 @@ export function PluginsSettings() {
     (a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name)
   )
 
-  const sourceLabel = disk ? (disk.kind === 'local' ? 'Local plugins folder' : 'Gateway plugins folder') : 'Plugins unavailable'
+  const sourceLabel = disk
+    ? disk.kind === 'local'
+      ? 'Local plugins folder'
+      : 'Gateway plugins folder'
+    : 'Plugins unavailable'
 
   const openFolder = async () => {
     if (!disk?.reveal || !root) {

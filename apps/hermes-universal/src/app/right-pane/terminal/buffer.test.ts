@@ -11,12 +11,7 @@
 import type { Terminal } from '@xterm/xterm'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  makeTerminalReader,
-  readActiveTerminal,
-  registerTerminalReader,
-  setActiveTerminalId
-} from './buffer'
+import { makeTerminalReader, readActiveTerminal, registerTerminalReader, setActiveTerminalId } from './buffer'
 
 /** A stand-in for xterm's buffer: `lines` are absolute, oldest first. */
 const fakeTerm = (lines: string[], { baseY = 0, cursorY = 0, rows = 3 } = {}) =>

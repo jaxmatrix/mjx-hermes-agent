@@ -96,9 +96,7 @@ export function ConnectionsSection() {
         </div>
       )}
 
-      {registry.readOnly && (
-        <p className="mb-3 text-sm text-muted-foreground">{t.settings.gateway.envOverrideDesc}</p>
-      )}
+      {registry.readOnly && <p className="mb-3 text-sm text-muted-foreground">{t.settings.gateway.envOverrideDesc}</p>}
 
       <MasterDetail
         pane={
@@ -208,15 +206,19 @@ export function ConnectionsSection() {
         ))}
 
         {hasMultipleUpdateTargets() && (
-          <Button className="ms-auto" disabled={updating} onClick={() => void runUpdateAll()} size="sm" variant="secondary">
+          <Button
+            className="ms-auto"
+            disabled={updating}
+            onClick={() => void runUpdateAll()}
+            size="sm"
+            variant="secondary"
+          >
             {c.updateAll}
           </Button>
         )}
       </div>
 
-      {current && connectionEndpointLabel(current) && (
-        <p className="sr-only">{connectionEndpointLabel(current)}</p>
-      )}
+      {current && connectionEndpointLabel(current) && <p className="sr-only">{connectionEndpointLabel(current)}</p>}
     </SettingsContent>
   )
 }

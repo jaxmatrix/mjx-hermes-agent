@@ -604,7 +604,10 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
                           return (
                             <div className="group relative" key={theme.name}>
                               <button
-                                className={cn('w-full p-2 text-start', selectableCardClass({ active, prominent: true }))}
+                                className={cn(
+                                  'w-full p-2 text-start',
+                                  selectableCardClass({ active, prominent: true })
+                                )}
                                 onClick={() => {
                                   triggerHaptic('crisp')
                                   setTheme(theme.name)

@@ -10,8 +10,7 @@ async function invokeNative<T>(command: string, args?: Record<string, unknown>):
   return invoke<T>(command, args)
 }
 
-const getMachineProfile: NonNullable<Bridge['getMachineProfile']> = async () =>
-  invokeNative('get_machine_profile')
+const getMachineProfile: NonNullable<Bridge['getMachineProfile']> = async () => invokeNative('get_machine_profile')
 
 const getRemoteDisplayReason: NonNullable<Bridge['getRemoteDisplayReason']> = async () =>
   invokeNative('get_remote_display_reason')

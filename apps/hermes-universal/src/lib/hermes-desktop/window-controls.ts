@@ -34,14 +34,13 @@ const close: Bridge['windowControls']['close'] = () => {
     .catch(() => undefined)
 }
 
-export const windowControlsBridge: Pick<Bridge, 'windowControls'> | Record<string, never> =
-  IS_DESKTOP
-    ? {
-        windowControls: {
-          custom: false,
-          minimize,
-          toggleMaximize,
-          close
-        }
+export const windowControlsBridge: Pick<Bridge, 'windowControls'> | Record<string, never> = IS_DESKTOP
+  ? {
+      windowControls: {
+        custom: false,
+        minimize,
+        toggleMaximize,
+        close
       }
-    : {}
+    }
+  : {}

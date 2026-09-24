@@ -78,7 +78,6 @@ export function ComputerUsePanel({ onConfiguredChange }: ComputerUsePanelProps) 
     }
   }, [])
 
-   
   useEffect(() => {
     activeRef.current = true
     void refresh()

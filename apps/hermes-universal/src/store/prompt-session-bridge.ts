@@ -58,28 +58,15 @@ export {
   sessionSudoRequest
 }
 
-export const $approval = computed(
-  [$approvalRequests, $activeSessionKey],
-  (all, key) => all[key] ?? null
-)
-export const $clarify = computed(
-  [$clarifyRequests, $activeSessionKey],
-  (requests, key) => requests[key] ?? null
-)
-export const $secret = computed(
-  [$secretRequests, $activeSessionKey],
-  (all, key) => all[key] ?? null
-)
-export const $sudo = computed(
-  [$sudoRequests, $activeSessionKey],
-  (all, key) => all[key] ?? null
-)
+export const $approval = computed([$approvalRequests, $activeSessionKey], (all, key) => all[key] ?? null)
+export const $clarify = computed([$clarifyRequests, $activeSessionKey], (requests, key) => requests[key] ?? null)
+export const $secret = computed([$secretRequests, $activeSessionKey], (all, key) => all[key] ?? null)
+export const $sudo = computed([$sudoRequests, $activeSessionKey], (all, key) => all[key] ?? null)
 
 /** Active-session parked-on-user flag — same sources as prompts' sessionAwaitingInput. */
 export const $activeSessionAwaitingInput = computed(
   [$clarifyRequests, $approvalRequests, $sudoRequests, $secretRequests, $activeSessionKey],
-  (clarify, approvals, sudos, secrets, key) =>
-    Boolean(clarify[key] || approvals[key] || sudos[key] || secrets[key])
+  (clarify, approvals, sudos, secrets, key) => Boolean(clarify[key] || approvals[key] || sudos[key] || secrets[key])
 )
 
 export function setSessionApproval(

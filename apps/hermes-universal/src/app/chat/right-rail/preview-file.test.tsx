@@ -24,9 +24,7 @@ describe('MarkdownPreview', () => {
       />
     )
 
-    expect(
-      container.querySelector('.katex, katex-html, .katex-host')
-    ).not.toBeNull()
+    expect(container.querySelector('.katex, katex-html, .katex-host')).not.toBeNull()
     expect(screen.queryByText(/\$\$/)).toBeNull()
   })
 

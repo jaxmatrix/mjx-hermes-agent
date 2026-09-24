@@ -470,10 +470,7 @@ export async function closeTileWindow(label: string): Promise<void> {
  *  is the least reliable place to send a message from. */
 export const TILE_WINDOW_CLOSED_EVENT = 'hermes://tile-window-closed'
 
-export async function openNewWindow(route?: {
-  connectionId: null | string
-  profile: string
-}): Promise<void> {
+export async function openNewWindow(route?: { connectionId: null | string; profile: string }): Promise<void> {
   if (!canOpenNewWindow()) {
     return
   }

@@ -80,8 +80,7 @@ function listenEvent(event: string, callback: () => void): () => void {
 
 const onSkip: IntroReveal['onSkip'] = callback => listenEvent('hermes://intro-reveal-skip', callback)
 
-const onClosed: IntroReveal['onClosed'] = callback =>
-  listenEvent('hermes://intro-reveal-closed', callback)
+const onClosed: IntroReveal['onClosed'] = callback => listenEvent('hermes://intro-reveal-closed', callback)
 
 export const introRevealBridge: Pick<Bridge, 'introReveal'> | Record<string, never> = IS_DESKTOP
   ? {

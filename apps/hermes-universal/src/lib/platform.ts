@@ -142,8 +142,6 @@ export const isMacPlatform = (): boolean => (IS_TAURI ? IS_MAC : uaMatches(/mac/
 
 // Not `/win/i` — that matches the substring inside `darwin`, which is jsdom's
 // default userAgent. Win32 / Windows NT are the real tokens.
-export const isWindowsPlatform = (): boolean =>
-  IS_TAURI ? PLATFORM === 'windows' : uaMatches(/win32|windows/i)
+export const isWindowsPlatform = (): boolean => (IS_TAURI ? PLATFORM === 'windows' : uaMatches(/win32|windows/i))
 
-export const isLinuxPlatform = (): boolean =>
-  IS_TAURI ? PLATFORM === 'linux' : uaMatches(/linux/i)
+export const isLinuxPlatform = (): boolean => (IS_TAURI ? PLATFORM === 'linux' : uaMatches(/linux/i))

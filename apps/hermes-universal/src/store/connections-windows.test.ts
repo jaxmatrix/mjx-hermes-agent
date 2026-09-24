@@ -21,9 +21,11 @@ const ctx = vi.hoisted(() => ({
 // What no window holds state in. (A `vi.mock` factory runs ONCE, however often
 // the modules are reset — so whatever is a window's own is mocked per window,
 // in `mockWindow` below.)
-vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- setApiRequestProfile: vi.fn() }))
+  setApiRequestProfile: vi.fn()
+}))
 vi.mock('@/lib/auth', () => ({
   oauthStatus: vi.fn(async () => ({ signedIn: true })),
   oauthStatusIsUnknown: () => false,

@@ -213,7 +213,6 @@ export const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sess
     [aui, rememberInitialDraft]
   )
 
-   
   useEffect(() => {
     draftRef.current = draft
 

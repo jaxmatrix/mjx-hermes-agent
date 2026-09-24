@@ -148,7 +148,6 @@ export function useSessionStateCache({
   // flush below tell a same-session refresh from a thread switch.
   const viewSessionIdRef = useRef<string | null>(null)
 
-   
   useEffect(() => {
     setMutableRef(busyRef, busy)
   }, [busy, busyRef])

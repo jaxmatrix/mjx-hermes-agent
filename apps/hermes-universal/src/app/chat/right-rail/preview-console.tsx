@@ -154,7 +154,6 @@ export function PreviewConsolePanel({
   const sendableLogs = visibleSelection.length > 0 ? visibleSelection : logs
   const stickScrollRafRef = useRef<number | null>(null)
 
-   
   useEffect(() => {
     if (!consoleShouldStickRef.current) {
       return

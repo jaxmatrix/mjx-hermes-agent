@@ -22,11 +22,7 @@ import {
   bindSessionSlice,
   releaseSessionSlice
 } from '@/store/plugin-session-bind'
-import {
-  sessionApprovalRequest,
-  sessionSecretRequest,
-  sessionSudoRequest
-} from '@/store/prompts'
+import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
 import { refreshSessions } from '@/store/session-lifecycle'
 import { setSessionOwnerLabels } from '@/store/session-owner-label'
 import { $sessionKeyStates } from '@/store/session-state-types'
@@ -168,10 +164,7 @@ export type UniversalHost = typeof host & {
     created: PluginCreatedSession,
     options?: { focus?: boolean; target?: StoreOpenOptions['target'] }
   ) => ReturnType<typeof openCreatedPluginSession>
-  openSession: (
-    storedSessionId: string,
-    options?: Record<string, unknown>
-  ) => Promise<unknown>
+  openSession: (storedSessionId: string, options?: Record<string, unknown>) => Promise<unknown>
   refreshSessions: () => Promise<void>
   releaseSession: (storedSessionId: string) => void
   sessionMessages: typeof sessionMessages

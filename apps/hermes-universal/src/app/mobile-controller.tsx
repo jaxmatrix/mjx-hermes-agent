@@ -20,12 +20,7 @@ import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { startLiveSessionSync } from '@/store/live-session-status'
 import { startNewSession, startNewSessionTab } from '@/store/new-session'
 import { $activeGatewayProfile } from '@/store/profile'
-import {
-  $selectedStoredSessionId,
-  $sessions,
-  sessionMatchesStoredId,
-  sessionPinId
-} from '@/store/session'
+import { $selectedStoredSessionId, $sessions, sessionMatchesStoredId, sessionPinId } from '@/store/session'
 import { archiveSessionLocal } from '@/store/session-lifecycle'
 import { openAppRoute } from '@/store/windows'
 import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom-universal'
@@ -260,13 +255,7 @@ export function MobileController() {
         {/* Star map overlay — the radial "what Hermes has learned" map. */}
         {connected && starmapOpen && <StarmapView onClose={closeOverlayToPreviousRoute} />}
         {/* First-run / manual provider setup — same overlay desktop wiring mounts. */}
-        {connected && (
-          <DesktopOnboardingOverlay
-            enabled
-            profile={activeProfile}
-            requestGateway={requestGateway}
-          />
-        )}
+        {connected && <DesktopOnboardingOverlay enabled profile={activeProfile} requestGateway={requestGateway} />}
         {/* Edit-models ("model visibility") dialog — opened from the composer's
             model menu ("Edit models"). Self-gates on $modelVisibilityOpen +
             gateway-open; "Add provider…" routes to Providers → Accounts. */}

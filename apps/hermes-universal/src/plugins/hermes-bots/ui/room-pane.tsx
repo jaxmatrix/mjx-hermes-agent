@@ -12,7 +12,16 @@
  * and drifted from the real UI on every transcript feature that shipped after.
  */
 
-import { Button, Codicon, universalHost as host, SessionThread, StatusDot, Textarea, usePluginI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  Button,
+  Codicon,
+  universalHost as host,
+  SessionThread,
+  StatusDot,
+  Textarea,
+  usePluginI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 import { useEffect, useMemo, useState } from 'react'
 
 import { MAIN_THREAD } from '../ids'
@@ -180,13 +189,13 @@ export function RoomPane({ roomId }: { roomId: string }) {
       {runtime.paused && (
         // Rule 9: the drive stopped and the user is told why, with what to do.
         <p className="border-b border-border/60 bg-muted/50 px-3 py-1.5 text-xs">
-          {runtime.paused === 'backgrounded'
-            ? t('room.pausedBackground')
-            : t('room.pausedOffline')}
+          {runtime.paused === 'backgrounded' ? t('room.pausedBackground') : t('room.pausedOffline')}
         </p>
       )}
 
-      {runtime.error && <p className="border-b border-border/60 px-3 py-1.5 text-xs text-destructive">{runtime.error}</p>}
+      {runtime.error && (
+        <p className="border-b border-border/60 px-3 py-1.5 text-xs text-destructive">{runtime.error}</p>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {lines.map(line => (

@@ -2163,8 +2163,7 @@ function reloadLayoutTreeFromStorage() {
   }
 }
 
-let appliedLayoutImportToken: string | null =
-  typeof window !== 'undefined' ? readKey(LAYOUT_KEYS.imported) : null
+let appliedLayoutImportToken: string | null = typeof window !== 'undefined' ? readKey(LAYOUT_KEYS.imported) : null
 
 function tryAdoptImportedLayout() {
   if (typeof window === 'undefined' || !ownsPersistedAppState()) {

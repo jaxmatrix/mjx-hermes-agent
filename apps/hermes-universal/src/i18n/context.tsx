@@ -104,7 +104,6 @@ export function I18nProvider({ children, configClient = defaultConfigClient, ini
   // resolves (or fails) after that must never overwrite an explicit choice.
   const userLocaleRef = useRef(false)
 
-   
   useEffect(() => {
     localeRef.current = locale
     setRuntimeI18nLocale(locale)

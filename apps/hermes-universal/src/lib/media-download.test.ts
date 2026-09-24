@@ -54,16 +54,12 @@ describe('downloadGatewayMediaFile on desktop bridge', () => {
   it('passes file paths through without rewriting them in the renderer', async () => {
     await downloadGatewayMediaFile('file:///work/out/q3%20report.pdf')
 
-    expect(saveGatewayFile).toHaveBeenCalledWith(
-      expect.objectContaining({ path: 'file:///work/out/q3%20report.pdf' })
-    )
+    expect(saveGatewayFile).toHaveBeenCalledWith(expect.objectContaining({ path: 'file:///work/out/q3%20report.pdf' }))
   })
 
   it('rejects when the desktop bridge is unavailable', async () => {
     vi.stubGlobal('window', { hermesDesktop: {} })
 
-    await expect(downloadGatewayMediaFile('/work/out/report.pdf')).rejects.toThrow(
-      'Desktop file download bridge'
-    )
+    await expect(downloadGatewayMediaFile('/work/out/report.pdf')).rejects.toThrow('Desktop file download bridge')
   })
 })

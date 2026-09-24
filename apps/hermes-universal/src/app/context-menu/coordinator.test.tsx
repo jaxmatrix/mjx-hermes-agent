@@ -49,7 +49,14 @@ function mountMenu() {
 
 /** A right-click, as an engine delivers it (`button: 2`). */
 function rightClick(target: Element | Window, init: Partial<MouseEventInit> = {}) {
-  const event = new MouseEvent('contextmenu', { bubbles: true, button: 2, cancelable: true, clientX: 20, clientY: 30, ...init })
+  const event = new MouseEvent('contextmenu', {
+    bubbles: true,
+    button: 2,
+    cancelable: true,
+    clientX: 20,
+    clientY: 30,
+    ...init
+  })
 
   fireEvent(target, event)
 

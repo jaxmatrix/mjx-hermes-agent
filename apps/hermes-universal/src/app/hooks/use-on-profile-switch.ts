@@ -10,7 +10,6 @@ export function useOnProfileSwitch(onSwitch: () => void): void {
   const profile = useStore($activeGatewayProfile)
   const previousProfile = useRef(profile)
 
-   
   useEffect(() => {
     // StrictMode replays mount effects without changing the profile. Counting
     // effect runs would clear a seeded settings draft and leave it loading.

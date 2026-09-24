@@ -9,12 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { $connection } from '@/store/session'
 
-import {
-  filePathFromMediaPath,
-  isInlineMediaSrc,
-  mediaExternalUrl,
-  mediaKind
-} from './media'
+import { filePathFromMediaPath, isInlineMediaSrc, mediaExternalUrl, mediaKind } from './media'
 
 describe('filePathFromMediaPath', () => {
   it('passes through a plain path', () => {

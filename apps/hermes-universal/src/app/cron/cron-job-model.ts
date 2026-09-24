@@ -48,20 +48,14 @@ export interface CronEditorSaveValues {
 
 /** Split a comma/newline list (or array) into trimmed, non-empty items. */
 export function splitCronList(value: unknown): string[] {
-  const items = Array.isArray(value)
-    ? value
-    : typeof value === 'string'
-      ? value.split(/[\n,]/)
-      : []
+  const items = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,]/) : []
 
   return items.map(item => String(item).trim()).filter(Boolean)
 }
 
 /** Whether continuity (feed on this job's previous output) is enabled. */
 export function cronJobContinuityEnabled(job: Pick<CronJob, 'context_from' | 'continuity'>): boolean {
-  return (
-    Boolean(job.continuity) || splitCronList(job.context_from).some(item => item.toLowerCase() === 'self')
-  )
+  return Boolean(job.continuity) || splitCronList(job.context_from).some(item => item.toLowerCase() === 'self')
 }
 
 /** External refs only — never includes the reserved `self` entry. */

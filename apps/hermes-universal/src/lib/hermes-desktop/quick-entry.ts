@@ -14,11 +14,7 @@ import {
   QUICK_ENTRY_STATE_EVENT
 } from '@/app/quick-entry/channel'
 import { IS_DESKTOP } from '@/lib/platform'
-import type {
-  QuickEntryStatePush,
-  QuickEntryStatus,
-  QuickEntrySubmitPayload
-} from '@/store/quick-entry'
+import type { QuickEntryStatePush, QuickEntryStatus, QuickEntrySubmitPayload } from '@/store/quick-entry'
 
 type Bridge = NonNullable<typeof window.hermesDesktop>
 type QuickEntry = Bridge['quickEntry']
@@ -62,8 +58,7 @@ function listenEvent(event: string, callback: (payload: unknown) => void): () =>
   }
 }
 
-const getSettings: QuickEntry['getSettings'] = async () =>
-  invokeNative<QuickEntryStatus>('quick_entry_settings_get')
+const getSettings: QuickEntry['getSettings'] = async () => invokeNative<QuickEntryStatus>('quick_entry_settings_get')
 
 const setSettings: QuickEntry['setSettings'] = async patch =>
   invokeNative<QuickEntryStatus>('quick_entry_settings_set', { patch: patch ?? {} })

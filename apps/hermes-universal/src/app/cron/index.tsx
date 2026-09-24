@@ -330,7 +330,6 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
   const [triggeringJobKeys, setTriggeringJobKeys] = useState<ReadonlySet<string>>(() => new Set())
   const triggerControllerRef = useRef<CronTriggerController | null>(null)
 
-   
   useEffect(() => {
     const controller = createCronTriggerController((key, running) => {
       if (triggerControllerRef.current !== controller) {
@@ -400,7 +399,7 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
   // Sidebar → "open this job": resolve the focus id (or name) to a job, select
   // it, queue a scroll, then clear the one-shot focus so re-opening cron
   // normally doesn't re-trigger it.
-   
+
   useEffect(() => {
     if (!focusJobId) {
       return
@@ -444,7 +443,7 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
   )
 
   // Scroll a sidebar-opened job into view once its list row is mounted.
-   
+
   useEffect(() => {
     const target = pendingScrollRef.current
 
@@ -489,6 +488,7 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
       const isPaused = jobState(job) === 'paused'
 
       const storeProfile = cronStoreProfileForJob(job)
+
       const { refreshError, stale } = await mutateAndRefreshCronJobs(profile, () =>
         isPaused ? resumeCronJob(job.id, storeProfile) : pauseCronJob(job.id, storeProfile)
       )
@@ -1400,7 +1400,11 @@ function CronEditorDialog({
             </div>
 
             <Field htmlFor="cron-continuity" label={c.continuityToggle}>
-              <Switch checked={continuity} id="cron-continuity" onCheckedChange={value => setContinuity(Boolean(value))} />
+              <Switch
+                checked={continuity}
+                id="cron-continuity"
+                onCheckedChange={value => setContinuity(Boolean(value))}
+              />
             </Field>
 
             {!scriptOnlyJob && (

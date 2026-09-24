@@ -7,7 +7,24 @@
  * verb you can only reach by hovering does not exist on a phone.
  */
 
-import { Button, Codicon, confirm, createTap, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, ErrorState, universalHost as host, isCoarsePointer, SearchField, StatusDot, usePluginI18n, useValue } from '@hermes/plugin-sdk'
+import {
+  Button,
+  Codicon,
+  confirm,
+  createTap,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  ErrorState,
+  universalHost as host,
+  isCoarsePointer,
+  SearchField,
+  StatusDot,
+  usePluginI18n,
+  useValue
+} from '@hermes/plugin-sdk'
 import { useCallback, useMemo, useState } from 'react'
 
 import { botHandle } from '../ids'
@@ -228,27 +245,31 @@ export function BotsPane() {
         // Rule 9: say what is actually true. Desktop wrote the protocol into the
         // user's SOUL.md when the gateway did not support it, which is
         // destructive, racy across clients, and was never traced back.
-        <p className="rounded-md bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">
-          {t('errors.noProtocol')}
-        </p>
+        <p className="rounded-md bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">{t('errors.noProtocol')}</p>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {rooms.length > 0 && (
           <>
-            <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">{t('roster.rooms')}</p>
+            <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">
+              {t('roster.rooms')}
+            </p>
             {rooms.map(room => (
               <RoomRow id={room.id} key={room.id} name={room.name} />
             ))}
           </>
         )}
 
-        <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">{t('roster.agents')}</p>
+        <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">
+          {t('roster.agents')}
+        </p>
         {visible.map(row => (
           <BotRow key={row.key} row={row} />
         ))}
 
-        {visible.length === 0 && !loading && <p className="px-2 py-4 text-xs text-muted-foreground">{t('roster.empty')}</p>}
+        {visible.length === 0 && !loading && (
+          <p className="px-2 py-4 text-xs text-muted-foreground">{t('roster.empty')}</p>
+        )}
       </div>
 
       <CreateRoomDialog onOpenChange={setCreatingRoom} open={creatingRoom} />

@@ -52,7 +52,7 @@ describe('normalizeBrowserAddress', () => {
     expect(normalizeBrowserAddress('hermes://open/settings/model')).toBeNull()
   })
 
-  it('refuses a PATH — that is the file tab\'s job, not the guest\'s', () => {
+  it("refuses a PATH — that is the file tab's job, not the guest's", () => {
     // `new URL('https:///repo/x')` reads `repo` as the HOST, so the parser
     // cannot be the guard here.
     for (const raw of ['/repo/src/main.tsx', './rel.md', '../up.md', '~/notes.md', 'C:\\work\\a.txt']) {

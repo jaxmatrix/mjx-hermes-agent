@@ -12,9 +12,12 @@ vi.mock('@/store/gateway-client', async importOriginal => {
     requestGateway: (...args: unknown[]) => requestGateway(...args)
   }
 })
-vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- getStatus: vi.fn(), setApiRequestProfile: vi.fn() }))
+  getStatus: vi.fn(),
+  setApiRequestProfile: vi.fn()
+}))
 
 import { describeConnection, publishActiveConnection } from './active-connection'
 import { $connectionPhase, $hasConnected } from './connection'

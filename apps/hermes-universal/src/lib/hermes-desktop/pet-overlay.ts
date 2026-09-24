@@ -83,9 +83,7 @@ const setIgnoreMouse: PetOverlay['setIgnoreMouse'] = ignore => {
 }
 
 const setFocusable: PetOverlay['setFocusable'] = focusable => {
-  void invokeNative('pet_overlay_set_focusable', { focusable: Boolean(focusable) }).catch(
-    () => undefined
-  )
+  void invokeNative('pet_overlay_set_focusable', { focusable: Boolean(focusable) }).catch(() => undefined)
 }
 
 const pushState: PetOverlay['pushState'] = payload => {

@@ -16,9 +16,12 @@ const platform = vi.hoisted(() => ({ IS_DESKTOP: true }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 // The store graph reached through $connection / $activeProfile also pulls a few
 // @/hermes exports at module scope; stub them so the mock is complete.
-vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- getStatus, setApiRequestProfile: vi.fn() }))
+  getStatus,
+  setApiRequestProfile: vi.fn()
+}))
 vi.mock('@/lib/desktop-fs', () => ({ readDesktopDir, readDesktopFileText }))
 vi.mock('@/lib/reveal-path', () => ({ revealPathInFileManager: vi.fn() }))
 vi.mock('@/lib/platform', () => platform)

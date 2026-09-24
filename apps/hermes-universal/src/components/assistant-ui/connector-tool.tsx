@@ -224,7 +224,7 @@ export function useConnectorFocusHandoff(
 
   // The ref holds what the last frame said, for comparison only: nothing renders from it, so it
   // cannot lag a render the way a mirrored atom would.
-   
+
   useEffect(() => {
     const previous = seen.current
     seen.current = new Map(targets.map(target => [target.name, target.state]))

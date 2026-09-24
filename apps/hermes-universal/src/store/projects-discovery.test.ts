@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as GatewayModule from '@/store/gateway-client'
 
-const { gateway, getHermesConfig, isDesktopFsRemoteMode, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => {
+const {
+  gateway,
+  getHermesConfig,
+  isDesktopFsRemoteMode,
+  localRepoScanSupported,
+  requestGateway,
+  scanRepos,
+  setApiRequestProfile
+} = vi.hoisted(() => {
   const requestGateway = vi.fn(async (_method: string, _params?: unknown): Promise<Record<string, unknown>> => ({
     active_id: null,
     projects: []
@@ -32,9 +40,12 @@ vi.mock('@/store/gateway', async () => {
 vi.mock('@/lib/desktop-fs', () => ({ isDesktopFsRemoteMode }))
 vi.mock('@/lib/desktop-git', () => ({ desktopGit: vi.fn(() => ({ scanRepos })) }))
 vi.mock('@/store/repo-scan', () => ({ localRepoScanSupported, scanLocalGitRepos: vi.fn() }))
-vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
- getHermesConfig, setApiRequestProfile }))
+  getHermesConfig,
+  setApiRequestProfile
+}))
 // Partial mock: store/connection subscribes to `$gatewayState` at import time.
 vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),

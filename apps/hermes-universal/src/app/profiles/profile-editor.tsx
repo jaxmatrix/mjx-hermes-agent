@@ -1,4 +1,8 @@
-import type { ProfilesConfigureResult, ProfilesDescribeResult, ProfilesGetAssetResult } from '@hermes/shared/gateway-events'
+import type {
+  ProfilesConfigureResult,
+  ProfilesDescribeResult,
+  ProfilesGetAssetResult
+} from '@hermes/shared/gateway-events'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PageLoader } from '@/components/page-loader'
@@ -72,9 +76,7 @@ export function ProfileEditor({ profileName }: { profileName: string }) {
 
         setDescription(described)
         setDescriptionDraft(described.description ?? '')
-        setSkills(
-          (described.skills ?? []).map(skill => ({ name: skill.name, enabled: skill.enabled ?? false }))
-        )
+        setSkills((described.skills ?? []).map(skill => ({ name: skill.name, enabled: skill.enabled ?? false })))
         setToolsets(
           (described.toolsets ?? []).map(toolset => ({ name: toolset.name, enabled: toolset.enabled ?? false }))
         )

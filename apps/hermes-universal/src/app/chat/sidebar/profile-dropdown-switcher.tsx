@@ -86,7 +86,6 @@ export function ProfileSwitcher({ compact = false }: { compact?: boolean }) {
   const createRequest = useStore($profileCreateRequest)
   const lastCreateRef = useRef(createRequest)
 
-   
   useEffect(() => {
     if (createRequest === lastCreateRef.current) {
       return

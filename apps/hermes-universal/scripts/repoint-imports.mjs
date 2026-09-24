@@ -31,8 +31,7 @@ const dry = process.argv.includes('--dry') || !apply
 const fromIdx = process.argv.indexOf('--from')
 const fromPath = fromIdx >= 0 ? process.argv[fromIdx + 1] : null
 
-const EXPORT_RE =
-  /^export\s+(?:async\s+)?(?:const|let|var|function|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/gm
+const EXPORT_RE = /^export\s+(?:async\s+)?(?:const|let|var|function|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/gm
 const EXPORT_LIST_RE = /^export\s+(?:type\s+)?\{([^}]+)\}/gm
 
 function walk(dir, out = []) {
@@ -152,14 +151,17 @@ function toAtImport(absFile) {
 function rewriteImports(text, symbol, oldSpec, newSpec) {
   let changed = 0
   // Match import / import type blocks from oldSpec
-  const re = new RegExp(
-    `(import\\s+(type\\s+)?\\{)([^}]*)(\\}\\s*from\\s*)(['"])${escapeReg(oldSpec)}\\5`,
-    'g'
-  )
+  const re = new RegExp(`(import\\s+(type\\s+)?\\{)([^}]*)(\\}\\s*from\\s*)(['"])${escapeReg(oldSpec)}\\5`, 'g')
   const next = text.replace(re, (full, head, typeKw, body, mid, quote) => {
-    const parts = body.split(',').map(s => s.trim()).filter(Boolean)
+    const parts = body
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
     const has = parts.some(p => {
-      const local = p.split(/\s+as\s+/).pop().trim()
+      const local = p
+        .split(/\s+as\s+/)
+        .pop()
+        .trim()
       return local === symbol || p.startsWith(`${symbol} `) || p === symbol
     })
     if (!has) return full
@@ -169,7 +171,10 @@ function rewriteImports(text, symbol, oldSpec, newSpec) {
     const keep = []
     const move = []
     for (const p of parts) {
-      const local = p.split(/\s+as\s+/).pop().trim()
+      const local = p
+        .split(/\s+as\s+/)
+        .pop()
+        .trim()
       const base = p.split(/\s+as\s+/)[0].trim()
       if (local === symbol || base === symbol) move.push(p)
       else keep.push(p)
@@ -229,7 +234,10 @@ for (const miss of misses) {
 
   const target = others[0]
   const newSpec = toAtImport(target)
-  if (newSpec === miss.specifier || (miss.specifier.startsWith('@/') && newSpec === miss.specifier.replace(/\/index$/, ''))) {
+  if (
+    newSpec === miss.specifier ||
+    (miss.specifier.startsWith('@/') && newSpec === miss.specifier.replace(/\/index$/, ''))
+  ) {
     // Same logical module
     if (path.resolve(target) === path.resolve(oldProvider || '')) {
       skipped.sameModule += 1

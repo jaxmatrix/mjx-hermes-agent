@@ -39,9 +39,8 @@ describe('ConfirmDialog secondary action', () => {
 
     const dialog = await screen.findByRole('dialog')
 
-     
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
-     
+
     fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
 
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1))

@@ -69,7 +69,11 @@ describe('actInGuest', () => {
     evalInGuest.mockResolvedValueOnce('')
     evalInGuest.mockResolvedValueOnce(doubled({ action: 'click', success: true }))
     evalInGuest.mockResolvedValueOnce(
-      doubled({ action: 'elements', delta: { added: [{ label: 'Sign in', ref: 'btn-sign-in', role: 'button' }] }, success: true })
+      doubled({
+        action: 'elements',
+        delta: { added: [{ label: 'Sign in', ref: 'btn-sign-in', role: 'button' }] },
+        success: true
+      })
     )
 
     const result = await actInGuest({ action: 'click', ref: 'btn-sign-in' })

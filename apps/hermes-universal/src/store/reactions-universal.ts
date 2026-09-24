@@ -21,15 +21,11 @@ export function applyReactionEvent(
     if (byRowId) {
       return {
         ...state,
-        messages: state.messages.map(message =>
-          message.rowId === rowId ? { ...message, reactions } : message
-        )
+        messages: state.messages.map(message => (message.rowId === rowId ? { ...message, reactions } : message))
       }
     }
 
-    const lastIndex = state.messages.findLastIndex(
-      message => message.role === role && message.rowId === undefined
-    )
+    const lastIndex = state.messages.findLastIndex(message => message.role === role && message.rowId === undefined)
 
     if (lastIndex < 0) {
       return state

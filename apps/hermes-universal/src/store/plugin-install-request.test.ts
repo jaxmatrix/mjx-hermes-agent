@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  $pluginInstallRequest,
-  closePluginInstallRequest,
-  openPluginInstallRequest
-} from './plugin-install-request'
+import { $pluginInstallRequest, closePluginInstallRequest, openPluginInstallRequest } from './plugin-install-request'
 
 beforeEach(() => {
   $pluginInstallRequest.set(null)

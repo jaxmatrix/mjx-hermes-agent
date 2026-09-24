@@ -148,11 +148,7 @@ describe('spliceRegistrySessionRows', () => {
   })
 
   it('keeps recency order and remembers which source owns each id', () => {
-    const rows = spliceRegistrySessionRows(
-      [session('old', 1)],
-      [{ ...session('new', 99), connection_id: 'b' }],
-      'a'
-    )
+    const rows = spliceRegistrySessionRows([session('old', 1)], [{ ...session('new', 99), connection_id: 'b' }], 'a')
 
     expect(rows.map(row => row.id)).toEqual(['new', 'old'])
     expect(connectionIdForSession('new')).toBe('b')

@@ -75,12 +75,7 @@ const FORBIDDEN = ['shiki', 'react-shiki', '@shikijs', '@streamdown/code', 'driv
  * check what it is before widening the list, because a blind spot is exactly
  * how an importer hides.
  */
-const UNRESOLVED_ALLOWLIST = [
-  '#minpath',
-  '#minproc',
-  '#minurl',
-  'react-remove-scroll-bar/constants'
-]
+const UNRESOLVED_ALLOWLIST = ['#minpath', '#minproc', '#minurl', 'react-remove-scroll-bar/constants']
 
 const RESOLVE_EXTENSIONS = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json']
 const INDEX_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']

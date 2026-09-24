@@ -66,9 +66,7 @@ describe('hudBridge', () => {
   it('opens over openSatelliteWindow with session route + profile', async () => {
     const { hudBridge } = await import('./hud')
 
-    await expect(
-      hudBridge.hud!.open({ sessionId: 'sess-1', profile: 'work' })
-    ).resolves.toEqual({ ok: true })
+    await expect(hudBridge.hud!.open({ sessionId: 'sess-1', profile: 'work' })).resolves.toEqual({ ok: true })
 
     expect(openSatelliteWindow).toHaveBeenCalledWith('hud', '/sess-1', 'work')
     expect(invoke).toHaveBeenCalledWith('hud_set_session', { sessionId: 'sess-1' })

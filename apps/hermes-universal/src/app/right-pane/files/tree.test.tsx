@@ -151,5 +151,4 @@ describe('ProjectTree row menus', () => {
     expect(menuItem(COPY_PATH)).toBeTruthy()
     expect(menuItem('Copy relative path')).toBeTruthy()
   })
-
 })
