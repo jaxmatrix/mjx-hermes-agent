@@ -186,6 +186,7 @@ export function EditProfileDialog({ bot, open, onClose }: EditProfileDialogProps
             <BotFace color={avatarColor(color, bot.name)} image={image} name={bot.name} shape={shape} size={64} />
           </div>
           <AvatarPicker
+            bot={bot}
             color={color}
             generateSeed={{
               name: bot.name,

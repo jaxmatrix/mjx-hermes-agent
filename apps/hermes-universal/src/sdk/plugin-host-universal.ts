@@ -105,9 +105,12 @@ let installed = false
 /**
  * Mutate desktop `host` with universal doors. Deferred past module evaluation
  * because `sdk/index` → contrib → `sdk/runtime` → `sdk/universal` → this file
- * → `sdk/index` is a cycle: reading `host.openSession` at module scope hits
- * the incomplete export (TDZ / undefined) and takes down every suite that
- * loads the runtime SDK.
+ * → `sdk/index` is a cycle: reading `host` while `export const host` is still
+ * in the temporal dead zone throws
+ * `ReferenceError: Cannot access 'host' before initialization` and takes down
+ * the phone Lazy root (and every suite that loads the runtime SDK mid-cycle).
+ *
+ * `typeof host?.…` does NOT help — `typeof` still evaluates a TDZ binding.
  */
 export function installUniversalHost(): void {
   if (installed) {
@@ -115,7 +118,16 @@ export function installUniversalHost(): void {
   }
 
   // Still mid-cycle — caller will retry (microtask / installPluginSdk).
-  if (typeof host?.openSession !== 'function') {
+  let ready = false
+
+  try {
+    ready = typeof host.openSession === 'function'
+  } catch {
+    // TDZ while index.ts has not finished evaluating `export const host`.
+    return
+  }
+
+  if (!ready) {
     return
   }
 
@@ -132,6 +144,11 @@ export function installUniversalHost(): void {
   Object.assign(host, {
     agents: () => pluginConnectionSource().agents(),
     connections: () => pluginConnectionSource().connections(),
+    // Lease a secondary socket for a remote bot without switching the app's
+    // primary gateway. Bot Mode prepareBotSource uses this for routed rows;
+    // host.ensureAgent stays ensureGatewayAgent (activate) for active-source.
+    probeAgent: (connectionId: string, profile: string) =>
+      pluginConnectionSource().ensureAgent(connectionId, profile),
     attachToSession,
     bindSession: (storedSessionId: string, options: BindSessionOptions = {}): Promise<BindSessionResult> =>
       bindSessionSlice(storedSessionId, options),
@@ -156,12 +173,18 @@ export function installUniversalHost(): void {
   })
 }
 
-installUniversalHost()
+// Never call installUniversalHost() synchronously here: on Android's native-ESM
+// lazy phone chunk the index↔universal cycle still has `host` in TDZ when this
+// module finishes. Microtask (+ installPluginSdk) runs after the cycle settles.
 queueMicrotask(installUniversalHost)
 
 export type UniversalHost = typeof host & {
   agents: () => ReturnType<typeof pluginConnectionSource> extends { agents: infer A } ? A : never
   connections: () => ReturnType<typeof pluginConnectionSource> extends { connections: infer C } ? C : never
+  probeAgent: (
+    connectionId: string,
+    profile: string
+  ) => ReturnType<ReturnType<typeof pluginConnectionSource>['ensureAgent']>
   attachToSession: typeof attachToSession
   bindSession: (storedSessionId: string, options?: BindSessionOptions) => Promise<BindSessionResult>
   openCreatedSession: (
@@ -184,5 +207,9 @@ export type UniversalHost = typeof host & {
   }
 }
 
-/** Typed view of the mutated desktop `host` (Object.assign above). */
-export const universalHost = host as UniversalHost
+/**
+ * Live binding to desktop `host` (mutated by `installUniversalHost`). A value
+ * read of `host` at this module's eval time was the Android TDZ crash; a
+ * re-export links without touching the binding until the importer reads it.
+ */
+export { host as universalHost } from './index'

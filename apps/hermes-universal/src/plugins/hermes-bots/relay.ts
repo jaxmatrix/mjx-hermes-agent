@@ -105,6 +105,9 @@ const relay: RelayLifecycle = {
 // leases. Local routes get a no-op release inside the host (idle-reaper
 // exemption). stopBotRelay releases everything.
 const relayRouteRetentions = new Map<string, () => void>()
+/** Connections the user has opened a bot on — relay may background-dial these
+ *  even when the roster still reports connect-on-demand. */
+const userWarmedRelayConnections = new Set<string>()
 
 /** One reachable gateway plus a representative route onto it. The route carries
  *  identity only, so the human label comes from the registry (connectionLabels). */
@@ -178,7 +181,11 @@ function releaseRelayRetention() {
   relayRouteRetentions.clear()
 }
 
-/** One representative route per reachable connection id. */
+/** One representative route per reachable connection id.
+ *
+ *  Skip connect-on-demand / unreachable sources until the user has opened a
+ *  bot on that connection (or we already retain a socket). Background relay
+ *  must not dial every logged-in SSH box every 30s and spam errors. */
 async function relayConnections(): Promise<RelayConnection[]> {
   if (typeof host.profileRoutes !== 'function' || typeof host.requestProfile !== 'function') {
     return []
@@ -196,12 +203,82 @@ async function relayConnections(): Promise<RelayConnection[]> {
       }
     }
 
-    return [...byConnection.entries()].map(([id, route]) => ({
-      id,
-      route
-    }))
+    const eligible = await relayEligibleConnectionIds([...byConnection.keys()])
+
+    return [...byConnection.entries()]
+      .filter(([id]) => eligible.has(id))
+      .map(([id, route]) => ({
+        id,
+        route
+      }))
   } catch {
     return []
+  }
+}
+
+/**
+ * Connections the relay may dial in the background.
+ *
+ * - Already retained / user-warmed (opened a bot) — always eligible.
+ * - Source observed and ok without connect-on-demand — eligible.
+ * - connect-on-demand or ok:false — skipped until warmed.
+ */
+async function relayEligibleConnectionIds(candidateIds: string[]): Promise<Set<string>> {
+  const eligible = new Set<string>([
+    ...relayRouteRetentions.keys(),
+    ...userWarmedRelayConnections
+  ])
+
+  if (typeof host.agents !== 'function') {
+    // No health signal — keep prior behaviour (all candidates).
+    return new Set(candidateIds)
+  }
+
+  try {
+    const roster = await host.agents()
+    const byId = new Map(
+      (Array.isArray(roster?.sources) ? roster.sources : []).map(source => [
+        String(source?.connectionId || ''),
+        source
+      ])
+    )
+
+    for (const id of candidateIds) {
+      if (eligible.has(id)) {
+        continue
+      }
+
+      const source = byId.get(id)
+
+      if (!source) {
+        // Unknown to the roster probe — do not background-dial.
+        continue
+      }
+
+      const error = String(source.error || '').trim()
+
+      if (error === 'connect-on-demand' || source.ok === false) {
+        continue
+      }
+
+      // Prefer observed backends; seeded-ok without error is still dialable.
+      if (source.observed || source.ok) {
+        eligible.add(id)
+      }
+    }
+  } catch {
+    return new Set(candidateIds)
+  }
+
+  return eligible
+}
+
+/** User opened a bot on this connection — relay may pin/drain it. */
+export function noteBotConnectionOpened(connectionId: string): void {
+  const id = String(connectionId || '').trim()
+
+  if (id) {
+    userWarmedRelayConnections.add(id)
   }
 }
 
@@ -606,6 +683,7 @@ export function stopBotRelay() {
   // Unpin every relay-retained socket (#93594): with the relay stopped the
   // pooled entries return to dispose-at-refcount-0 semantics.
   releaseRelayRetention()
+  userWarmedRelayConnections.clear()
 
   if (relay.rosterTimer !== null) {
     clearInterval(relay.rosterTimer)

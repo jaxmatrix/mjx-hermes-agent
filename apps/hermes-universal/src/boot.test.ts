@@ -58,7 +58,11 @@ vi.mock('./store/app-lifecycle', () => ({
   })
 }))
 vi.mock('./store/background-mode', () => ({ initBackgroundMode: lever('initBackgroundMode') }))
+vi.mock('./store/tray', () => ({ initTray: lever('initTray') }))
 vi.mock('./store/connection-tunnels', () => ({ openTunnelPage: lever('openTunnelPage') }))
+// Side-effect module: installs the multi-connection plugin source. Boot must
+// import it; the unit test of that wiring lives in connection-plugin-source.test.
+vi.mock('./store/connection-plugin-source', () => ({}))
 vi.mock('./store/connections', () => ({
   restoreLaunchConnection: vi.fn(async (owner: boolean) => void calls.push(`restoreLaunchConnection:${owner}`)),
   startConnectionsWatcher: lever('startConnectionsWatcher')
@@ -83,7 +87,7 @@ const FOLLOWERS = [
 ]
 
 /** What only the window that owns the app's persisted state runs. */
-const OWNER = ['installWindowCloseGuard', 'initBackgroundMode', 'sweepStaleSurfaceGrants']
+const OWNER = ['installWindowCloseGuard', 'initBackgroundMode', 'initTray', 'sweepStaleSurfaceGrants']
 
 async function boot(): Promise<void> {
   vi.resetModules()

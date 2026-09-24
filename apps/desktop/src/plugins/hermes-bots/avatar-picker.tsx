@@ -3,19 +3,7 @@
  * swatches, the Generate and Upload tabs, and the petdex Pet tab.
  */
 
-import {
-  Button,
-  cn,
-  Codicon,
-  ColorSwatches,
-  GlyphSpinner,
-  host,
-  PROFILE_SWATCHES,
-  RowButton,
-  SegmentedControl,
-  Textarea,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Button, cn, Codicon, ColorSwatches, GlyphSpinner, host, PROFILE_SWATCHES, RowButton, SegmentedControl, Textarea, useValue } from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import {
@@ -39,8 +27,12 @@ import {
 } from './avatar-image'
 import { useBots } from './i18n'
 import { PetTab } from './pet'
+import { requestForBot } from './routing'
+import type { RosterRow } from './types'
 
 interface AvatarPickerProps {
+  /** When set, image.generate / pet gallery hit this bot's home gateway. */
+  bot?: RosterRow
   /** `null` = no explicit pick, i.e. the name's deterministic hue. */
   color: null | string
   /** Feeds the Generate tab when the user leaves the description blank. */
@@ -53,7 +45,16 @@ interface AvatarPickerProps {
 }
 
 /** Shape grid + color swatches, shared by Edit Profile and New Bot. */
-export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, generateSeed }: AvatarPickerProps) {
+export function AvatarPicker({
+  bot,
+  shape,
+  color,
+  image,
+  onShape,
+  onColor,
+  onImage,
+  generateSeed
+}: AvatarPickerProps) {
   const b = useBots()
   const pickerName = generateSeed?.name || 'agent'
   const imagen = useValue($imagenAvailable)
@@ -96,10 +97,14 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
 
       const img = custom
         ? await (async () => {
-            const res = await host.request<GeneratedImage>('image.generate', {
+            const params = {
               prompt: `${custom}. Avatar for an AI agent: centered, bold flat vector style, solid color background, no text.`,
               aspect_ratio: 'square'
-            })
+            }
+
+            const res = bot?.sourceScoped
+              ? await requestForBot<GeneratedImage>(bot, 'image.generate', params)
+              : await host.request<GeneratedImage>('image.generate', params)
 
             if (!res?.success) {
               throw new Error(res?.error || 'generation failed')
@@ -107,7 +112,12 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
 
             return res.image_data || res.image
           })()
-        : await generateAvatarImage(generateSeed?.name || 'agent', generateSeed?.title, generateSeed?.description)
+        : await generateAvatarImage(
+            generateSeed?.name || 'agent',
+            generateSeed?.title,
+            generateSeed?.description,
+            bot
+          )
 
       if (img) {
         onImage(await normalizeAvatarImage(img))
@@ -186,7 +196,7 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
                     type="button"
                     variant="ghost"
                   >
-                    <Codicon className="mr-1 text-[0.8rem]" name="refresh" />
+                    <Codicon className="me-1 text-[0.8rem]" name="refresh" />
                     {b.avatar.randomize}
                   </Button>
                   <Button
@@ -195,7 +205,7 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
                     type="button"
                     variant="ghost"
                   >
-                    <Codicon className="mr-1 text-[0.8rem]" name={locked ? 'unlock' : 'lock'} />
+                    <Codicon className="me-1 text-[0.8rem]" name={locked ? 'unlock' : 'lock'} />
                     {locked ? 'Unlock' : 'Lock face'}
                   </Button>
                 </div>
@@ -264,9 +274,9 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
               variant="secondary"
             >
               {genBusy ? (
-                <GlyphSpinner className="mr-1 text-[0.8rem]" spinner="breathe" />
+                <GlyphSpinner className="me-1 text-[0.8rem]" spinner="breathe" />
               ) : (
-                <Codicon className="mr-1 text-[0.8rem]" name="sparkle" />
+                <Codicon className="me-1 text-[0.8rem]" name="sparkle" />
               )}
               {genBusy ? 'Generating…' : 'Generate'}
             </Button>
@@ -284,11 +294,11 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
       ) : null}
       {tab === 'upload' ? (
         <Button className="w-full justify-center" onClick={upload} type="button" variant="secondary">
-          <Codicon className="mr-1 text-[0.8rem]" name="device-camera" />
+          <Codicon className="me-1 text-[0.8rem]" name="device-camera" />
           Choose an image…
         </Button>
       ) : null}
-      {tab === 'pet' ? <PetTab image={image} onImage={onImage} /> : null}
+      {tab === 'pet' ? <PetTab bot={bot} image={image} onImage={onImage} /> : null}
     </div>
   )
 }
