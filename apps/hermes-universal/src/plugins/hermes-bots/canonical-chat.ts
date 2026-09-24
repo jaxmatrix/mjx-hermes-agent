@@ -610,9 +610,14 @@ export async function prepareBotSource(bot: RosterRow) {
     // legacy activation path, unchanged. An absent connectionId is fine —
     // ensureGatewayAgent normalizes it with `(connectionId ?? '').trim() || null`.
     await host.ensureAgent(bot.connectionId, bot.name)
-  } else if (route && typeof host.ensureAgent === 'function' && bot.connectionId) {
-    // Remote / other gateway: ensure a secondary lease exists before chat.
-    await host.ensureAgent(bot.connectionId, bot.name)
+  } else if (route && bot.connectionId && typeof host.probeAgent === 'function') {
+    // Remote / other gateway: lease a secondary without switching primary.
+    // host.ensureAgent would activate/switch — never call it for routed rows.
+    const handle = await host.probeAgent(bot.connectionId, bot.name)
+
+    if (!handle?.ok) {
+      throw new Error(String(handle?.error || 'AGENT_ROUTING_UNAVAILABLE'))
+    }
   }
 }
 
