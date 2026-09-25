@@ -46,7 +46,7 @@ export { SIDEBAR_LEAD_ICON_SIZE, SIDEBAR_ROW_CARD_MIN_H, SIDEBAR_TRUNCATED_LEADI
 // SidebarSectionHeader), mirroring the artifacts/file browser header
 // affordances. focus-visible keeps them keyboard-reachable.
 const HEADER_ACTION_BTN =
-  'text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/section:opacity-100 focus-visible:opacity-100'
+  'text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/section:opacity-100 focus-visible:opacity-100 coarse:opacity-100'
 
 // The sessions section header's "+" — the flat list's top-level new-session
 // control. Also a drag source, the same gesture as the nav's "New session"

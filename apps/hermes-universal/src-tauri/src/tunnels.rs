@@ -2032,7 +2032,11 @@ pub fn shutdown(app: &AppHandle) {
                     drains = crate::local_backend::kill_child(&app, true).await
                 }
                 ShutdownStep::AwaitDrains => {
-                    crate::backend_log::await_drains(std::mem::take(&mut drains), log_until).await
+                    crate::local_backend::await_log_drains(
+                        std::mem::take(&mut drains),
+                        log_until,
+                    )
+                    .await
                 }
                 ShutdownStep::CloseLog => crate::local_backend::close_log(&app, log_until),
                 ShutdownStep::CloseSsh(key) => {

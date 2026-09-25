@@ -99,7 +99,8 @@ export function bootUniversal(): void {
   // the same answer as the main window (the owner of the app's persisted state
   // only seeds the registry first). A switch made later reaches them all as
   // Rust's announcement. Identity only — the bridge holds its first answer for
-  // this, and the boot hook does the dialling.
+  // this, and the boot hook does the dialling. The owner raise of `$restoring`
+  // lives inside `restoreLaunchConnection` (sync before its first await).
   if (IS_TAURI) {
     lever('launch connection', () => holdForLaunch(restoreLaunchConnection(ownsPersistedAppState())))
   }

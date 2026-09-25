@@ -1524,7 +1524,7 @@ export const zh = defineLocale({
         '远程主机上未安装 Hermes。请在远程安装（curl -fsSL https://hermes-agent.nousresearch.com/install.sh | sh）或设置 Hermes 路径。',
       sshErrPlatform: '不支持的远程平台。Hermes Desktop 的 SSH 模式支持 Linux、macOS 和 Windows 远程主机。',
       sshErrTimeout: 'SSH 连接超时。主机可能无法访问或处于休眠状态。',
-      sshErrUpdateRequired: '使用 Desktop SSH 连接前，请更新远程主机上的 Hermes。',
+      sshErrUpdateRequired: '使用 SSH 连接前，请更新远程主机上的 Hermes。',
       sshErrUnknown: 'SSH 连接失败。'
     },
     keys: {
@@ -4542,6 +4542,22 @@ export const zh = defineLocale({
     boundaryDesc: '此视图遇到意外错误。你的对话和设置是安全的。',
     reloadWindow: '重新加载窗口',
     openLogs: '打开日志'
+  },
+
+  mobileWorkspace: {
+    backToChat: '聊天',
+    menu: '菜单',
+    tabsAria: '工作区分区',
+    review: '审阅',
+    files: '文件',
+    editor: '编辑器',
+    terminal: '终端',
+    status: '状态',
+    control: '控制',
+    workspace: '工作区',
+    settings: '设置',
+    profiles: '配置',
+    agents: '智能体'
   },
 
   ui: {

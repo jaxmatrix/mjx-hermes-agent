@@ -702,7 +702,28 @@ export async function restScope(
   const active = await activeConnection()
   const primary = !id || id === active?.connectionId
 
-  if (primary && (!active || active.connection.baseUrl)) {
+  // A tunnelled primary may still advertise a LAN URL on `$connection` (launch
+  // identity / remote-shaped resolve). REST on the ambient path reads that base,
+  // so prefer the live loopback when this window holds a tunnel — same rule as
+  // `connectionBase` / SSH lease apply.
+  let primaryBase = active?.connection.baseUrl ?? ''
+
+  if (primary && active) {
+    const { liveTunnelBase } = await import('@/store/connection-tunnels')
+    const tunnel = liveTunnelBase(active.connectionId)
+
+    if (tunnel && primaryBase !== tunnel) {
+      const { publishActiveConnection } = await import('@/store/active-connection')
+
+      if ((await activeConnection()) === active) {
+        publishActiveConnection({ ...active, connection: { ...active.connection, baseUrl: tunnel } })
+      }
+
+      primaryBase = tunnel
+    }
+  }
+
+  if (primary && (!active || primaryBase)) {
     // A cookie-backed REST call needs the jar as much as a dial does.
     if (active && needsCookieJar(await activeGate(active))) {
       await cookieJarRestored()

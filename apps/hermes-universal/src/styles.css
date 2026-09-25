@@ -743,7 +743,7 @@
        button, and every menu/list ROW. One number, so raising it moves the whole
        touch surface together.
 
-       IN PIXELS, and that is the point. `html.is-mobile` bumps `--dt-base-size`
+       IN PIXELS, and that is the point. Rem density stays shared with desktop;
        to 1.125rem for readability, so a rem value here would resolve to 54px on
        the device this exists for. A touch target is a fingertip, and a fingertip
        does not grow when the type scale does — it is the one measurement in this
@@ -1690,23 +1690,83 @@ html.is-mobile:has([data-slot='composer-root']:focus-within) {
 }
 
 /* ── Mobile shell (html.is-mobile, set from IS_MOBILE in main.tsx) ───────────
-   Scale the whole rem-based UI up a step for phone readability by bumping the
-   base rem token — a natural reflow through the token system, NOT a CSS zoom
-   (which scales unevenly / like a bitmap). Everything sized in rem (text,
-   Tailwind spacing, the --composer-* geometry) grows with it. */
+   Geometry and hit targets; rem base still matches desktop. Radius is slightly
+   softer on phone so corners read better on Android/iOS without a redesign. */
 html.is-mobile {
-  --dt-base-size: 1.125rem;
+  --radius-scalar: 1.4;
   /* Both rows are the touch size here, so the pointer-sized formula above would
      under-reserve and re-introduce the mount jump. */
   --composer-fallback-height: calc(
     var(--composer-surface-pad-y) * 2 + var(--touch-target-compact) * 2 + var(--composer-row-gap)
   );
-  /* Phones round harder than the desktop does, and at the shared 0.25 the app
-     read as a desktop app shrunk down. Every `--radius-*` step is
-     `calc(--radius-scalar * …)`, so this one number reshapes buttons, cards,
-     menus, the composer and its corner-tracking padding together — see
-     `--composer-radius`, whose padding follows the corner it is given. */
-  --radius-scalar: 0.6;
+}
+
+/* Tab labels default to `px-2` (0.5rem); give phone chrome a little more
+   horizontal room without changing desktop PaneTab. */
+html.is-mobile [data-slot='pane-tab'] > .pane-tab-content > * {
+  padding-inline: calc(0.5rem + 4px);
+}
+
+/* Icon buttons keep a hard 4px radius on desktop; on phone follow --radius-md
+   so they match the softer mobile --radius-scalar. */
+html.is-mobile [data-slot='button'][data-size^='icon'] {
+  border-radius: var(--radius-md);
+}
+
+/* Mid-session reconnect: chat top-bar bottom edge (not a full-screen bounce). */
+@keyframes mobile-connection-chrome-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes mobile-connection-chrome-flash {
+  0% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+html.is-mobile [data-slot='mobile-chrome-bar'][data-connection-chrome='reconnecting'],
+html.is-mobile [data-slot='mobile-chrome-bar'][data-connection-chrome='reconnected'] {
+  position: relative;
+  border-bottom-color: transparent;
+}
+
+html.is-mobile [data-slot='mobile-chrome-bar'][data-connection-chrome='reconnecting']::after,
+html.is-mobile [data-slot='mobile-chrome-bar'][data-connection-chrome='reconnected']::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2px;
+}
+
+html.is-mobile [data-slot='mobile-chrome-bar'][data-connection-chrome='reconnecting']::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--ui-orange) 35%,
+    color-mix(in srgb, var(--ui-orange) 40%, white) 50%,
+    var(--ui-orange) 65%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: mobile-connection-chrome-shimmer 1.2s linear infinite;
+}
+
+html.is-mobile [data-slot='mobile-chrome-bar'][data-connection-chrome='reconnected']::after {
+  background: var(--ui-green);
+  animation: mobile-connection-chrome-flash 1s ease-out forwards;
 }
 
 /* The phone's app root IS the visible rectangle, not the layout viewport.
@@ -1722,9 +1782,9 @@ html.is-mobile {
    top. That is what tapping the composer did on iOS (Android reports T = 0,
    which is why it was never visible there).
 
-   So take the rectangle rather than deriving it — exactly what MobileSidebar
-   and MobileWorkspace already do (a0ca9420c); this finishes that conversion at
-   the root, so all four mobile surfaces share ONE geometry model. The shells
+   So take the rectangle rather than deriving it — exactly what the phone
+   Sessions and Workspace windows already do; this finishes that conversion at
+   the root, so all mobile surfaces share ONE geometry model. The shells
    consequently need NO `margin-bottom: var(--keyboard-inset)`: this box's
    bottom edge already is the top of the keyboard, and lifting again would leave
    a keyboard-tall dead band.
@@ -1737,7 +1797,7 @@ html.is-mobile {
 
    DO NOT add `transform`, `contain`, `filter`, `backdrop-filter` or
    `will-change` here. Any of them makes #root the containing block for every
-   `position: fixed` descendant — MobileSidebar, MobileWorkspace, the floating
+   `position: fixed` descendant — Sessions/Workspace windows, the floating
    pet — all of which are ALREADY pinned to this same rectangle and would then
    have the offset applied twice. styles.mobile-viewport.test.ts enforces this. */
 html.is-mobile:not([data-hud]) #root {

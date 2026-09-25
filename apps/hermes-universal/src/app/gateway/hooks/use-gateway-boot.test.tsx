@@ -28,6 +28,8 @@ import {
 import { $notifications, clearNotifications, notifyError } from '@/store/notifications'
 import { $activeGatewayProfile, $profiles, ensureGatewayProfile } from '@/store/profile'
 import { $backendRestartRequest } from '@/store/recovery-requests'
+import { $connectionError, $connectionPhase } from '@/store/connection-atoms'
+import { $restoring } from '@/store/gateway-restore'
 import {
   $awaitingResponse,
   $busy,
@@ -327,6 +329,9 @@ beforeEach(() => {
   ;(globalThis as { WebSocket: unknown }).WebSocket = FakeWebSocket
   ;(window as { hermesDesktop?: unknown }).hermesDesktop = fakeDesktop()
   $gatewayState.set('idle')
+  $connectionPhase.set('idle')
+  $connectionError.set(null)
+  $restoring.set(true)
   $busy.set(false)
   $awaitingResponse.set(false)
   $desktopBoot.set({
@@ -921,6 +926,9 @@ describe('useGatewayBoot remote reconnect loop (real hook, fake socket)', () => 
     })
 
     expect($desktopBoot.get().error).toBeTruthy()
+    expect($connectionPhase.get()).toBe('error')
+    expect($connectionError.get()).toBeTruthy()
+    expect($restoring.get()).toBe(false)
   })
 
   it('resets the old machine context before connecting an applied gateway', async () => {
@@ -1622,6 +1630,30 @@ describe('useGatewayBoot remote reconnect loop (real hook, fake socket)', () => 
     })
 
     expect($desktopBoot.get().error).toBeTruthy()
+  })
+
+  it('softSwitch(): marks $connectionPhase ready after a successful connection-apply redial', async () => {
+    // applyConnection → emitConnectionApplied never touched phase; phone gated
+    // on phase===ready and stayed on Connect forever. SoftSwitch owns the
+    // socket for that flow and must publish ready on success.
+    render(<Harness />)
+    await flushAsync()
+    expect($gatewayState.get()).toBe('open')
+    expect($connectionPhase.get()).toBe('ready')
+    expect($restoring.get()).toBe(false)
+    expect($connectionError.get()).toBeNull()
+
+    $connectionPhase.set('idle')
+    $restoring.set(true)
+    expect(connectionApplied).not.toBeNull()
+
+    act(() => connectionApplied?.())
+    await flushAsync()
+
+    expect($gatewaySwitching.get()).toBe(false)
+    expect($gatewayState.get()).toBe('open')
+    expect($connectionPhase.get()).toBe('ready')
+    expect($restoring.get()).toBe(false)
   })
 
   it('softSwitch(): a getConnection() that hangs on a connection-apply switch does not latch $gatewaySwitching forever (#93454)', async () => {

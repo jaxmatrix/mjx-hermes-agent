@@ -48,6 +48,7 @@ import { $busy, $clarify, $currentCwd, $messages, $sessionId, type ChatMessage, 
 import { confirm } from '@/store/confirm'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway-client'
+import { registerGatewayWipeExtra } from '@/store/gateway-switch'
 import { $pinnedSessionIds } from '@/store/layout'
 import { $liveSessionStatuses } from '@/store/live-session-registry'
 import { notify, notifyError } from '@/store/notifications'
@@ -59,8 +60,8 @@ import { $profiles } from '@/store/profiles'
 // session list, the active id, the unread/yolo/messaging atoms and their
 // setters — is read from here rather than redeclared (see the file header).
 import {
-  $activeSessionId,
   $messagingSessions,
+  $selectedStoredSessionId,
   $sessions,
   $sessionsLoading,
   $unreadFinishedSessionIds,
@@ -68,6 +69,7 @@ import {
   markAllSessionsRead,
   sessionMatchesStoredId,
   sessionPinId,
+  setActiveSessionId,
   setSessions
 } from '@/store/session'
 import {
@@ -114,11 +116,11 @@ const PINNED_CACHE_KEY = 'hermes.pinnedSessionRows'
 export const $sessionsListEpoch = atom(0)
 export const $sessionsTotal = atom(0)
 export const $sessionsLimit = atom(PAGE)
-// Universal's STORED id is desktop's "active session" id — a single-session app
-// has only the one selection — so this is an alias of desktop's atom, not a
-// second one. The alias points at `@/store/session` now that desktop owns the
-// declaration; it used to point the other way.
-export const $activeStoredSessionId = $activeSessionId
+// Universal's STORED selection is desktop's `$selectedStoredSessionId` — not
+// `$activeSessionId`, which is the gateway RUNTIME id after resume. Aliasing
+// stored → runtime wrote list ids into the submit target and saved runtime ids
+// as last-session memory (phone desync after the desktop absorb).
+export const $activeStoredSessionId = $selectedStoredSessionId
 
 // The last chat that was actually open, remembered across launches — PER
 // PROFILE.
@@ -212,17 +214,6 @@ export function markPluginOwnedSession(storedSessionId: string): void {
 }
 
 /**
- * Forget every profile's remembered chat — a gateway RE-HOME, not a reconnect.
- *
- * `wipeSessionListsForGatewaySwitch()` sets `$activeStoredSessionId` to null, and
- * the subscriber above ignores null, so the id remembered from backend A used to
- * survive a switch to backend B: the next boot then tried to open it there,
- * against a database that has never heard of it — or worse, against a recycled
- * id that names somebody else's conversation. Stored ids are unique per backend
- * database, so the marker is gateway-bound state and belongs in the wipe list
- * (rule 20).
- */
-/**
  * The ref the AMBIENT chat's slices are minted under (MJXHRM-591, invariant 45).
  *
  * Legitimate here and only here: a tab's identity is the connection it recorded
@@ -243,6 +234,18 @@ setAmbientSessionScope(storedSessionId => ({
   profile: normalizeProfileKey(knownSessionProfileFor(storedSessionId ?? '') ?? $activeGatewayProfile.get())
 }))
 
+/**
+ * Forget every profile's remembered chat — a gateway RE-HOME, not a reconnect.
+ *
+ * `wipeSessionListsForGatewaySwitch()` clears selection, and the last-session
+ * subscriber ignores null, so the id remembered from backend A used to survive
+ * a switch to backend B: the next boot then tried to open it there, against a
+ * database that has never heard of it — or worse, against a recycled id that
+ * names somebody else's conversation. Stored ids are unique per backend
+ * database, so the marker is gateway-bound state and belongs in the wipe list
+ * (rule 20). Called from `wipeSessionListsForGatewaySwitch` with the leaving
+ * connection id.
+ */
 export function forgetLastSessionMarkers(leavingConnectionId?: null | string): void {
   const remembered = $lastSessionByProfile.get()
 
@@ -802,6 +805,14 @@ export function clearPinnedSessionCache(): void {
   writeJson(PINNED_CACHE_KEY, {})
 }
 
+// Wipe companions live here (markers + pin rows) but must run from the ONE wipe
+// list in gateway-switch. Registering — not importing the other way — keeps the
+// session-lifecycle → … → session-route-dispatch → gateway-switch edge acyclic.
+registerGatewayWipeExtra(leavingConnectionId => {
+  forgetLastSessionMarkers(leavingConnectionId)
+  clearPinnedSessionCache()
+})
+
 /** Every pinned session, in pin order — loaded rows first, falling back to the
  *  last-known row for a pin that has fallen out of the loaded window.
  *
@@ -1202,6 +1213,19 @@ export interface OpenSessionOptions {
   forceResume?: boolean
 }
 
+/**
+ * Open / hydrate a stored session into the ambient chat slice.
+ *
+ * Allowed callers (satellite / in-place hydrate — NOT route-shaped primary opens):
+ * - HUD / tile windows (`hud-window`, `tile-window`)
+ * - HUD handoff reclaim (`handoff-satellite`, often `{ forceResume: true }`)
+ * - Mobile bubble promote (`chat-bubbles.promote`)
+ * - Plugin host wake (`plugin-open-session`)
+ *
+ * Phone Sessions, cold restore, MobileSurfaceShell, and SidebarScrollBody must
+ * use `resumeSessionIntoMain` so `useRouteResume` → `resumeSession` is the
+ * single hydrator for the main ChatView.
+ */
 export function openSession(storedId: string, options?: OpenSessionOptions): Promise<void> | void {
   const warm = runtimeKeyForStoredSession(storedId)
 
@@ -1705,6 +1729,9 @@ function releaseHydration(storedId: string, own: { generation: number }): void {
 export function newSession(cwd?: string): void {
   resetChat(cwd)
   $activeStoredSessionId.set(null)
+  // Runtime id used to clear via the (wrong) alias onto `$activeSessionId`.
+  // Keep both halves of the desktop pair in sync for a blank draft.
+  setActiveSessionId(null)
   flashPetActivity({ celebrate: true }) // pet: wave hello on a fresh chat
 }
 

@@ -255,8 +255,22 @@ export function hasSavedTarget(): boolean {
  * True while the boot-time auto-connect is dialing. Seeded synchronously from the saved
  * target — or a pending mobile OAuth resume — so `MobileController` shows the connecting
  * screen (not the connect picker) on the very first render when a restore is pending.
+ * Registry launches also call {@link beginGatewayRestore} from
+ * `restoreLaunchConnection` (owner, sync before dial), and
+ * {@link finishGatewayRestore} from `useGatewayBoot` once the socket is open
+ * (or boot has failed).
  */
 export const $restoring = atom(hasSavedTarget() || hasPendingOAuth())
+
+/** Hold the connecting screen until the boot hook dials (or gives up). */
+export function beginGatewayRestore(): void {
+  $restoring.set(true)
+}
+
+/** Launch dial finished or abandoned — Connect / shell may take over. */
+export function finishGatewayRestore(): void {
+  $restoring.set(false)
+}
 
 /**
  * "Use a different gateway": abandon the restore and land on the connect picker.
@@ -266,7 +280,7 @@ export const $restoring = atom(hasSavedTarget() || hasPendingOAuth())
  * connect overwrites it); the picker opens on the saved mode.
  */
 export function cancelRestore(): void {
-  $restoring.set(false)
+  finishGatewayRestore()
   disconnect()
 }
 

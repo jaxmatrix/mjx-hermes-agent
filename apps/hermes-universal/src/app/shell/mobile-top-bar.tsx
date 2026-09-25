@@ -15,6 +15,7 @@ import { DownloadsTray } from './downloads-tray'
 import { MobileChromeBar } from './mobile-chrome-bar'
 import { useSidebar } from './sidebar'
 import { TitlebarButton } from './titlebar-button'
+import { useMobileConnectionChrome } from './use-mobile-connection-chrome'
 
 // The mobile top bar. Styled after the desktop titlebar chrome (same border /
 // --ui-bg-chrome / codicon vocabulary) but as a touch-friendly row that owns the
@@ -30,6 +31,7 @@ export function MobileTopBar() {
   const { t } = useI18n()
   const { toggleMobile, toggleMobileRight } = useSidebar()
   const navigate = useNavigate()
+  const connectionStatus = useMobileConnectionChrome()
   // Derived from the path rather than read off `$workspacePage`: only the
   // desktop controller keeps that atom in sync, and this bar is the phone's.
   const onPage = isWorkspacePageRoute(useLocation().pathname)
@@ -57,6 +59,8 @@ export function MobileTopBar() {
           <ChatTitle className="h-full w-full justify-start" />
         </span>
       }
+      connectionStatus={connectionStatus}
+      topBorder={false}
       left={
         <>
           {/* On a full page the useful control in this corner is the way out, so

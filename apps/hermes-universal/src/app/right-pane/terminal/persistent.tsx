@@ -3,7 +3,7 @@ import { atom } from 'nanostores'
 import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { isElementInHiddenPane, PANE_HIDDEN_ATTR } from '@/components/pane-shell/pane-visibility'
-import { $layoutTree } from '@/components/pane-shell/tree/store'
+import { $layoutTree, $paneVisible } from '@/components/pane-shell/tree/store'
 import { markRightPanePerf } from '@/debug/right-pane-events'
 import { createRendererLoopPauseController } from '@/lib/renderer-loop-pause'
 import { $paneStates } from '@/store/panes'
@@ -64,6 +64,10 @@ const sameRect = (a: Rect | null, b: Rect) =>
 export function PersistentTerminal({ onAddSelectionToChat }: PersistentTerminalProps) {
   const slot = useStore($slot)
   const terminalTakeover = useStore($terminalTakeover)
+  // Tree visibility, not only the toggle atom: a tab click can front the pane
+  // while `$terminalTakeover` is still false (persisted collapse), and the
+  // workspace must still mount once the slot has real dims.
+  const paneVisible = useStore($paneVisible('terminal'))
   const [rect, setRect] = useState<Rect | null>(null)
   const [ready, setReady] = useState(false)
 
@@ -75,11 +79,11 @@ export function PersistentTerminal({ onAddSelectionToChat }: PersistentTerminalP
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    if (terminalTakeover && ready) {
+    if ((terminalTakeover || paneVisible) && ready) {
       setMounted(true)
       ensureTerminal()
     }
-  }, [terminalTakeover, ready])
+  }, [paneVisible, ready, terminalTakeover])
 
   useLayoutEffect(() => {
     if (!slot) {

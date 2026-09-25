@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 
 import { refreshCronJobs, triggerAndRefreshCronJobs } from '@/app/cron/cron-actions'
 import { PlatformAvatar } from '@/app/messaging/platform-icon'
-import { cronJobRoute, sessionRoute } from '@/app/routes'
+import { cronJobRoute } from '@/app/routes'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { SearchField } from '@/components/ui/search-field'
@@ -18,6 +18,7 @@ import { useStoreSelector } from '@/lib/use-session-slice'
 import { useStore } from '@/store/atom'
 import { $busy, $sessionId } from '@/store/chat'
 import { $cronJobs } from '@/store/cron'
+import { $showsAdvancedChrome } from '@/store/interface-mode'
 import { $dismissedAutoProjectIds, $pinnedSessionIds, $sidebarAgentsGrouped, $sidebarMessagingOpenIds, $sidebarOrdering, $sidebarPinsOpen, $sidebarPrFilter, $sidebarProjectFilter, $sidebarProjectOrderIds, $sidebarRecentsOpen, $sidebarSessionOrderIds, $sidebarSessionOrderManual, $sidebarShowArchived, $sidebarStatusFilter, pinSession, setPinnedSessionOrder, setSidebarAgentsGrouped, setSidebarPinsOpen, setSidebarProjectOrderIds, setSidebarRecentsOpen, setSidebarSessionOrderIds, setSidebarSessionOrderManual, type SidebarOrdering, toggleSidebarMessagingOpen, unpinSession } from '@/store/layout'
 import { $sidebarCronOpen, setSidebarCronOpen } from '@/store/layout'
 import { livePollIntervalMs } from '@/store/live-poll'
@@ -54,6 +55,7 @@ import {
 } from '@/store/pull-requests'
 import { $messagingSessions, $sessions, $sessionsLoading, sessionPinId } from '@/store/session'
 import { $sessionDotStateById, sessionStatusBucket, sessionStatusRank } from '@/store/session-dot-state'
+import { resumeSessionIntoMain } from '@/app/resume-session-into-main'
 import {
   $activeStoredSessionId,
   $pinnedSessionCache,
@@ -66,7 +68,6 @@ import {
   isMessagingSource,
   loadMoreSessions,
   messagingSourceLabel,
-  openSession,
   pinnedSessionRows,
   refreshMessagingSessions,
   refreshSessions,
@@ -215,9 +216,16 @@ let cachedEnteredProject: { project: null | SidebarProjectTree; scope: string } 
 // list. Pinned lands in Phase 5; messaging groups + cron in Phases 7–8.
 export function SidebarScrollBody({
   onNavigate,
+  onResumeSession: onResumeSessionProp,
   searchPlacement = 'top'
 }: {
   onNavigate?: () => void
+  /**
+   * Open a stored chat. Phone Sessions host always passes this (owner-aware
+   * `resumeSessionIntoMain`). Default is the same door — never lifecycle
+   * `openSession` (that is for satellites / bubble promote only).
+   */
+  onResumeSession?: (sessionId: string, session?: SessionInfo) => void
   /** `bottom` puts the field just above the phone surface's nav bar, where a
    *  thumb already is; the docked pane keeps it at the top of the list. */
   searchPlacement?: 'bottom' | 'top'
@@ -267,6 +275,7 @@ export function SidebarScrollBody({
   const messagingOpenIds = useStore($sidebarMessagingOpenIds)
   const cronJobs = useStore($cronJobs)
   const cronOpen = useStore($sidebarCronOpen)
+  const showsAdvancedChrome = useStore($showsAdvancedChrome)
   const busy = useStore($busy)
   const runtimeSessionId = useStore($sessionId)
   const profileScope = useStore($profileScope)
@@ -760,14 +769,16 @@ export function SidebarScrollBody({
   const onDeleteSession = useCallback((id: string) => void deleteSessionLocal(id), [])
 
   const onResumeSession = useCallback(
-    (id: string) => {
-      void openSession(id)
-      // Route back to the session so a page view (Capabilities/Messaging/
-      // Artifacts) unmounts and the resumed chat is actually shown.
-      navigate(sessionRoute(id))
+    (id: string, session?: SessionInfo) => {
+      if (onResumeSessionProp) {
+        onResumeSessionProp(id, session)
+      } else {
+        resumeSessionIntoMain(id, navigate, session)
+      }
+
       onNavigate?.()
     },
-    [navigate, onNavigate]
+    [navigate, onNavigate, onResumeSessionProp]
   )
 
   // `activeId` and `working` legitimately change what a row renders, so they
@@ -985,8 +996,10 @@ export function SidebarScrollBody({
               )
             })}
 
-          {/* Cron jobs — flat view only, collapsed by default, live countdowns. */}
-          {!grouped && cronJobs.length > 0 && (
+          {/* Cron jobs — flat view only, collapsed by default, live countdowns.
+              Advanced chrome only: Simple mode keeps the setup destinations,
+              not the scheduled-jobs readout (matches desktop SIDEBAR_NAV). */}
+          {!grouped && showsAdvancedChrome && cronJobs.length > 0 && (
             <SidebarCronJobsSection
               jobs={cronJobs}
               label={s.cronJobs}
@@ -994,11 +1007,7 @@ export function SidebarScrollBody({
               // row lands on whichever job sorts first — the kebab acting on
               // someone else's job.
               onManageJob={jobId => openAppRoute(cronJobRoute(jobId))}
-              onOpenRun={id => {
-                void openSession(id)
-                navigate(sessionRoute(id))
-                onNavigate?.()
-              }}
+              onOpenRun={onResumeSession}
               onToggle={() => setSidebarCronOpen(!cronOpen)}
               onTriggerJob={onTriggerCronJob}
               open={cronOpen}

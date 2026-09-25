@@ -85,8 +85,15 @@ vi.mock('@/store/connection-tunnels', () => ({
 vi.mock('@/store/gateway', () => ({ disposeSecondariesForConnection }))
 vi.mock('@/store/gateway-restore', async () => {
   const { atom } = await import('@/store/atom')
+  const $restoring = atom(true)
 
-  return { $restoring: atom(true), claimPendingOAuth, loadGatewayTarget: () => null }
+  return {
+    $restoring,
+    beginGatewayRestore: () => $restoring.set(true),
+    claimPendingOAuth,
+    finishGatewayRestore: () => $restoring.set(false),
+    loadGatewayTarget: () => null
+  }
 })
 vi.mock('@/store/notifications', () => ({ notify, notifyError: vi.fn() }))
 vi.mock('@/store/profile', async () => {
@@ -397,7 +404,8 @@ describe('restoreLaunchConnection', () => {
     // (`remember` is the re-read of the profile memory, which is not a write.)
     expect(order.filter(step => step !== 'remember')).toEqual(['publish:studio'])
     expect(emitConnectionApplied).not.toHaveBeenCalled()
-    expect($restoring.get()).toBe(false)
+    // Owner published a source: hold connecting until useGatewayBoot dials.
+    expect($restoring.get()).toBe(true)
   })
 
   it("publishes a tunnelled source with no address: its base is the dial's to find", async () => {
@@ -441,6 +449,17 @@ describe('restoreLaunchConnection', () => {
 
     expect($activeConnection.get()).toBeNull()
     expect(invoke).not.toHaveBeenCalledWith('connections_resolve', expect.anything())
+    expect($restoring.get()).toBe(false)
+  })
+
+  it('clears restoring on a non-owner window even when a source is published', async () => {
+    seedRegistry(['home', 'studio'])
+    appIsOn('studio')
+
+    await restoreLaunchConnection(false)
+
+    expect($activeConnection.get()?.connectionId).toBe('studio')
+    // Non-owners only mirror identity; they never dial via useGatewayBoot here.
     expect($restoring.get()).toBe(false)
   })
 

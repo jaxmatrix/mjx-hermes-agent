@@ -21,6 +21,7 @@ import { useStore } from '@/store/atom'
 import { $statusLine as $globalStatusLine } from '@/store/chat'
 import { $petActive } from '@/store/pet'
 import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
+import { $activeSessionKey } from '@/store/session-state-types'
 import { tabIsBroken } from '@/store/tab-connection'
 
 /**
@@ -37,7 +38,12 @@ export const ChatScreen = memo(function ChatScreen() {
   // tile's own session when one mounts this under its view. Everything below
   // reads from it, so N sessions render from one component tree.
   const view = useSessionView()
-  const sessionKey = useStore(view.$runtimeId) ?? ''
+  const runtimeId = useStore(view.$runtimeId) ?? ''
+  // Primary chat keys in `$sessionKeyStates` are connection-scoped
+  // (`$activeSessionKey`); bare `$activeSessionId` misses the slice and used to
+  // force the unsupported-platform red banner on phone.
+  const activeSessionKey = useStore($activeSessionKey)
+  const sessionKey = view.kind === 'primary' ? activeSessionKey || runtimeId : runtimeId
 
   const busy = useStore(view.$busy)
   const statusLine = useStore(view.$statusLine ?? $globalStatusLine)

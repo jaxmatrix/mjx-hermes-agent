@@ -9,6 +9,7 @@ import { openConnectionDoneLink } from '@/components/assistant-ui/connector-tool
 import { $diskPluginsScanPending } from '@/contrib/runtime-loader'
 import { resolveDeepLinkAction } from '@/lib/deeplink-routes'
 import { pathFromHermesDeepLink, resolveHermesOpenPath } from '@/lib/hermes-open-target'
+import { IS_MOBILE } from '@/lib/platform'
 import { storedSessionIdForNotification } from '@/lib/session-ids'
 import { announceNewSessionDraftKey } from '@/store/composer'
 import { requestMcpInstallFromDeepLink } from '@/store/mcp-deeplink-install'
@@ -113,9 +114,12 @@ export function useDesktopIntegrations({
   // navigation exactly once. The same effect owns subsequent writes so the
   // initial `/` cannot overwrite remembered history before it is read.
   // This ref is a one-time lifecycle latch, not a mirror of reactive atom state.
-   
+  //
+  // Phone owns cold-start restore via `useRestoreLastSession` (lifecycle
+  // `hermes.lastSessionId.byProfile`). Running this desktop memory too fights
+  // that latch with a second navigate to `hermes.desktop.lastSessionId…`.
   useEffect(() => {
-    if (!profileReady || isHudWindow() || isBrowserWindow()) {
+    if (IS_MOBILE || !profileReady || isHudWindow() || isBrowserWindow()) {
       return
     }
 

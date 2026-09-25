@@ -1,7 +1,7 @@
 import { backendScopeKey } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
 import { $registryView, connectionsRoster } from '@/store/connections'
-import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
+import { openGatewayForAgent } from '@/store/gateway'
 import {
   AGENT_ROUTING_UNAVAILABLE,
   type PluginAgentHandle,
@@ -29,6 +29,11 @@ import {
  * `{ok:false, error:'AGENT_ROUTING_UNAVAILABLE'}`, never an empty success —
  * an empty answer reads to the caller as "it worked and there is nothing there",
  * which is the one thing a routing failure must not look like.
+ *
+ * Reachability for a non-active gateway dials the SAME secondary pool chat uses
+ * (`openGatewayForAgent` / `requestGatewayForAgent` in store/gateway.ts) — never
+ * the request-only `leaseSecondary` pool. Probe and chat must share one door or
+ * Bot Mode lists remotes that cannot open (Electron Desktop parity).
  */
 
 const PREWARM_MIN_INTERVAL_MS = 60_000
@@ -111,13 +116,14 @@ export const registryConnectionSource: PluginConnectionSource = {
       return { connectionId, ok: true, profile }
     }
 
-    const lease = await leaseSecondary(backendScopeKey(connectionId, profile), connectionId).catch(() => null)
-
-    if (!lease) {
+    // Desktop Bot Mode dials remotes through gateway.ts (`openGatewayForAgent` /
+    // `requestGatewayForAgent`). Using leaseSecondary here gated opens on a
+    // different pool than chat — listed-but-dead remotes. Same door as chat.
+    try {
+      await openGatewayForAgent(connectionId, profile, { spawnPriority: 'foreground' })
+    } catch {
       return { error: AGENT_ROUTING_UNAVAILABLE, ok: false }
     }
-
-    releaseSecondary(lease)
 
     return { connectionId, ok: true, profile }
   },
@@ -130,10 +136,10 @@ export const registryConnectionSource: PluginConnectionSource = {
 }
 
 /**
- * Pre-warm a route without opening a socket.
+ * Pre-warm a route by opening the Desktop-shaped secondary (rate-limited).
  *
- * Rate-limited because a plugin polling this would otherwise re-enumerate every
- * source on every call — and the roster's own per-source deadline is 10 s.
+ * Rate-limited because a plugin polling this would otherwise re-dial every
+ * source on every call — and a cold spawn is not free.
  */
 export async function warmRegistryAgent(connectionId: string, profile: string): Promise<boolean> {
   const key = backendScopeKey(connectionId, profile)

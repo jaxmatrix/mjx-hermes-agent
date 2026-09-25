@@ -3,8 +3,9 @@ import '@xterm/xterm/css/xterm.css'
 import { Button } from '@/components/ui/button'
 import { KbdCombo } from '@/components/ui/kbd'
 import { Loader } from '@/components/ui/loader'
-import { useI18n } from '@/i18n'
+import { type Translations, useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
+import type { TerminalEnd, TerminalTransportKind } from '@/transport/terminal-transport'
 
 import { reportTerminalShell } from './terminals'
 import { useAgentTerminal } from './use-agent-terminal'
@@ -29,6 +30,43 @@ interface TerminalInstanceProps {
   reviveBuffer?: string
 }
 
+/** The end state, as a sentence. Mirrors TerminalView — every transport failure
+ *  lands here so the tile never goes blank. */
+function endCopy(
+  t: Translations,
+  end: TerminalEnd,
+  kind: TerminalTransportKind
+): { body: string; title: string } {
+  const copy = t.rightSidebar
+
+  switch (end.kind) {
+    case 'auth':
+      return { body: copy.terminalEndAuthBody, title: copy.terminalEndAuthTitle }
+
+    case 'disabled':
+      return { body: copy.terminalEndDisabledBody, title: copy.terminalEndDisabledTitle }
+
+    case 'error':
+      return { body: copy.terminalEndErrorBody, title: copy.terminalEndErrorTitle }
+
+    case 'refused':
+      return { body: copy.terminalEndRefusedBody, title: copy.terminalEndRefusedTitle }
+
+    case 'superseded':
+      return { body: copy.terminalEndSupersededBody, title: copy.terminalEndSupersededTitle }
+
+    case 'unsupported':
+      return kind === 'remote'
+        ? { body: copy.terminalEndNoGatewayShellBody, title: copy.terminalEndNoGatewayShellTitle }
+        : { body: copy.terminalEndNoLocalShellBody, title: copy.terminalEndNoLocalShellTitle }
+
+    case 'exited':
+
+    default:
+      return { body: copy.terminalEndExitedBody, title: copy.terminalEndExitedTitle }
+  }
+}
+
 /** One persistent xterm+PTY. Every open tab stays mounted (so its shell and
  *  scrollback survive tab switches); only the active one is shown. */
 export function TerminalInstance({
@@ -41,7 +79,17 @@ export function TerminalInstance({
 }: TerminalInstanceProps) {
   const { t } = useI18n()
 
-  const { addSelectionToChat, hostRef, selection, selectionStyle, status } = useTerminalSession({
+  const {
+    addSelectionToChat,
+    end,
+    fellBack,
+    hostRef,
+    restart,
+    selection,
+    selectionStyle,
+    status,
+    transportKind
+  } = useTerminalSession({
     id,
     cwd,
     active,
@@ -50,6 +98,8 @@ export function TerminalInstance({
     reviveBuffer,
     onShell: shell => reportTerminalShell(id, shell)
   })
+
+  const copy = end && status === 'closed' ? endCopy(t, end, transportKind) : null
 
   return (
     <div
@@ -65,6 +115,15 @@ export function TerminalInstance({
             strokeScale={0.68}
             type="spiral-search"
           />
+        </div>
+      )}
+      {fellBack && status === 'open' && (
+        <div
+          // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- over a surface pinned left-to-right — see the [dir='rtl'] block in styles.css
+          className="pointer-events-none absolute right-2 top-1 z-20 max-w-[70%] truncate rounded bg-destructive/40 px-1.5 py-0.5 text-[0.65rem] text-white/90"
+          title={t.rightSidebar.terminalLocalFallbackChip}
+        >
+          ⚠ {t.rightSidebar.terminalLocalFallbackChip}
         </div>
       )}
       {selection.trim() && (
@@ -88,6 +147,26 @@ export function TerminalInstance({
       {/* Outer div paints the terminal inset; inner div is the xterm host so the
           canvas sizes to the content area and p-2 stays as terminal padding. */}
       <div className={HOST_CLASS} ref={hostRef} />
+      {copy && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-(--ui-terminal-surface-background)/85 p-6">
+          <div className="flex max-w-xs flex-col items-center gap-2 text-center">
+            <div
+              className={cn('text-sm font-medium', end?.kind === 'exited' ? 'text-foreground' : 'text-destructive')}
+            >
+              {copy.title}
+            </div>
+            <p className="text-xs text-muted-foreground">{copy.body}</p>
+            {end?.detail && (
+              <p className="max-h-16 overflow-y-auto font-code text-[0.65rem] break-words text-muted-foreground/80">
+                {end.detail}
+              </p>
+            )}
+            <Button className="mt-1" onClick={restart} size="sm" variant="secondary">
+              {t.rightSidebar.terminalRestart}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

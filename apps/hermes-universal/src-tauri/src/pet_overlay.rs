@@ -5,7 +5,9 @@
 //! viewport bounds using the main window's content origin when `screen` is false.
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager};
+#[cfg(desktop)]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 /// Capability-scoped (`sat-*` in `capabilities/default.json`).
 pub const WINDOW_LABEL: &str = "sat-pet";
@@ -43,6 +45,7 @@ pub struct OkResult {
     pub ok: bool,
 }
 
+#[cfg(desktop)]
 fn raise_main(app: &AppHandle) {
     if let Some(main) = app.get_webview_window(crate::window::MAIN_WINDOW_LABEL) {
         let _ = main.unminimize();
@@ -51,12 +54,14 @@ fn raise_main(app: &AppHandle) {
     }
 }
 
+#[cfg(desktop)]
 fn minimize_main(app: &AppHandle) {
     if let Some(main) = app.get_webview_window(crate::window::MAIN_WINDOW_LABEL) {
         let _ = main.minimize();
     }
 }
 
+#[cfg(desktop)]
 fn main_content_origin(app: &AppHandle) -> (f64, f64) {
     let Some(main) = app.get_webview_window(crate::window::MAIN_WINDOW_LABEL) else {
         return (0.0, 0.0);
@@ -77,6 +82,7 @@ fn main_content_origin(app: &AppHandle) -> (f64, f64) {
     (px, py)
 }
 
+#[cfg(desktop)]
 fn resolve_screen_bounds(
     app: &AppHandle,
     request: &PetOverlayOpenRequest,
@@ -94,6 +100,7 @@ fn resolve_screen_bounds(
     })
 }
 
+#[cfg(desktop)]
 fn apply_bounds(window: &tauri::WebviewWindow, bounds: &PetOverlayBounds) -> Result<(), String> {
     let width = bounds.width.max(80.0).round();
     let height = bounds.height.max(80.0).round();

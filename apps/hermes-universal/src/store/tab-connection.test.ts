@@ -82,12 +82,14 @@ describe('an unavailable tab', () => {
     mobile = true
 
     expect(tabIsUnsupportedHere('local')).toBe(true)
-    expect(tabIsUnsupportedHere(null)).toBe(true)
+    expect(tabIsUnsupportedHere(null)).toBe(false)
+    expect(tabIsUnsupportedHere(undefined)).toBe(false)
     expect(tabIsUnsupportedHere('conn-a')).toBe(false)
     expect(tabConnectionFor({ connectionId: 'local' })).toEqual({
       kind: 'unavailable',
       reason: 'unsupported-platform'
     })
+    expect(tabConnectionFor({ ambient: true, connectionId: null })).toEqual({ kind: 'ok' })
 
     mobile = false
 

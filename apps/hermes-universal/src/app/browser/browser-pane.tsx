@@ -36,6 +36,7 @@ import {
 } from '@/store/browser-console'
 import { $guestOccluded, watchGuestOccluders } from '@/store/browser-occlusion'
 import { notify, notifyError } from '@/store/notifications'
+import { $zoomPercent } from '@/store/zoom-universal'
 
 /**
  * The pane the guest sits over.
@@ -59,12 +60,25 @@ function isLoopbackUrl(url: string): boolean {
   }
 }
 
+/** Native guest DIPs: CSS viewport rect × UI zoom (not devicePixelRatio). */
+function dipBounds(rect: DOMRectReadOnly, zoomPercent: number) {
+  const scale = zoomPercent / 100
+
+  return {
+    height: rect.height * scale,
+    width: rect.width * scale,
+    x: rect.left * scale,
+    y: rect.top * scale
+  }
+}
+
 export function BrowserPane() {
   const page = useStore($browserState)
   const caps = useStore($browserCapabilities)
   const occluded = useStore($guestOccluded)
   const consoleOpen = useStore($browserConsoleOpen)
   const restored = useStore($browserRestoredTab)
+  const zoomPercent = useStore($zoomPercent)
   const viewport = useRef<HTMLDivElement | null>(null)
   const shell = useRef<HTMLDivElement | null>(null)
   const [ready, setReady] = useState(false)
@@ -111,8 +125,7 @@ export function BrowserPane() {
     let last = { height: 0, width: 0, x: 0, y: 0 }
 
     const measure = () => {
-      const rect = element.getBoundingClientRect()
-      const next = { height: rect.height, width: rect.width, x: rect.left, y: rect.top }
+      const next = dipBounds(element.getBoundingClientRect(), zoomPercent)
 
       if (
         Math.abs(next.x - last.x) < BOUNDS_EPSILON &&
@@ -180,8 +193,7 @@ export function BrowserPane() {
         return
       }
 
-      const rect = element.getBoundingClientRect()
-      const bounds = { height: rect.height, width: rect.width, x: rect.left, y: rect.top }
+      const bounds = dipBounds(element.getBoundingClientRect(), zoomPercent)
       const pending = takePendingNavigation()
 
       last = bounds
@@ -209,7 +221,7 @@ export function BrowserPane() {
       // preview tab must not throw away the page the user was reading.
       void setGuestVisible(false).catch(() => undefined)
     }
-  }, [ready])
+  }, [ready, zoomPercent])
 
   // Poll while the panel is open — there is no console hook on a Tauri webview.
   useEffect(() => {

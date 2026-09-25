@@ -320,10 +320,10 @@ pub async fn detect_remote_platform(
     session: &SshSession,
     explicit_hermes_path: &str,
 ) -> Result<(RemotePlatform, Option<WindowsRuntime>), SshError> {
-    println!("[ssh probe] detect_remote_platform: running fenced `uname -s; uname -m`");
+    log::info!("[ssh probe] detect_remote_platform: running fenced `uname -s; uname -m`");
     match session.exec_fenced("uname -s; uname -m", None).await {
         Ok(out) if out.succeeded() => {
-            println!(
+            log::info!(
                 "[ssh probe] detect_remote_platform: uname stdout {:?}",
                 out.stdout
             );
@@ -332,43 +332,43 @@ pub async fn detect_remote_platform(
 
             if os == "Linux" || os == "Darwin" {
                 let arch = lines.next().unwrap_or_default().to_string();
-                println!(
+                log::info!(
                     "[ssh probe] detect_remote_platform: matched POSIX os={os:?} arch={arch:?}"
                 );
 
                 return Ok((RemotePlatform { os, arch }, None));
             }
 
-            println!("[ssh probe] detect_remote_platform: os {os:?} is not Linux/Darwin, falling through to Windows probe");
+            log::warn!("[ssh probe] detect_remote_platform: os {os:?} is not Linux/Darwin, falling through to Windows probe");
         }
 
         // A command that ran and failed is the normal "no uname here" answer.
         Ok(out) => {
-            println!(
+            log::warn!(
                 "[ssh probe] detect_remote_platform: uname failed (exit {:?}), assuming non-POSIX remote",
                 out.exit_status
             );
         }
 
         Err(err) if is_transport_kind(err.kind) => {
-            println!("[ssh probe] detect_remote_platform: transport error running uname: {err}");
+            log::warn!("[ssh probe] detect_remote_platform: transport error running uname: {err}");
             return Err(err);
         }
         Err(err) => {
-            println!(
+            log::warn!(
                 "[ssh probe] detect_remote_platform: non-transport error running uname: {err}"
             );
         }
     }
 
-    println!("[ssh probe] detect_remote_platform: probing as a Windows remote");
+    log::info!("[ssh probe] detect_remote_platform: probing as a Windows remote");
     match probe_windows_remote(session, explicit_hermes_path).await {
         Ok(runtime) => {
             let platform = RemotePlatform {
                 os: "Windows".to_string(),
                 arch: runtime.arch.clone(),
             };
-            println!(
+            log::info!(
                 "[ssh probe] detect_remote_platform: Windows probe succeeded, arch={:?}",
                 runtime.arch
             );
@@ -379,7 +379,7 @@ pub async fn detect_remote_platform(
         Err(err) if is_transport_kind(err.kind) => Err(err),
 
         Err(err) => {
-            println!("[ssh probe] detect_remote_platform: Windows probe failed too: {err}");
+            log::warn!("[ssh probe] detect_remote_platform: Windows probe failed too: {err}");
             // The probe's message is remote-controlled output on its way to the
             // UI: redact it, strip control characters, and cap the length.
             let detail: String = redact_secrets(&err.message)

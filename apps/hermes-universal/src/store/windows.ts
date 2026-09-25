@@ -10,7 +10,7 @@ import {
   WEBHOOKS_ROUTE
 } from '@/app/route-paths'
 import { requestComposerDraftSync } from '@/lib/composer-draft-bus'
-import { IS_ANDROID, IS_DESKTOP, IS_IOS, IS_TAURI } from '@/lib/platform'
+import { IS_DESKTOP, IS_IOS, IS_TAURI } from '@/lib/platform'
 import { navigateTo } from '@/lib/route-nav'
 import { type SurfaceGrant } from '@/lib/surface'
 import { backgroundCloseAction, commitBackgroundMode, requestBackgroundClosePrompt } from '@/store/background-mode'
@@ -144,13 +144,11 @@ export function isGlassBackedWindow(): boolean {
 }
 
 // --------------------------------------------------------------------------
-// Activity screens (MJX-141 Android / MJX-176 iOS). Windowable surfaces (Settings,
-// Command Center, Profiles, Cron) open in ONE native screen activity / scene — a separate
-// WebView carrying `?win=activity` before the HashRouter `#`. The surface it shows
-// is derived LIVE from the current route (`activitySurfaceForPath`), NOT a fixed
-// launch marker, so switching between surfaces inside the activity is just an
-// in-WebView route change. Off the native path the openers fall back to the in-app
-// overlay — no behaviour change there.
+// Windowable surfaces (Settings, Command Center, Profiles, Cron, …). On phone
+// these are in-app routes under MobileController → MobileSurfaceShell (SPA), so
+// they share the home WebView's gateway boot. `activitySurfaceForPath` still
+// names which surface a path is; `?win=activity` remains only as a rare compat
+// entry for an old deep link that lands on ActivityScreenRoot.
 // --------------------------------------------------------------------------
 
 export type ActivitySurface = 'agents' | 'command-center' | 'cron' | 'profiles' | 'settings' | 'webhooks'
@@ -214,23 +212,10 @@ export async function returnHome(): Promise<void> {
   }
 }
 
-// Open a windowable surface at `route`. On Android from the home shell it launches
-// the native screen activity there; INSIDE the activity it just navigates (instant
-// surface switch — the activity renders by route); everywhere else it navigates to
-// the in-app overlay. Optimistic: a failed invoke degrades to the overlay.
+// Open a windowable surface at `route` in the same WebView (SPA overlay). A
+// second Activity used to re-boot JS without MobileGatewayHost and stuck on
+// "Reconnecting to Hermes…"; one host owns dial for chat and Settings alike.
 async function openActivityScreen(route: string): Promise<void> {
-  if (IS_ANDROID && !isActivityWindow()) {
-    flushComposerDraftsBeforeOpen()
-
-    try {
-      await invoke('open_screen_window', { route })
-
-      return
-    } catch (err) {
-      console.warn('open_screen_window failed; falling back to in-app overlay', err)
-    }
-  }
-
   navigateTo(route)
 }
 
@@ -261,9 +246,8 @@ export async function openWebhooksScreen(route: string = WEBHOOKS_ROUTE): Promis
   await openActivityScreen(route)
 }
 
-// Single funnel for the openers: promote the windowable surfaces to the native
-// screen activity on Android, navigate everything else (and all non-Android) in
-// app. Callers replace their `navigate(path)` / `navigateTo(path)` with this.
+// Single funnel for the openers: windowable surfaces and everything else navigate
+// in-app. Callers replace their `navigate(path)` / `navigateTo(path)` with this.
 export function openAppRoute(route: string): void {
   if (ACTIVITY_ROUTES.some(entry => matchesRoute(route, entry.route))) {
     void openActivityScreen(route)

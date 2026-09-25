@@ -17,6 +17,7 @@ import { defineConfig } from 'vitest/config'
 // the day that flag flips.
 import { addSpanSources } from './src/observability/auto/span-sources.ts'
 import { addStoreNames } from './src/observability/auto/store-names.ts'
+import { mobileResolvePlugin } from './vite/mobile-resolve.ts'
 
 // Tauri expects a fixed dev port and a non-clearing console.
 //
@@ -210,7 +211,14 @@ export default defineConfig(({ command }) => ({
   define: {
     __TRACE_RUN_DEFAULT__: JSON.stringify(traceRunDefault())
   },
-  plugins: [react(), tailwindcss(), emojibaseAssets(), spanSourcePlugin, ...(STORE_TRACING ? [storeNamePlugin] : [])],
+  plugins: [
+    mobileResolvePlugin(),
+    react(),
+    tailwindcss(),
+    emojibaseAssets(),
+    spanSourcePlugin,
+    ...(STORE_TRACING ? [storeNamePlugin] : [])
+  ],
   // Tailwind v4 is handled entirely by `@tailwindcss/vite`; pin an explicit
   // empty PostCSS config so Vite doesn't walk UP the filesystem and pick up a
   // stray postcss/tailwind config from the install location (see desktop
@@ -487,7 +495,11 @@ export default defineConfig(({ command }) => ({
     // cover. A bundled plugin ships in this app's build; its tests belong in
     // this app's run, or the SDK's only real third-party-shaped consumer is
     // the one thing nothing verifies.
-    include: ['src/**/*.test.{ts,tsx}', '../../packages/hermes-sample-plugins/**/*.test.{ts,tsx}'],
+    include: [
+      'src/**/*.test.{ts,tsx}',
+      'vite/**/*.test.{ts,tsx}',
+      '../../packages/hermes-sample-plugins/**/*.test.{ts,tsx}'
+    ],
     // Components don't import CSS (styles.css is loaded once in main.tsx), so
     // skip stylesheet processing in tests.
     css: false

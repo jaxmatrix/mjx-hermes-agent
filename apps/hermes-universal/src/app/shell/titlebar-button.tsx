@@ -13,11 +13,11 @@ import { shellChromeControlActive, shellChromeControlIdle } from './cva/tokens'
  * TitlebarButton CVA (MJXHRM-313).
  * `desktop` = compact titlebar density; `mobile` = ≥44px touch hit for phone chrome.
  */
-export const titlebarButtonVariants = cva(cn('rounded-[4px] [&_.codicon]:text-[0.875rem]', shellChromeControlIdle), {
+export const titlebarButtonVariants = cva(cn('[&_.codicon]:text-[0.875rem]', shellChromeControlIdle), {
   variants: {
     density: {
-      desktop: 'size-5',
-      mobile: 'size-11 min-h-11 min-w-11'
+      desktop: 'size-5 rounded-[4px]',
+      mobile: 'size-11 min-h-11 min-w-11 rounded-md'
     },
     active: {
       true: shellChromeControlActive,

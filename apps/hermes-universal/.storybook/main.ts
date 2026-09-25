@@ -1,6 +1,9 @@
+import { dirname } from "node:path";
 import { fileURLToPath } from 'node:url'
 
 import type { StorybookConfig } from '@storybook/react-vite'
+
+import { mobileResolvePlugin } from '../vite/mobile-resolve'
 
 /**
  * Storybook is a DESIGN HARNESS for the composer, not part of the build or the
@@ -47,7 +50,7 @@ const config: StorybookConfig = {
   // Off by choice. Storybook phones anonymous usage data home on every boot;
   // nobody asked for that outbound call from a design harness.
   core: { disableTelemetry: true },
-  framework: { name: '@storybook/react-vite', options: {} },
+  framework: { name: getAbsolutePath("@storybook/react-vite"), options: {} },
   stories: ['../src/**/*.stories.@(ts|tsx)'],
 
   /**
@@ -68,8 +71,13 @@ const config: StorybookConfig = {
       ? inherited
       : Object.entries(inherited).map(([find, replacement]) => ({ find, replacement: String(replacement) }))
 
+    // Storybook is the mobile design harness for this work — always prefer
+    // `*.mobile.tsx` adapters when they exist.
+    const plugins = [...(config.plugins ?? []), mobileResolvePlugin({ enabled: true })]
+
     return {
       ...config,
+      plugins,
       resolve: {
         ...config.resolve,
         alias: [
@@ -82,3 +90,7 @@ const config: StorybookConfig = {
 }
 
 export default config
+
+function getAbsolutePath(value: string): any {
+  return dirname(fileURLToPath(import.meta.resolve(`${value}/package.json`)));
+}

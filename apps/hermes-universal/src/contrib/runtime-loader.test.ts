@@ -6,6 +6,7 @@ import type * as HermesModule from '@/hermes'
 import { emitGatewayEvent } from './events'
 import { $pluginRecords, publishPlugin, setPluginEnabled } from './plugins-store'
 import {
+  __testing as runtimeLoaderTesting,
   discoverRuntimePlugins,
   loadRuntimePlugin,
   uninstallDiskPlugin,
@@ -218,6 +219,7 @@ describe('scanDiskPlugins (#66899)', () => {
 
 describe('watchRuntimePlugins dir watch (#66899)', () => {
   it('watches the Electron-resolved app root, never the backend hermes_home', async () => {
+    runtimeLoaderTesting.resetWatching()
     desktopPluginsRoot.mockResolvedValue('/local/.hermes/desktop-plugins')
     readDir.mockResolvedValue({ entries: [] })
     watchDirectory.mockResolvedValue({ id: 'watch-1' })
@@ -229,6 +231,19 @@ describe('watchRuntimePlugins dir watch (#66899)', () => {
     expect(watchDirectory).toHaveBeenCalledWith('/local/.hermes/desktop-plugins')
     expect(watchDirectory).not.toHaveBeenCalledWith('/remote/box/.hermes/desktop-plugins')
     expect(getStatus).not.toHaveBeenCalled()
+  })
+
+  it('does not throw when onPreviewFileChanged is absent (phone Tauri shim)', async () => {
+    runtimeLoaderTesting.resetWatching()
+    desktopPluginsRoot.mockResolvedValue('/local/.hermes/desktop-plugins')
+    readDir.mockResolvedValue({ entries: [] })
+
+    const desktop = (window as unknown as { hermesDesktop: Record<string, unknown> }).hermesDesktop
+    delete desktop.onPreviewFileChanged
+    delete desktop.watchDirectory
+
+    expect(() => watchRuntimePlugins()).not.toThrow()
+    await vi.waitFor(() => expect(desktopPluginsRoot).toHaveBeenCalled())
   })
 })
 

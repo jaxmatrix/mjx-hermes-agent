@@ -38,6 +38,7 @@ import { TipHost } from '@/components/tips'
 import { emitGatewayEvent } from '@/contrib/events'
 import { translateNow } from '@/i18n'
 import { type ChatMessage, chatMessageText } from '@/lib/chat-messages'
+import { IS_MOBILE } from '@/lib/platform'
 import { isMessagingSource } from '@/lib/session-source'
 import { activateWakeIndicator } from '@/lib/wake-indicator'
 import { playWakeSound } from '@/lib/wake-sound'
@@ -1266,175 +1267,172 @@ export function ContribWiring({ children }: { children: ReactNode }) {
 
   return (
     <ContribWiringContext.Provider value={api}>
-      <div
-        className="contents"
-        style={
-          {
-            '--titlebar-controls-left': `${controlsPos.left}px`,
-            '--titlebar-controls-top': `${controlsPos.top}px`,
-            '--titlebar-controls-width': leftToolsWidth,
-            '--titlebar-controls-y-nudge': titlebarControlsYNudge(titlebarChrome),
-            '--titlebar-tools-right': titlebarToolsRight,
-            '--titlebar-tools-width': titlebarToolsWidth,
-            '--shell-preview-toolbar-gap': systemToolsWidth
-          } as CSSProperties
-        }
-      >
-        {/* HUD and the popped-out Browser have no titlebar to hang these off —
-            the clusters are `fixed`, so without this they'd float over the
-            surface as orphaned buttons. */}
-        {!isHudWindow() && !isBrowserWindow() && (
-          <TitlebarControls
-            leftTools={leftTitlebarTools}
-            onOpenSettings={() => navigate(SETTINGS_ROUTE)}
-            tools={rightTitlebarTools}
-          />
-        )}
-        {!isHudWindow() && customWindowControls && (
-          <WslgWindowControls
-            isFullscreen={Boolean(connection?.isFullscreen)}
-            isMaximized={Boolean(connection?.isMaximized)}
-          />
-        )}
-        {children}
-      </div>
-
-      {/* The full real overlay set (mirrors DesktopController's `overlays`). */}
-      <RemoteDisplayBanner />
-      {!isAuxiliaryWindow() && <DesktopInstallOverlay />}
-      {!isAuxiliaryWindow() && <IntroRevealGate enabled={gatewayState === 'open'} />}
-      {!isAuxiliaryWindow() && (
-        <OnboardingChatGate
-          enabled={gatewayState === 'open'}
-          onKickoff={kickoffFirstChat}
-          requestGateway={ambientRequestGateway}
-        />
-      )}
-      {!isAuxiliaryWindow() && (
-        <DesktopOnboardingOverlay
-          enabled={gatewayState === 'open'}
-          onCompleted={() => {
-            void refreshHermesConfig()
-            void refreshCurrentModel()
-            void queryClient.invalidateQueries({ queryKey: ['model-options'] })
-          }}
-          profile={activeGatewayProfile}
-          requestGateway={requestGateway}
-        />
-      )}
-      {/* One host for every free-tier sign-in entry point (Settings › Billing,
-          the statusbar chip, the first-launch intro). It owns the flow; the
-          entry points only record the intent. */}
-      {!isAuxiliaryWindow() && <FreeTierSignInDialog onSelectModel={selectModel} />}
-      <ModelPickerOverlay onOpenProviders={openProviderSettings} />
-      <SessionPickerOverlay onResume={sessionId => openSessionFromPicker(sessionId, navigate)} />
-      <ModelVisibilityOverlay onOpenProviders={openProviderSettings} />
-      <UpdatesOverlay />
-      <GatewayConnectingOverlay />
-      <BootFailureOverlay />
-      <CommandPalette />
-      <PluginInstallModal />
-      <PetGenerateOverlay />
-      <SessionSwitcher />
-      <FileActionDialogs />
-      <McpInstallDeepLinkDialog />
-      <RemoteFolderPicker />
-      <FindBar />
-
-      {settingsOpen && (
-        <Suspense fallback={null}>
-          <SettingsView
-            gateway={gateway}
-            onClose={closeOverlayToPreviousRoute}
-            onConfigSaved={() => {
-              void refreshHermesConfig()
-              void refreshCurrentModel()
-              void queryClient.invalidateQueries({ queryKey: ['model-options'] })
-            }}
-            onMainModelChanged={(provider, model) => {
-              applySavedMainModel(provider, model)
-              void refreshCurrentModel()
-              void queryClient.invalidateQueries({ queryKey: ['model-options'] })
-            }}
-          />
-        </Suspense>
+      {IS_MOBILE ? (
+        children
+      ) : (
+        <div
+          className="contents"
+          style={
+            {
+              '--titlebar-controls-left': `${controlsPos.left}px`,
+              '--titlebar-controls-top': `${controlsPos.top}px`,
+              '--titlebar-controls-width': leftToolsWidth,
+              '--titlebar-controls-y-nudge': titlebarControlsYNudge(titlebarChrome),
+              '--titlebar-tools-right': titlebarToolsRight,
+              '--titlebar-tools-width': titlebarToolsWidth,
+              '--shell-preview-toolbar-gap': systemToolsWidth
+            } as CSSProperties
+          }
+        >
+          {/* HUD and the popped-out Browser have no titlebar to hang these off —
+              the clusters are `fixed`, so without this they'd float over the
+              surface as orphaned buttons. */}
+          {!isHudWindow() && !isBrowserWindow() && (
+            <TitlebarControls
+              leftTools={leftTitlebarTools}
+              onOpenSettings={() => navigate(SETTINGS_ROUTE)}
+              tools={rightTitlebarTools}
+            />
+          )}
+          {!isHudWindow() && customWindowControls && (
+            <WslgWindowControls
+              isFullscreen={Boolean(connection?.isFullscreen)}
+              isMaximized={Boolean(connection?.isMaximized)}
+            />
+          )}
+          {children}
+        </div>
       )}
 
-      {currentView === 'session-import' && (
-        <SessionImportView
-          key={`${activeConnectionId}:${activeGatewayProfile}`}
-          onClose={closeOverlayToPreviousRoute}
-          onOpenSession={sessionId => {
-            closeOverlayToPreviousRoute()
-            openSession(sessionId, navigate, 'stack')
-          }}
-          owner={{ connectionId: activeConnectionId || 'local', profile: activeGatewayProfile }}
-        />
+      {/* Desktop chrome overlays. Phone mounts MobileController equivalents
+          (Connect / MobileSurfaceShell / CommandPalette / …) — do not double. */}
+      {!IS_MOBILE && (
+        <>
+          <RemoteDisplayBanner />
+          {!isAuxiliaryWindow() && <DesktopInstallOverlay />}
+          {!isAuxiliaryWindow() && <IntroRevealGate enabled={gatewayState === 'open'} />}
+          {!isAuxiliaryWindow() && (
+            <OnboardingChatGate
+              enabled={gatewayState === 'open'}
+              onKickoff={kickoffFirstChat}
+              requestGateway={ambientRequestGateway}
+            />
+          )}
+          {!isAuxiliaryWindow() && (
+            <DesktopOnboardingOverlay
+              enabled={gatewayState === 'open'}
+              onCompleted={() => {
+                void refreshHermesConfig()
+                void refreshCurrentModel()
+                void queryClient.invalidateQueries({ queryKey: ['model-options'] })
+              }}
+              profile={activeGatewayProfile}
+              requestGateway={requestGateway}
+            />
+          )}
+          {!isAuxiliaryWindow() && <FreeTierSignInDialog onSelectModel={selectModel} />}
+          <ModelPickerOverlay onOpenProviders={openProviderSettings} />
+          <SessionPickerOverlay onResume={sessionId => openSessionFromPicker(sessionId, navigate)} />
+          <ModelVisibilityOverlay onOpenProviders={openProviderSettings} />
+          <UpdatesOverlay />
+          <GatewayConnectingOverlay />
+          <BootFailureOverlay />
+          <CommandPalette />
+          <PluginInstallModal />
+          <PetGenerateOverlay />
+          <SessionSwitcher />
+          <FileActionDialogs />
+          <McpInstallDeepLinkDialog />
+          <RemoteFolderPicker />
+          <FindBar />
+
+          {settingsOpen && (
+            <Suspense fallback={null}>
+              <SettingsView
+                gateway={gateway}
+                onClose={closeOverlayToPreviousRoute}
+                onConfigSaved={() => {
+                  void refreshHermesConfig()
+                  void refreshCurrentModel()
+                  void queryClient.invalidateQueries({ queryKey: ['model-options'] })
+                }}
+                onMainModelChanged={(provider, model) => {
+                  applySavedMainModel(provider, model)
+                  void refreshCurrentModel()
+                  void queryClient.invalidateQueries({ queryKey: ['model-options'] })
+                }}
+              />
+            </Suspense>
+          )}
+
+          {currentView === 'session-import' && (
+            <SessionImportView
+              key={`${activeConnectionId}:${activeGatewayProfile}`}
+              onClose={closeOverlayToPreviousRoute}
+              onOpenSession={sessionId => {
+                closeOverlayToPreviousRoute()
+                openSession(sessionId, navigate, 'stack')
+              }}
+              owner={{ connectionId: activeConnectionId || 'local', profile: activeGatewayProfile }}
+            />
+          )}
+
+          {commandCenterOpen && (
+            <Suspense fallback={null}>
+              <CommandCenterView
+                initialSection={commandCenterInitialSection}
+                onClose={closeOverlayToPreviousRoute}
+                onDeleteSession={removeSession}
+                onNavigateRoute={path => navigateToWorkspacePage(navigate, path)}
+                onOpenSession={sessionId => openSession(sessionId, navigate)}
+              />
+            </Suspense>
+          )}
+
+          {agentsOpen && (
+            <Suspense fallback={null}>
+              <AgentsView onClose={closeOverlayToPreviousRoute} />
+            </Suspense>
+          )}
+
+          {cronOpen && (
+            <Suspense fallback={null}>
+              <CronView
+                onClose={closeOverlayToPreviousRoute}
+                onOpenSession={sessionId => openSession(sessionId, navigate)}
+              />
+            </Suspense>
+          )}
+
+          {webhooksOpen && (
+            <Suspense fallback={null}>
+              <WebhooksView onClose={closeOverlayToPreviousRoute} />
+            </Suspense>
+          )}
+
+          {profilesOpen && (
+            <Suspense fallback={null}>
+              <ProfilesView onClose={closeOverlayToPreviousRoute} />
+            </Suspense>
+          )}
+
+          {starmapOpen && (
+            <Suspense fallback={null}>
+              <StarmapView onClose={closeOverlayToPreviousRoute} />
+            </Suspense>
+          )}
+
+          <NotificationStack />
+
+          {!isHudWindow() && !isBrowserWindow() && <FloatingPet />}
+
+          {!isHudWindow() && !isBrowserWindow() && <TipHost />}
+        </>
       )}
 
-      {commandCenterOpen && (
-        <Suspense fallback={null}>
-          <CommandCenterView
-            initialSection={commandCenterInitialSection}
-            onClose={closeOverlayToPreviousRoute}
-            onDeleteSession={removeSession}
-            onNavigateRoute={path => navigateToWorkspacePage(navigate, path)}
-            onOpenSession={sessionId => openSession(sessionId, navigate)}
-          />
-        </Suspense>
-      )}
-
-      {agentsOpen && (
-        <Suspense fallback={null}>
-          <AgentsView onClose={closeOverlayToPreviousRoute} />
-        </Suspense>
-      )}
-
-      {cronOpen && (
-        <Suspense fallback={null}>
-          <CronView
-            onClose={closeOverlayToPreviousRoute}
-            onOpenSession={sessionId => openSession(sessionId, navigate)}
-          />
-        </Suspense>
-      )}
-
-      {webhooksOpen && (
-        <Suspense fallback={null}>
-          <WebhooksView onClose={closeOverlayToPreviousRoute} />
-        </Suspense>
-      )}
-
-      {profilesOpen && (
-        <Suspense fallback={null}>
-          <ProfilesView onClose={closeOverlayToPreviousRoute} />
-        </Suspense>
-      )}
-
-      {starmapOpen && (
-        <Suspense fallback={null}>
-          <StarmapView onClose={closeOverlayToPreviousRoute} />
-        </Suspense>
-      )}
-
-      {/* Toasts above everything. */}
-      <NotificationStack />
-
-      {/* Backs confirm() from @/store/confirm — renders only while one is open. */}
+      {/* Shared hosts — fine on phone (render nothing until requested). */}
       <ConfirmHost />
-
-      {/* Send Diagnostics consent/upload dialog — driven by $sendDiagnostics
-          (error card action); renders nothing until requested. */}
       <SendDiagnosticsHost />
-
-      {/* Petdex floating mascot — renders nothing unless installed + enabled.
-          Never in the HUD: that window is the chat bar and nothing else. */}
-      {!isHudWindow() && !isBrowserWindow() && <FloatingPet />}
-
-      {/* In-app tips. Renders nothing until the app is quiet and has something
-          to point at, and nothing at all once they're off or all retired. The
-          HUD and browser windows have none of the surfaces a tip talks about. */}
-      {!isHudWindow() && !isBrowserWindow() && <TipHost />}
 
       {/* Single persistent xterm host chasing the terminal pane's slot rect.
           The HUD has no terminal pane, so it has nothing to chase. */}

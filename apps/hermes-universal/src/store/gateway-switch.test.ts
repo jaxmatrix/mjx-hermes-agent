@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
+import { $activeConnection } from '@/store/active-connection'
 import { $sessionsLimit, resetSessionsLimit, SIDEBAR_SESSIONS_PAGE_SIZE } from '@/store/layout'
 import {
   $activeSessionId,
@@ -21,6 +23,12 @@ import {
   setSessions,
   setSessionsLoading
 } from '@/store/session'
+import {
+  $activeStoredSessionId,
+  $pinnedSessionCache,
+  forgetLastSessionMarkers,
+  lastOpenedSessionId
+} from '@/store/session-lifecycle'
 import { $stalledSessionIds } from '@/store/session-states'
 import {
   $transcriptTailBySessionId,
@@ -75,6 +83,10 @@ describe('wipeSessionListsForGatewaySwitch', () => {
     setSessionsLoading(true)
     $gatewaySwitching.set(false)
     clearTranscriptTailPaging()
+    forgetLastSessionMarkers()
+    $activeStoredSessionId.set(null)
+    $pinnedSessionCache.set({})
+    $activeConnection.set(null)
   })
 
   it('clears lists and arms loading so sidebar skeletons retrigger', () => {
@@ -128,6 +140,68 @@ describe('wipeSessionListsForGatewaySwitch', () => {
     wipeSessionListsForGatewaySwitch()
 
     expect(invalidateProfileListFetches).toHaveBeenCalled()
+  })
+
+  it('forgets last-session markers and the pinned-row cache for the leaving connection (rule 20)', () => {
+    $activeConnection.set({
+      connectionId: LOCAL_CONNECTION_ID,
+      connection: { baseUrl: 'http://127.0.0.1:1', kind: 'local' } as never,
+      dialConnectionId: null,
+      kind: 'local',
+      label: 'Local',
+      profile: 'default',
+      scopeKey: backendScopeKey(LOCAL_CONNECTION_ID, 'default')
+    })
+    $activeStoredSessionId.set('remembered-local')
+    $pinnedSessionCache.set({ pin1: { id: 'pin1', title: 'Pinned' } as never })
+
+    expect(lastOpenedSessionId()).toBe('remembered-local')
+
+    wipeSessionListsForGatewaySwitch()
+
+    expect(lastOpenedSessionId()).toBeNull()
+    expect($pinnedSessionCache.get()).toEqual({})
+    expect($activeStoredSessionId.get()).toBeNull()
+  })
+
+  it('keeps last-session markers belonging to other connections', () => {
+    $activeConnection.set({
+      connectionId: 'ssh-box',
+      connection: { baseUrl: 'http://ssh', kind: 'ssh' } as never,
+      dialConnectionId: 'ssh-box',
+      kind: 'ssh',
+      label: 'SSH',
+      profile: 'default',
+      scopeKey: backendScopeKey('ssh-box', 'default')
+    })
+    $activeStoredSessionId.set('remembered-remote')
+
+    $activeConnection.set({
+      connectionId: LOCAL_CONNECTION_ID,
+      connection: { baseUrl: 'http://127.0.0.1:1', kind: 'local' } as never,
+      dialConnectionId: null,
+      kind: 'local',
+      label: 'Local',
+      profile: 'default',
+      scopeKey: backendScopeKey(LOCAL_CONNECTION_ID, 'default')
+    })
+    $activeStoredSessionId.set('remembered-local')
+
+    wipeSessionListsForGatewaySwitch()
+
+    // Leaving local clears the bare-profile marker; remote scope survives.
+    expect(lastOpenedSessionId()).toBeNull()
+
+    $activeConnection.set({
+      connectionId: 'ssh-box',
+      connection: { baseUrl: 'http://ssh', kind: 'ssh' } as never,
+      dialConnectionId: 'ssh-box',
+      kind: 'ssh',
+      label: 'SSH',
+      profile: 'default',
+      scopeKey: backendScopeKey('ssh-box', 'default')
+    })
+    expect(lastOpenedSessionId()).toBe('remembered-remote')
   })
 })
 

@@ -27,3 +27,7 @@ storybook-static/
 # port-decisions, and port-registry are tracked; report/incoming are regenerated.
 sync/report.tsv
 sync/incoming/
+
+# Local adb screenshot / logcat dumps (`npm run adb:screenshot` / `adb:logcat` /
+# `adb:debug-capture`). Regenerated on demand; never commit device captures.
+debug_files/

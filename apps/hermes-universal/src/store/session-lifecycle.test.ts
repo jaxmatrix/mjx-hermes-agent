@@ -44,7 +44,7 @@ import { requestGateway } from '@/store/gateway-client'
 import * as notifications from '@/store/notifications'
 import { $activeGatewayProfile, $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
-import { $sessions, $unreadFinishedSessionIds } from '@/store/session'
+import { $sessions, $unreadFinishedSessionIds, $activeSessionId, $selectedStoredSessionId, setActiveSessionId } from '@/store/session'
 import {
   $activeStoredSessionId,
   $pinnedSessionCache,
@@ -53,6 +53,7 @@ import {
   $sessionsTotal,
   $workingSessionIds,
   adoptLiveSession,
+  applyActiveSessionStoredIdRotation,
   archiveSessionLocal,
   branchCurrentSession,
   branchStoredSession,
@@ -1956,6 +1957,58 @@ describe('last-session memory — a hidden plugin session is never the place to 
     markPluginOwnedSession('stored-polluted')
 
     expect(lastOpenedSessionId()).not.toBe('stored-polluted')
+  })
+})
+
+describe('stored vs runtime id contract (desktop absorb)', () => {
+  it('aliases $activeStoredSessionId to $selectedStoredSessionId, not the runtime atom', () => {
+    expect($activeStoredSessionId).toBe($selectedStoredSessionId)
+    expect($activeStoredSessionId).not.toBe($activeSessionId)
+  })
+
+  it('last-session memory records the stored id when runtime and stored diverge', () => {
+    resetSessionStates()
+    $sessions.set([])
+    $activeStoredSessionId.set(null)
+    setActiveSessionId(null)
+
+    $activeStoredSessionId.set('stored-keep')
+    setActiveSessionId('runtime-other')
+
+    expect(lastOpenedSessionId()).toBe('stored-keep')
+    expect($activeSessionId.get()).toBe('runtime-other')
+    expect($selectedStoredSessionId.get()).toBe('stored-keep')
+  })
+
+  it('applyActiveSessionStoredIdRotation updates selection when selected matches previous stored', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-rot', storedSessionId: 'stored-old' })
+    expect($activeStoredSessionId.get()).toBe('stored-old')
+
+    applyActiveSessionStoredIdRotation({
+      nextStoredSessionId: 'stored-new',
+      previousStoredSessionId: 'stored-old',
+      runtimeSessionId: 'run-rot'
+    })
+
+    expect($activeStoredSessionId.get()).toBe('stored-new')
+  })
+
+  it('applyActiveSessionStoredIdRotation ignores a stale background rotation', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-fg', storedSessionId: 'stored-fg' })
+
+    applyActiveSessionStoredIdRotation({
+      nextStoredSessionId: 'stored-bg-next',
+      previousStoredSessionId: 'stored-bg',
+      runtimeSessionId: 'run-bg'
+    })
+
+    expect($activeStoredSessionId.get()).toBe('stored-fg')
   })
 })
 

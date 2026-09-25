@@ -300,7 +300,7 @@ describe('the windowable-surface table', () => {
     expect(activitySurfaceForPath('/settingsish')).toBe('settings')
   })
 
-  it('launches the native screen for a windowable surface and routes everything else', async () => {
+  it('navigates windowable surfaces in-app (SPA), including deep-link queries', async () => {
     const invoke = vi.fn(async () => undefined)
     const navigateTo = vi.fn()
     const platform = await vi.importActual<typeof Platform>('@/lib/platform')
@@ -314,21 +314,19 @@ describe('the windowable-surface table', () => {
     openAppRoute('/settings/providers')
     await Promise.resolve()
 
-    expect(invoke).toHaveBeenCalledWith('open_screen_window', { route: '/settings/providers' })
-    expect(navigateTo).not.toHaveBeenCalled()
+    expect(navigateTo).toHaveBeenCalledWith('/settings/providers')
+    expect(invoke).not.toHaveBeenCalled()
 
     openAppRoute('/starmap')
 
     expect(navigateTo).toHaveBeenCalledWith('/starmap')
-    expect(invoke).toHaveBeenCalledTimes(1)
 
-    // A deep-linked cron job must reach the native screen WITH its query intact,
-    // not fall through to an in-app navigation the Android shell never shows.
+    // Cron job deep links keep their query on the in-app route.
     openAppRoute(cronJobRoute('nightly digest'))
     await Promise.resolve()
 
-    expect(invoke).toHaveBeenLastCalledWith('open_screen_window', { route: '/cron?job=nightly+digest' })
-    expect(navigateTo).toHaveBeenCalledTimes(1)
+    expect(navigateTo).toHaveBeenCalledWith('/cron?job=nightly+digest')
+    expect(invoke).not.toHaveBeenCalled()
 
     vi.doUnmock('@tauri-apps/api/core')
     vi.doUnmock('@/lib/route-nav')

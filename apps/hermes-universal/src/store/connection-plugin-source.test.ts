@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const connectionsRoster = vi.fn()
-const leaseSecondary = vi.fn()
-const releaseSecondary = vi.fn()
+const openGatewayForAgent = vi.fn()
 
 vi.mock('@/store/connections', async importOriginal => {
   const actual = await importOriginal<typeof import('@/store/connections')>()
@@ -13,10 +12,14 @@ vi.mock('@/store/connections', async importOriginal => {
   }
 })
 
-vi.mock('@/store/gateway-secondaries', () => ({
-  leaseSecondary: (...args: unknown[]) => leaseSecondary(...args),
-  releaseSecondary: (...args: unknown[]) => releaseSecondary(...args)
-}))
+vi.mock('@/store/gateway', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/store/gateway')>()
+
+  return {
+    ...actual,
+    openGatewayForAgent: (...args: unknown[]) => openGatewayForAgent(...args)
+  }
+})
 
 import { $activeConnection } from './active-connection'
 import { $registryView } from './connections'
@@ -102,8 +105,7 @@ beforeEach(() => {
     ]
   })
 
-  leaseSecondary.mockReset().mockResolvedValue({ id: 'lease-b' })
-  releaseSecondary.mockReset()
+  openGatewayForAgent.mockReset().mockResolvedValue(undefined)
 })
 
 describe('registryConnectionSource (multi-gateway)', () => {
@@ -185,23 +187,24 @@ describe('registryConnectionSource (multi-gateway)', () => {
     })
   })
 
-  it('ensureAgent on the active connection needs no secondary lease', async () => {
+  it('ensureAgent on the active connection needs no secondary dial', async () => {
     await expect(pluginConnectionSource().ensureAgent('https://gw-a.test', 'default')).resolves.toEqual({
       connectionId: 'https://gw-a.test',
       ok: true,
       profile: 'default'
     })
-    expect(leaseSecondary).not.toHaveBeenCalled()
+    expect(openGatewayForAgent).not.toHaveBeenCalled()
   })
 
-  it('ensureAgent on another logged-in gateway leases a secondary socket', async () => {
+  it('ensureAgent on another gateway opens via gateway.ts (Desktop dial door)', async () => {
     await expect(pluginConnectionSource().ensureAgent('https://gw-b.test', 'worker')).resolves.toEqual({
       connectionId: 'https://gw-b.test',
       ok: true,
       profile: 'worker'
     })
-    expect(leaseSecondary).toHaveBeenCalled()
-    expect(releaseSecondary).toHaveBeenCalledWith({ id: 'lease-b' })
+    expect(openGatewayForAgent).toHaveBeenCalledWith('https://gw-b.test', 'worker', {
+      spawnPriority: 'foreground'
+    })
   })
 
   it('refuses an unknown connection with a shaped error', async () => {
@@ -209,10 +212,11 @@ describe('registryConnectionSource (multi-gateway)', () => {
       error: AGENT_ROUTING_UNAVAILABLE,
       ok: false
     })
+    expect(openGatewayForAgent).not.toHaveBeenCalled()
   })
 
-  it('refuses when the secondary lease cannot be obtained', async () => {
-    leaseSecondary.mockRejectedValueOnce(new Error('unreachable'))
+  it('refuses when the gateway.ts secondary cannot open', async () => {
+    openGatewayForAgent.mockRejectedValueOnce(new Error('unreachable'))
 
     await expect(pluginConnectionSource().ensureAgent('https://gw-b.test', 'worker')).resolves.toEqual({
       error: AGENT_ROUTING_UNAVAILABLE,

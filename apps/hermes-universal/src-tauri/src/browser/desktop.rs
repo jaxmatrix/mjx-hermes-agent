@@ -15,7 +15,9 @@
 use std::sync::{Arc, Mutex, Once};
 
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl};
+use tauri::{
+    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Url, WebviewUrl,
+};
 use tokio::sync::oneshot;
 
 use super::{
@@ -321,15 +323,16 @@ impl GuestHost for ChildWebviewHost {
     }
 
     fn set_bounds(&self, bounds: GuestBounds) -> Result<(), BrowserError> {
-        self.map(
-            self.webview
-                .set_position(LogicalPosition::new(bounds.x, bounds.y)),
-        )?;
-
-        self.map(self.webview.set_size(LogicalSize::new(
-            bounds.width.max(1.0),
-            bounds.height.max(1.0),
-        )))
+        // One IPC/message so Linux Fixed `move_` + size stay in the same layout
+        // pass (split set_position/set_size can leave the guest at the wrong
+        // place for a frame).
+        self.map(self.webview.set_bounds(Rect {
+            position: Position::Logical(LogicalPosition::new(bounds.x, bounds.y)),
+            size: Size::Logical(LogicalSize::new(
+                bounds.width.max(1.0),
+                bounds.height.max(1.0),
+            )),
+        }))
     }
 
     fn set_visible(&self, visible: bool) -> Result<bool, BrowserError> {

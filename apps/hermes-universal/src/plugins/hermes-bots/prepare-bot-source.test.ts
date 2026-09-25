@@ -1,6 +1,7 @@
 /**
- * prepareBotSource: active rows activate via ensureAgent; remote rows lease via
- * probeAgent without switching the primary gateway.
+ * prepareBotSource: active rows activate via ensureAgent; routed remotes only
+ * note the connection opened — same as Electron Desktop (first requestProfile
+ * dials via requestGatewayForAgent). Never ensureAgent on routed rows.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -67,7 +68,7 @@ describe('prepareBotSource', () => {
     expect(probeAgent).not.toHaveBeenCalled()
   })
 
-  it('leases via probeAgent for a routed remote row — never ensureAgent', async () => {
+  it('for a routed remote only notes opened — never ensureAgent or probeAgent', async () => {
     const { prepareBotSource } = await load()
     const bot = {
       connectionId: 'https://gw-b.test',
@@ -84,26 +85,7 @@ describe('prepareBotSource', () => {
     await prepareBotSource(bot)
 
     expect(noteBotConnectionOpened).toHaveBeenCalledWith('https://gw-b.test')
-    expect(probeAgent).toHaveBeenCalledWith('https://gw-b.test', 'worker')
-    expect(ensureAgent).not.toHaveBeenCalled()
-  })
-
-  it('throws on lease failure so open toasts once', async () => {
-    probeAgent.mockResolvedValueOnce({ error: 'AGENT_ROUTING_UNAVAILABLE', ok: false })
-    const { prepareBotSource } = await load()
-    const bot = {
-      connectionId: 'https://gw-b.test',
-      name: 'worker',
-      route: {
-        connectionId: 'https://gw-b.test',
-        mode: 'remote',
-        profile: 'worker',
-        targetProfile: 'worker'
-      },
-      sourceScoped: true
-    } as RosterRow
-
-    await expect(prepareBotSource(bot)).rejects.toThrow(/AGENT_ROUTING_UNAVAILABLE/)
+    expect(probeAgent).not.toHaveBeenCalled()
     expect(ensureAgent).not.toHaveBeenCalled()
   })
 })

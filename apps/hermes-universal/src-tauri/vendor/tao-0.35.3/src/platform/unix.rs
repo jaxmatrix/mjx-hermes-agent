@@ -82,6 +82,11 @@ pub trait WindowExtUnix {
   /// Returns `None` if the default vertical `gtk::Box` creation was disabled by [`WindowBuilderExtUnix::with_default_vbox`].
   fn default_vbox(&self) -> Option<&gtk::Box>;
 
+  /// Returns the full-window `gtk::Fixed` overlay layer that hosts positioned
+  /// child webviews. `None` when the default `gtk::Box` creation is disabled.
+  /// Hermès Universal: vendored for tauri-apps/tauri#10420 (in-app browser guest).
+  fn content_fixed(&self) -> Option<&gtk::Fixed>;
+
   /// Whether to show the window icon in the taskbar or not.
   fn set_skip_taskbar(&self, skip: bool) -> Result<(), ExternalError>;
 
@@ -95,6 +100,10 @@ impl WindowExtUnix for Window {
 
   fn default_vbox(&self) -> Option<&gtk::Box> {
     self.window.default_vbox.as_ref()
+  }
+
+  fn content_fixed(&self) -> Option<&gtk::Fixed> {
+    self.window.content_fixed.as_ref()
   }
 
   fn set_skip_taskbar(&self, skip: bool) -> Result<(), ExternalError> {

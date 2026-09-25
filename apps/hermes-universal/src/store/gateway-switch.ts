@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { resetLiveRuntimeTracking } from '@/app/contrib/hooks/use-background-sync'
 import { resetSidebarBatchCapability } from '@/hermes'
 import { invalidateProfileScopedQueries } from '@/lib/query-client'
+import { $activeConnectionId } from '@/store/active-connection'
 import { clearArtifactRegistry } from '@/store/artifacts'
 import { invalidateCronJobsRequests, setCronJobs } from '@/store/cron'
 import { resetSessionsLimit } from '@/store/layout'
@@ -55,6 +56,16 @@ export interface GatewaySwitchLifecycle {
 
 let switchLifecycle: GatewaySwitchLifecycle | null = null
 
+/**
+ * Extra wipe steps owned by modules that must not be imported from this file
+ * (session-lifecycle → event-router → … → session-route-dispatch → here).
+ * Registered at their module load; run with the leaving connection id captured
+ * at wipe entry (rule 20 — last-session markers, pinned-row cache).
+ */
+export type GatewayWipeExtra = (leavingConnectionId: null | string) => void
+
+let wipeExtras: GatewayWipeExtra[] = []
+
 /** Ownership handle returned by beginGatewaySwitch; see endGatewaySwitch. */
 export type GatewaySwitchToken = number
 
@@ -72,6 +83,14 @@ export function registerGatewaySwitchLifecycle(lifecycle: GatewaySwitchLifecycle
     if (switchLifecycle === lifecycle) {
       switchLifecycle = null
     }
+  }
+}
+
+export function registerGatewayWipeExtra(fn: GatewayWipeExtra): () => void {
+  wipeExtras.push(fn)
+
+  return () => {
+    wipeExtras = wipeExtras.filter(extra => extra !== fn)
   }
 }
 
@@ -180,6 +199,15 @@ export function recoverActiveSourceAfterFailedGatewaySwitch(token: GatewaySwitch
  * alone so the user stays where they were (e.g. mid-Gateway settings).
  */
 export function wipeSessionListsForGatewaySwitch(): void {
+  // Capture BEFORE any other wipe: markers and pin rows are keyed by the
+  // outgoing connection. Soft-switch activates the next source after this
+  // returns, so `$activeConnectionId` is still the one being left (rule 20).
+  const leavingConnectionId = $activeConnectionId.get()
+
+  for (const extra of wipeExtras) {
+    extra(leavingConnectionId)
+  }
+
   // The next backend is a different runtime — don't carry the old one's
   // "batched sidebar endpoint missing" capability verdict across the switch.
   resetSidebarBatchCapability()

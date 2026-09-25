@@ -1,9 +1,8 @@
 //! Python payloads that run on the remote host.
 //!
-//! Ported **verbatim** from `apps/desktop/electron/remote-lifecycle.ts`
-//! (`:136-144` launcher resolver, `:378-396` ownership proof, `:527-555` token
-//! upload). These are the security boundary of the whole SSH lifecycle — the
-//! only things that decide whether a secret is written safely and whether a
+//! Ported from `apps/desktop/electron/remote-lifecycle.ts` (ownership proof,
+//! token upload). These are the security boundary of the whole SSH lifecycle —
+//! the only things that decide whether a secret is written safely and whether a
 //! process may be killed — so they are transcribed rather than rewritten, and
 //! every value reaches them through `shq` and nothing else.
 //!
@@ -12,42 +11,26 @@
 //! `/proc/<pid>/cmdline` parsing that survives arguments containing spaces.
 
 use super::error::SshError;
-use super::remote_paths::{shq, validate_spawn_nonce};
+use super::remote_paths::{shq, spawn_token_path, validate_spawn_nonce};
 
-/// Follow a launcher shim to the binary it actually runs.
+/// Keep the located launcher path as-is.
 ///
-/// A `hermes` on `PATH` is often a two-line `sh` wrapper ending in `exec
-/// /real/path/hermes`. The ownership proof compares `/proc/<pid>/cmdline`
-/// against the path we spawned, and the kernel records the *target*, not the
-/// wrapper — so without this every ownership check would read "not ours" and we
-/// would respawn on every connect and never clean up.
+/// Installer wrappers (`~/.local/bin/hermes`) typically end in
+/// `exec <python> <entrypoint> "$@"`. Following that `exec` and returning only
+/// the interpreter broke capability probing (`python serve --help` → false
+/// `update-required`) and version checks. Desktop #74411 made this an identity;
+/// ownership proof below accepts python+entrypoint / spawn_proof instead.
 pub fn resolve_launcher(candidate: &str) -> String {
-    let script = format!(
-        "import os,shlex,sys\n\
-         p=os.path.expanduser({candidate})\n\
-         out=p\n\
-         try:\n\
-         \x20data=open(p,\"r\",encoding=\"utf-8\",errors=\"ignore\").read(4096)\n\
-         \x20for line in data.splitlines():\n\
-         \x20\x20words=shlex.split(line)\n\
-         \x20\x20if len(words)>1 and words[0]==\"exec\":\n\
-         \x20\x20\x20target=os.path.expanduser(words[1])\n\
-         \x20\x20\x20if os.path.isabs(target) and os.access(target,os.X_OK):out=target\n\
-         \x20\x20\x20break\n\
-         except (OSError,ValueError):pass\n\
-         print(out)",
-        candidate = shq(candidate)
-    );
-
-    format!("python3 -c {}", shq(&script))
+    candidate.to_string()
 }
 
 /// Prove a pid is *our* dashboard before anything may kill it.
 ///
 /// Liveness is not identity: pids are reused, and a `kill` aimed at a recycled
-/// pid destroys an unrelated process. Ownership therefore requires all three of
-/// argv[0] being the exact binary we spawned (or a `python` entry point running
-/// it), `--isolated` present, and our own spawn nonce echoed back.
+/// pid destroys an unrelated process. After #74411 we keep the installer
+/// wrapper for spawn, so `/proc` may show `python` + entrypoint rather than the
+/// wrapper — hence `expected_entries`, `python_entry`, and `spawn_proof`
+/// (token path + nonce + profile) as Desktop's remote-lifecycle does.
 ///
 /// Reads `/proc/<pid>/cmdline` and falls back to `ps` on macOS, which has no
 /// procfs.
@@ -55,31 +38,64 @@ pub fn pid_is_our_dashboard(
     pid: i64,
     spawn_nonce: &str,
     hermes_path: &str,
+    hermes_home: &str,
+    ownership_id: &str,
+    profile: &str,
 ) -> Result<String, SshError> {
     validate_spawn_nonce(spawn_nonce)?;
+
+    let expected_token = if ownership_id.is_empty() {
+        String::new()
+    } else {
+        spawn_token_path(ownership_id, spawn_nonce)?
+    };
 
     let script = format!(
         "import os,shlex,subprocess,sys\n\
          pid={pid}\n\
          expected=os.path.expanduser({expected})\n\
+         hermes_home=os.path.expanduser({hermes_home}) if {hermes_home} else \"\"\n\
+         expected_entries={{expected}}\n\
+         if hermes_home:\n\
+         \x20expected_entries.add(os.path.join(hermes_home,\"hermes-agent\",\"venv\",\"bin\",\"hermes\"))\n\
+         expected_token=os.path.expanduser({expected_token})\n\
+         expected_profile={expected_profile}\n\
          nonce={nonce}\n\
          try:\n\
          \x20raw=open(f\"/proc/{{pid}}/cmdline\",\"rb\").read()\n\
          \x20args=[x.decode(\"utf-8\",\"surrogateescape\") for x in raw.split(b\"\\0\") if x]\n\
          except OSError:\n\
-         \x20line=subprocess.check_output([\"ps\",\"-o\",\"command=\",\"-p\",str(pid)],text=True).strip()\n\
+         \x20try:\n\
+         \x20\x20line=subprocess.check_output([\"ps\",\"-ww\",\"-o\",\"command=\",\"-p\",str(pid)],text=True).strip()\n\
+         \x20except subprocess.CalledProcessError:\n\
+         \x20\x20print(\"FOREIGN\");sys.exit(0)\n\
          \x20args=shlex.split(line)\n\
          ok=False\n\
          try:\n\
          \x20serve=args.index(\"serve\")\n\
          \x20owner=args.index(\"--ssh-owner-nonce\",serve+1)\n\
-         \x20direct=args[0]==expected\n\
-         \x20python_entry=len(args)>1 and args[1]==expected and os.path.basename(args[0]).startswith(\"python\")\n\
-         \x20ok=(direct or python_entry) and \"--isolated\" in args[serve+1:] and args[owner+1]==nonce\n\
+         \x20token=args.index(\"--ssh-session-token-file\",serve+1) if expected_token else -1\n\
+         \x20isolated=args.index(\"--isolated\",serve+1)\n\
+         \x20profile_arg=args.index(\"--profile\") if expected_profile else -1\n\
+         \x20serve_count=args.count(\"serve\")\n\
+         \x20owner_count=args.count(\"--ssh-owner-nonce\")\n\
+         \x20token_count=args.count(\"--ssh-session-token-file\")\n\
+         \x20isolated_count=args.count(\"--isolated\")\n\
+         \x20profile_count=args.count(\"--profile\")\n\
+         \x20direct=args[0] in expected_entries\n\
+         \x20python_entry=len(args)>1 and args[1] in expected_entries and os.path.basename(args[0]).startswith(\"python\")\n\
+         \x20token_ok=not expected_token or args[token+1]==expected_token\n\
+         \x20isolated_ok=isolated_count==1 and isolated>serve\n\
+         \x20profile_ok=(profile_count==1 and profile_arg<serve and args[profile_arg+1]==expected_profile) if expected_profile else profile_count==0\n\
+         \x20spawn_proof=bool(expected_token) and owner_count==1 and token_count==1 and token_ok and profile_ok\n\
+         \x20ok=(direct or python_entry or spawn_proof) and serve_count==1 and isolated_ok and owner_count==1 and args[owner+1]==nonce and token_ok and profile_ok\n\
          except (ValueError,IndexError):pass\n\
          print(\"OWNED\" if ok else \"FOREIGN\")",
         pid = pid,
         expected = shq(hermes_path),
+        hermes_home = shq(hermes_home),
+        expected_token = shq(&expected_token),
+        expected_profile = shq(profile),
         nonce = shq(spawn_nonce)
     );
 
@@ -154,13 +170,15 @@ mod tests {
         )
     }
 
+    const OWNER: &str = "0123456789abcdef0123456789abcdef";
+    const NONCE: &str = "0123456789abcdef";
+
     #[test]
     fn every_payload_is_a_single_quoted_python_invocation() {
         // If any of these stopped being one shell word, the interpolated values
         // would become separate arguments — the exact injection these guard.
         for command in [
-            resolve_launcher("/usr/local/bin/hermes"),
-            pid_is_our_dashboard(42, "0123456789abcdef", "/usr/local/bin/hermes").unwrap(),
+            pid_is_our_dashboard(42, NONCE, "/usr/local/bin/hermes", "", OWNER, "").unwrap(),
             upload_token("~/.hermes/desktop-ssh/o/n.token"),
         ] {
             assert!(command.starts_with("python3 -c '"), "{command}");
@@ -169,18 +187,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_launcher_follows_an_exec_shim() {
-        // A `hermes` on PATH is often a wrapper ending in `exec /real/path`.
-        // /proc records the target, so ownership proofs compare against it.
-        let script = script_of(&resolve_launcher("/usr/local/bin/hermes"));
-        assert!(script.contains("words[0]==\"exec\""), "{script}");
-        assert!(script.contains("os.access(target,os.X_OK)"), "{script}");
-        assert!(
-            script.contains("os.path.isabs(target)"),
-            "only an absolute target is followed: {script}"
+    fn resolve_launcher_keeps_the_candidate() {
+        // #74411: do not follow `exec` shims to python — that broke serve --help.
+        assert_eq!(
+            resolve_launcher("~/.local/bin/hermes"),
+            "~/.local/bin/hermes"
         );
-        // Falls back to the candidate itself rather than failing.
-        assert!(script.contains("out=p"), "{script}");
+        assert_eq!(
+            resolve_launcher("/usr/local/bin/hermes"),
+            "/usr/local/bin/hermes"
+        );
     }
 
     #[test]
@@ -188,19 +204,24 @@ mod tests {
         // Liveness is not identity: pids get reused, so a kill aimed at a
         // recycled pid destroys something unrelated. All three must hold.
         let script = script_of(
-            &pid_is_our_dashboard(42, "0123456789abcdef", "/usr/local/bin/hermes").unwrap(),
+            &pid_is_our_dashboard(42, NONCE, "/usr/local/bin/hermes", "/home/u/.hermes", OWNER, "")
+                .unwrap(),
         );
 
         assert!(script.contains("args.index(\"serve\")"), "{script}");
+        assert!(script.contains("isolated_ok"), "{script}");
+        assert!(script.contains("args[owner+1]==nonce"), "{script}");
         assert!(
-            script.contains("\"--isolated\" in args[serve+1:]"),
+            script.contains("direct or python_entry or spawn_proof"),
             "{script}"
         );
-        assert!(script.contains("args[owner+1]==nonce"), "{script}");
-        assert!(script.contains("direct or python_entry"), "{script}");
+        assert!(
+            script.contains("hermes-agent\",\"venv\",\"bin\",\"hermes\""),
+            "{script}"
+        );
         // macOS has no procfs.
         assert!(script.contains("/proc/{pid}/cmdline"), "{script}");
-        assert!(script.contains("ps\",\"-o\",\"command=\""), "{script}");
+        assert!(script.contains("ps\",\"-ww\",\"-o\",\"command=\""), "{script}");
         // Anything unparseable must read as FOREIGN, never as OWNED.
         assert!(script.contains("ok=False"), "{script}");
         assert!(
@@ -212,7 +233,15 @@ mod tests {
     #[test]
     fn ownership_proof_embeds_the_exact_pid_and_nonce() {
         let script = script_of(
-            &pid_is_our_dashboard(4242, "0123456789abcdef", "/usr/local/bin/hermes").unwrap(),
+            &pid_is_our_dashboard(
+                4242,
+                NONCE,
+                "/usr/local/bin/hermes",
+                "/home/u/.hermes",
+                OWNER,
+                "work",
+            )
+            .unwrap(),
         );
         assert!(script.contains("pid=4242"), "{script}");
         assert!(script.contains("nonce='0123456789abcdef'"), "{script}");
@@ -220,20 +249,31 @@ mod tests {
             script.contains("expected=os.path.expanduser('/usr/local/bin/hermes')"),
             "{script}"
         );
+        assert!(
+            script.contains("expected_profile='work'"),
+            "{script}"
+        );
+        assert!(
+            script.contains(".token"),
+            "token path must be embedded for spawn_proof: {script}"
+        );
     }
 
     #[test]
     fn ownership_proof_rejects_a_malformed_nonce() {
         // The nonce is the identity anchor; a bad one must fail before it can be
         // interpolated into a command that decides whether to kill something.
-        assert!(pid_is_our_dashboard(42, "not-a-nonce", "/usr/local/bin/hermes").is_err());
-        assert!(pid_is_our_dashboard(42, "", "/usr/local/bin/hermes").is_err());
+        assert!(
+            pid_is_our_dashboard(42, "not-a-nonce", "/usr/local/bin/hermes", "", OWNER, "").is_err()
+        );
+        assert!(pid_is_our_dashboard(42, "", "/usr/local/bin/hermes", "", OWNER, "").is_err());
     }
 
     #[test]
     fn ownership_proof_quotes_a_hostile_hermes_path() {
-        let script =
-            script_of(&pid_is_our_dashboard(42, "0123456789abcdef", "/x'; rm -rf /; #").unwrap());
+        let script = script_of(
+            &pid_is_our_dashboard(42, NONCE, "/x'; rm -rf /; #", "", OWNER, "").unwrap(),
+        );
         assert!(
             script.contains(r#"expected=os.path.expanduser('/x'\''; rm -rf /; #')"#),
             "{script}"

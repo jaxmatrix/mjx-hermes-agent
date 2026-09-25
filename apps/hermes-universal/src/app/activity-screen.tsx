@@ -10,20 +10,14 @@ import { requestGateway } from '@/store/gateway-client'
 import { $activeGatewayProfile } from '@/store/profile'
 import { returnHome } from '@/store/windows'
 
-// Native activity-screen root (MJX-141). On Android, the windowable surfaces
-// (Settings / Command Center / Profiles / Cron) open in ONE native screen activity (a
-// fresh WebView carrying `?win=activity`, launched from `src-tauri/src/window.rs`).
-// `app.tsx` mounts this instead of the full chat shell (MobileController).
+// Compat root for `?win=activity` (MJX-141). Phone Settings / Command Center /
+// Profiles / Cron now open as in-app SPA overlays on MainActivity
+// (`openAppRoute` → MobileController → MobileSurfaceShell). This root remains
+// for an old deep link that still lands on a ScreenActivity WebView.
 //
-// The chrome (Back · title-menu · surface, derived live from the route) lives in the
-// shared `MobileSurfaceShell` so the iOS / generic-mobile in-app overlay
-// (mobile-controller) renders these surfaces with the exact same layout (MJX-203).
-// Here the Back / open-session actions map to `returnHome` (finish the native scene →
-// back to the sessions activity), which is also what the hardware back key does.
-//
-// The WebView shares the single Rust core, but its JS/connection is fresh:
-// `main.tsx` auto-reconnects on boot, so — like SecondaryWindowRoot —
-// `MobileSurfaceShell` waits for `$connectionPhase` before rendering the surface.
+// The chrome (Back · title-menu · surface) is shared with the in-app overlay.
+// Back / open-session map to `returnHome` (finish the native scene). Without
+// MobileGatewayHost this WebView only mirrors identity — prefer the SPA path.
 export function ActivityScreenRoot() {
   // Publishes the visual-viewport vars `html.is-mobile #root` is sized from
   // (styles.css). Mounted HERE rather than left to `MobileSurfaceShell`: the

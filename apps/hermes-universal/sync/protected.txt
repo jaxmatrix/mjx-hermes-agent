@@ -151,6 +151,13 @@ app/shell/model-drawer-grouping.ts
 store/zoom-universal.ts
 app/shell/mobile-*.*
 app/right-pane/**/mobile-*.*
+# Colocated phone layout adapters (Vite prefers these over the synced desktop twin).
+**/*.mobile.ts
+**/*.mobile.tsx
+**/*.mobile.test.ts
+**/*.mobile.test.tsx
+vite/mobile-resolve.ts
+vite/mobile-resolve.test.ts
 app/chat/composer/bubble-row.tsx
 app/chat/composer/bubble-drag.*
 store/chat-bubbles.*

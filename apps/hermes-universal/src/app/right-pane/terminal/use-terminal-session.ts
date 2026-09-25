@@ -10,8 +10,20 @@ import { writeClipboardText } from '@/components/ui/copy-button'
 import { markRightPanePerf } from '@/debug/right-pane-events'
 import { triggerHaptic } from '@/lib/haptics'
 import { isComposerChord } from '@/lib/keybinds/chords'
+import { LOCAL_MODE_SUPPORTED } from '@/lib/platform'
+import { $connection } from '@/store/connection'
+import { forgetGatewayFeatures } from '@/store/gateway-features'
 import { $previewTarget } from '@/store/preview'
+import { $terminalHostPreference } from '@/store/terminals'
 import { useTheme } from '@/themes/context'
+import {
+  createTerminalTransport,
+  resolveTerminalTransportKind,
+  type TerminalEnd,
+  type TerminalTransport,
+  terminalTransportInputs,
+  type TerminalTransportKind
+} from '@/transport/terminal-transport'
 
 import { $terminalInjection } from '../store'
 
@@ -404,6 +416,7 @@ export function useTerminalSession({
   const termRef = useRef<Terminal | null>(null)
   const webglRef = useRef<WebglAddon | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  const transportRef = useRef<TerminalTransport | null>(null)
   // Snapshot the revive buffer once: live snapshots feed updateTerminalReviveBuffer
   // and would otherwise re-arm replay on every store-driven re-render.
   const initialReviveBufferRef = useRef(reviveBuffer)
@@ -428,9 +441,23 @@ export function useTerminalSession({
   const initialActiveFitRef = useRef(false)
   const { latestFontFamilyRef, mountedRef } = useTerminalFontController({ fitRef, termRef, webglRef })
   const [status, setStatus] = useState<TerminalStatus>('starting')
+  const [end, setEnd] = useState<TerminalEnd | null>(null)
+  const [transportKind, setTransportKind] = useState<TerminalTransportKind>('local')
+  const [attempt, setAttempt] = useState(0)
+  const [fellBack, setFellBack] = useState(false)
   const [selection, setSelection] = useState('')
   const [selectionStyle, setSelectionStyle] = useState<CSSProperties | null>(null)
   const [shellName, setShellName] = useState('shell')
+
+  const restart = useCallback(() => {
+    // Re-probe gateway features: an older cache of "no shell-pty" must not pin
+    // this pane on the device shell after the gateway was upgraded.
+    forgetGatewayFeatures($connection.get())
+    setFellBack(false)
+    setEnd(null)
+    setStatus('starting')
+    setAttempt(value => value + 1)
+  }, [])
 
    
   useEffect(() => {
@@ -493,10 +520,12 @@ export function useTerminalSession({
    
   useEffect(() => {
     const host = hostRef.current
-    const terminalApi = window.hermesDesktop?.terminal
 
-    if (!host || !terminalApi) {
+    // Always open xterm on the host — never leave a silent blank tile when the
+    // Electron-shaped hermesDesktop.terminal bridge is absent (Universal).
+    if (!host) {
       setStatus('closed')
+      setEnd({ kind: 'error', detail: 'terminal host missing' })
 
       return
     }
@@ -504,6 +533,9 @@ export function useTerminalSession({
     let disposed = false
     const cleanup: Array<() => void> = []
     let lastSentSize: { cols: number; rows: number } | null = null
+    // Optional local cwd probe (desktop Electron bridge); Universal transport
+    // relies on OSC 7/9 instead when this is missing.
+    const terminalApi = window.hermesDesktop?.terminal
 
     const term = new Terminal({
       allowProposedApi: true,
@@ -598,7 +630,7 @@ export function useTerminalSession({
     const probeCwd = () => {
       const sessionId = sessionIdRef.current
 
-      if (!sessionId || !terminalApi.cwd || Date.now() - cwdProbeAt < CWD_PROBE_THROTTLE_MS) {
+      if (!sessionId || !terminalApi?.cwd || Date.now() - cwdProbeAt < CWD_PROBE_THROTTLE_MS) {
         return
       }
 
@@ -687,9 +719,7 @@ export function useTerminalSession({
     }
 
     const onDrop = (e: DragEvent) => {
-      const id = sessionIdRef.current
-
-      if (!id || !e.dataTransfer || !transferHasDropCandidates(e.dataTransfer)) {
+      if (!transportRef.current || !e.dataTransfer || !transferHasDropCandidates(e.dataTransfer)) {
         return
       }
 
@@ -702,7 +732,9 @@ export function useTerminalSession({
       }
 
       hasSessionActivityRef.current = true
-      void terminalApi.write(id, `${paths.map(p => quotePathForShell(p, shellNameRef.current)).join(' ')} `)
+      transportRef.current.write(
+        `${paths.map(p => quotePathForShell(p, shellNameRef.current)).join(' ')} `
+      )
       term.focus()
       triggerHaptic('selection')
     }
@@ -759,11 +791,9 @@ export function useTerminalSession({
         return
       }
 
-      const sessionId = sessionIdRef.current
-
-      if (sessionId && (lastSentSize?.cols !== term.cols || lastSentSize?.rows !== term.rows)) {
+      if (transportRef.current && (lastSentSize?.cols !== term.cols || lastSentSize?.rows !== term.rows)) {
         lastSentSize = { cols: term.cols, rows: term.rows }
-        void terminalApi.resize(sessionId, { cols: term.cols, rows: term.rows })
+        transportRef.current.resize(term.cols, term.rows)
       }
     }
 
@@ -771,11 +801,7 @@ export function useTerminalSession({
 
     const dataDisposable = term.onData(data => {
       hasSessionActivityRef.current = true
-      const id = sessionIdRef.current
-
-      if (id) {
-        void terminalApi.write(id, data)
-      }
+      transportRef.current?.write(data)
     })
 
     cleanup.push(() => dataDisposable.dispose())
@@ -848,64 +874,88 @@ export function useTerminalSession({
       return false
     })
 
-    const startSession = () =>
-      void terminalApi
-        // Prefer the prior session's last cwd so a reopened tab lands where the
-        // user last `cd`'d; the main side falls back to the launch cwd (then
-        // home) if that dir no longer exists.
-        .start({ cols: term.cols, cwd: initialRestoreCwdRef.current || cwd, rows: term.rows })
-        .then(async session => {
-          if (disposed) {
-            void terminalApi.dispose(session.id)
-
-            return
-          }
-
-          sessionIdRef.current = session.id
-          lastSentSize = { cols: term.cols, rows: term.rows }
-          shellNameRef.current = session.shell || 'shell'
-          setShellName(session.shell || 'shell')
-          onShellRef.current?.(session.shell || 'shell')
-
-          const initial = term.hasSelection() ? term.getSelection() : ''
-          selectionRef.current = initial
-          selectionLabelRef.current = initial ? terminalSelectionLabel(term, shellNameRef.current, initial) : ''
-
-          cleanup.push(
-            terminalApi.onData(session.id, data => {
-              armedWrite(data)
-              scheduleSnapshot()
-            }),
-            terminalApi.onExit(session.id, () => {
-              // Shell exited (`exit` / Ctrl-D / crash) — drop the tab like a real
-              // terminal. closeTerminal hides the pane when it's the last one.
-              // Skip if we're tearing down (cleanup disposes the PTY) OR the app
-              // is quitting/reloading: on quit the main process kills every PTY,
-              // firing this exit, but React skips the cleanup so `disposed` stays
-              // false — running closeTerminal here would wipe the persisted tabs
-              // right before relaunch restores them.
-              if (!disposed && !appTearingDown) {
-                closeTerminal(id)
-              }
-            })
+    const startSession = (preferLocal: boolean) => {
+      const conn = $connection.get()
+      const kind = preferLocal
+        ? 'local'
+        : resolveTerminalTransportKind(
+            terminalTransportInputs(conn, $terminalHostPreference.get())
           )
 
-          const attached = await terminalApi.attach(session.id)
+      setTransportKind(kind)
+      setEnd(null)
+      setStatus('starting')
 
-          if (!attached) {
-            throw new Error('Terminal session disappeared before its output stream attached')
+      transportRef.current?.close()
+      transportRef.current = createTerminalTransport(
+        kind,
+        conn,
+        {
+          cols: term.cols,
+          cwd: initialRestoreCwdRef.current || cwd,
+          rows: term.rows,
+          terminalId: id
+        },
+        {
+          onData: data => {
+            const text = typeof data === 'string' ? data : new TextDecoder().decode(data)
+            armedWrite(text)
+            scheduleSnapshot()
+          },
+          onEnd: reason => {
+            if (disposed) {
+              return
+            }
+
+            transportRef.current = null
+            sessionIdRef.current = null
+
+            // Gateway with no shell-pty: fall back to a device shell on desktop
+            // rather than leaving a blank tile (same rule as TerminalView).
+            if (
+              reason.kind === 'unsupported' &&
+              kind === 'remote' &&
+              LOCAL_MODE_SUPPORTED &&
+              !preferLocal
+            ) {
+              setFellBack(true)
+              startSession(true)
+
+              return
+            }
+
+            // Shell exited (exit / Ctrl-D) — drop the tab like a real terminal.
+            if (reason.kind === 'exited' && !appTearingDown) {
+              closeTerminal(id)
+
+              return
+            }
+
+            setEnd(reason)
+            setStatus('closed')
+          },
+          onReady: info => {
+            if (disposed) {
+              return
+            }
+
+            // Synthetic session id so injection / probe paths know we are live.
+            sessionIdRef.current = id
+            lastSentSize = { cols: term.cols, rows: term.rows }
+            const shell = info.shell || 'shell'
+            shellNameRef.current = shell
+            setShellName(shell)
+            onShellRef.current?.(shell)
+            setStatus('open')
+
+            window.requestAnimationFrame(() => {
+              term.clearSelection()
+              fitAndResize(initialActiveRef.current)
+            })
           }
-
-          setStatus('open')
-
-          window.requestAnimationFrame(() => {
-            term.clearSelection() // drop any selection painted over transient boot rows
-          })
-        })
-        .catch(error => {
-          setStatus('closed')
-          term.write(`Terminal failed to start: ${error instanceof Error ? error.message : String(error)}\r\n`)
-        })
+        }
+      )
+    }
 
     // Open + fit + start only once webfonts settle. Fitting with fallback metrics
     // picks the wrong row count, the shell boots at that size, then the real font
@@ -936,7 +986,7 @@ export function useTerminalSession({
 
       fitAndResize(initialActiveRef.current)
       initialActiveFitRef.current = initialActiveRef.current
-      startSession()
+      startSession(false)
     }
 
     void prepareTerminalFontFamily(
@@ -957,12 +1007,9 @@ export function useTerminalSession({
       cleanup.forEach(run => run())
       fitRef.current = null
 
-      const id = sessionIdRef.current
       sessionIdRef.current = null
-
-      if (id) {
-        void terminalApi.dispose(id)
-      }
+      transportRef.current?.close()
+      transportRef.current = null
 
       term.dispose()
       termRef.current = null
@@ -971,10 +1018,10 @@ export function useTerminalSession({
       selectionRef.current = ''
       selectionLabelRef.current = ''
     }
-    // `id` is stable for the instance's life (keyed by tab id), so listing it
-    // doesn't re-create the shell — it just satisfies the deps check for the
-    // closeTerminal(id) call in onExit.
-  }, [addSelectionToChat, cwd, id, latestFontFamilyRef, mountedRef])
+    // `id` is stable for the instance's life (keyed by tab id). `attempt` is the
+    // deliberate respawn latch (Restart). Remote→local fallback stays in-session
+    // via startSession(true) and must NOT remount this effect.
+  }, [addSelectionToChat, attempt, cwd, id, latestFontFamilyRef, mountedRef])
 
   useEffect(() => {
     const term = termRef.current
@@ -1057,14 +1104,12 @@ export function useTerminalSession({
     }
 
     return $terminalInjection.subscribe(command => {
-      const sessionId = sessionIdRef.current
-
-      if (!command || !sessionId) {
+      if (!command || !transportRef.current) {
         return
       }
 
       hasSessionActivityRef.current = true
-      void window.hermesDesktop?.terminal?.write(sessionId, `${command}\r`)
+      transportRef.current.write(`${command}\r`)
       $terminalInjection.set(null)
       termRef.current?.focus()
     })
@@ -1072,10 +1117,14 @@ export function useTerminalSession({
 
   return {
     addSelectionToChat,
+    end,
+    fellBack,
     hostRef,
+    restart,
     selection,
     selectionStyle,
     shellName,
-    status
+    status,
+    transportKind
   }
 }

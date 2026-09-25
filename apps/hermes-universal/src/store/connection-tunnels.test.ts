@@ -141,6 +141,16 @@ describe('acquireTunnel', () => {
     expect(httpRequest.mock.calls[0]?.[1]).toBe('http://127.0.0.1:42000/api/status')
   })
 
+  it('J2b: a live tunnel wins over an advertised row URL', async () => {
+    setConnectionBaseResolver(connectionId => connectionBase('http://192.168.1.9:9120', connectionId))
+    httpRequest.mockResolvedValue({ body: '{}', status: 200 })
+
+    await acquireTunnel('ssh1')
+    await api({ connectionId: 'ssh1', path: '/api/profiles/sessions' })
+
+    expect(httpRequest.mock.calls[0]?.[1]).toBe('http://127.0.0.1:41000/api/profiles/sessions')
+  })
+
   it('J5: only a terminal failure needs a person', () => {
     const status = (patch: Partial<TunnelStatus>): TunnelStatus => ({
       connectionId: 'ssh1',

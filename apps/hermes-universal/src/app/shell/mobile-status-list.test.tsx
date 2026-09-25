@@ -82,6 +82,14 @@ describe('MobileStatusList', () => {
     expect(screen.queryByText('1 · 1 failed')).not.toBeInTheDocument()
   })
 
+  it('keeps Settings, Profiles, and Agents off the status list (Workspace rail owns them)', () => {
+    renderList()
+
+    expect(screen.queryByText('Open settings')).not.toBeInTheDocument()
+    expect(screen.queryByText('Profiles')).not.toBeInTheDocument()
+    expect(screen.queryByText('Agents')).not.toBeInTheDocument()
+  })
+
   it('passes a render contribution through untouched — no row rewriting', () => {
     const dispose = registry.register({
       area: 'statusBar.right',

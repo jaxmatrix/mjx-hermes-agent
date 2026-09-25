@@ -1745,7 +1745,7 @@ export const en: Translations = {
       sshErrPlatform:
         'Unsupported remote platform. Hermes Desktop SSH mode supports Linux, macOS, and Windows remote hosts.',
       sshErrTimeout: 'SSH connection timed out. The host may be unreachable or asleep.',
-      sshErrUpdateRequired: 'Update Hermes on the remote host before connecting with Desktop SSH.',
+      sshErrUpdateRequired: 'Update Hermes on the remote host before connecting with SSH.',
       sshErrUnknown: 'SSH connection failed.',
       sshErrLocked: 'Unlock this device to finish connecting over SSH.',
       sshStepConnecting: 'Connecting over SSH…',
@@ -5384,7 +5384,12 @@ export const en: Translations = {
     files: 'Files',
     editor: 'Editor',
     terminal: 'Terminal',
-    status: 'Status'
+    status: 'Status',
+    control: 'Control',
+    workspace: 'Workspace',
+    settings: 'Settings',
+    profiles: 'Profiles',
+    agents: 'Agents'
   },
   connect: {
     back: 'Back',

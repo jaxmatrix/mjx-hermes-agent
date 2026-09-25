@@ -8,8 +8,9 @@
  *  - `palette` (the command menu): every primary destination, ordered ahead of
  *    plugin commands by a negative `order`. `action` carries the destination's
  *    keybind id so the row shows the live combo.
- *  - `sidebar.nav` (the rail): the four rows the rail has always shown. New
- *    session is an ACTION row (`run`), the rest navigate.
+ *  - `sidebar.nav` (the rail): New session (action) plus Capabilities,
+ *    Messaging, and Advanced-only Artifacts / Cron — same list ChatSidebar
+ *    uses. Phone bottom nav reads the same contributions.
  *
  * Labels stay `labelKey`s, not strings: a contribution registered at module load
  * would otherwise freeze the label at boot locale, and the language picker would
@@ -22,10 +23,11 @@
 import { PALETTE_AREA } from '@/app/command-palette/contrib'
 import {
   ARTIFACTS_ROUTE,
+  CAPABILITIES_ROUTE,
+  CRON_ROUTE,
   MESSAGING_ROUTE,
   SIDEBAR_NAV_AREA,
-  type SidebarNavContribution,
-  SKILLS_ROUTE
+  type SidebarNavContribution
 } from '@/app/routes'
 import { registry } from '@/contrib/registry'
 import { startNewSession } from '@/store/new-session'
@@ -53,13 +55,36 @@ registry.registerMany(
   }))
 )
 
+/** Same destinations as ChatSidebar `SIDEBAR_NAV` — phone bottom nav + desktop
+ *  rail contributions stay one list (Capabilities, not Skills). */
 const RAIL_ROWS: Array<SidebarNavContribution & { id: string }> = [
   // No `view`: New session is an action, not a destination — it never lights up
   // (a chat route belongs to the session, not to this row).
   { codicon: 'robot', id: 'new-session', labelKey: 'new-session', run: startNewSession },
-  { codicon: 'symbol-misc', id: 'skills', labelKey: 'skills', path: SKILLS_ROUTE, view: 'skills' },
+  {
+    codicon: 'symbol-misc',
+    id: 'capabilities',
+    labelKey: 'capabilities',
+    path: CAPABILITIES_ROUTE,
+    view: 'capabilities'
+  },
   { codicon: 'comment', id: 'messaging', labelKey: 'messaging', path: MESSAGING_ROUTE, view: 'messaging' },
-  { codicon: 'files', id: 'artifacts', labelKey: 'artifacts', path: ARTIFACTS_ROUTE, view: 'artifacts' }
+  {
+    codicon: 'files',
+    id: 'artifacts',
+    labelKey: 'artifacts',
+    path: ARTIFACTS_ROUTE,
+    tier: 'advanced',
+    view: 'artifacts'
+  },
+  {
+    codicon: 'watch',
+    id: 'cron',
+    labelKey: 'cron',
+    path: CRON_ROUTE,
+    tier: 'advanced',
+    view: 'cron'
+  }
 ]
 
 registry.registerMany(
