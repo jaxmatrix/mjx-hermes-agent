@@ -23,7 +23,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest_cookie_store::CookieStoreMutex;
@@ -908,10 +908,30 @@ async fn send_http(
     // header rather than the query, but a caller is free to pass either, so the
     // scrub is unconditional. `redact_error` also covers the header itself — this
     // error string is rendered on the connect screen.
+    //
+    // On Android these warn lines land in logcat under tag `hermes` (see
+    // `lib.rs`). Classifiers tell connect vs timeout vs other without putting
+    // credentials into the log.
+    let started = Instant::now();
     apply_gateway_bearer(builder, bearer)
         .send()
         .await
-        .map_err(|e| redact_error(e.to_string(), &req.url))
+        .map_err(|e| {
+            let redacted = redact_error(e.to_string(), &req.url);
+            log::warn!(
+                "[transport] http_send_failed method={} url={} elapsed_ms={} is_timeout={} is_connect={} is_request={} is_body={} is_decode={} err={}",
+                method,
+                redact_url(&req.url),
+                started.elapsed().as_millis(),
+                e.is_timeout(),
+                e.is_connect(),
+                e.is_request(),
+                e.is_body(),
+                e.is_decode(),
+                redacted
+            );
+            redacted
+        })
 }
 
 /// Generic REST proxy. Powers `/api/status` probing, session create/history,

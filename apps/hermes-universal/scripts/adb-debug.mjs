@@ -10,6 +10,9 @@
  *
  * Filters favour the Hermes Rust tag (`hermes`) plus common WebView / Chromium
  * noise so Vite HMR and JS console lines still show up.
+ *
+ * Sessions-route diagnosis: look for `[hermes-sessions]` (JS) and
+ * `[transport] http_send_failed` (Rust). Reproduce: open Sessions → tap a chat.
  */
 
 import { spawn, spawnSync } from 'node:child_process'

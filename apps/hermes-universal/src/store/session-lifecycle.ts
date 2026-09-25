@@ -34,6 +34,7 @@ import {
 import { translateNow } from '@/i18n'
 import { isNotFoundError } from '@/lib/api'
 import { backendScopeKey, backendScopePrefix, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
+import { logSessionsRoute } from '@/lib/sessions-route-log'
 import { sessionTitle } from '@/lib/chat-runtime'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
@@ -1090,6 +1091,11 @@ export async function refreshSessions(): Promise<void> {
   } catch (err) {
     // A list-fetch failure is not any one chat's status: surface it as a
     // notification instead of pinning it to whichever session is on screen.
+    logSessionsRoute('refreshSessions_failed', {
+      err: String(err),
+      limit,
+      scope
+    })
     notifyError(err, 'Failed to load sessions')
   } finally {
     $sessionsLoading.set(false)
@@ -1150,6 +1156,11 @@ export async function loadMoreSessions(): Promise<void> {
     $sessionsLimit.set(offset + recencyDepth(res.sessions, PAGE))
     $sessionsTotal.set(scope === ALL_PROFILES ? res.total : (res.profile_totals?.[scope] ?? res.total))
   } catch (err) {
+    logSessionsRoute('loadMoreSessions_failed', {
+      err: String(err),
+      offset,
+      scope
+    })
     notifyError(err, 'Failed to load sessions')
   } finally {
     $sessionsLoading.set(false)

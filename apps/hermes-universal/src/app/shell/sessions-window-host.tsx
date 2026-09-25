@@ -12,6 +12,7 @@ import { useMobileNavItems } from '@/app/shell/use-mobile-nav-items'
 import { useI18n } from '@/i18n'
 import { ESCAPE_PRIORITY, isTopEscapeLayer, pushEscapeLayer } from '@/lib/escape-layers'
 import { resolveProfileColor } from '@/lib/profile-color'
+import { logSessionsRoute } from '@/lib/sessions-route-log'
 import { $botsPaneVisible, $openBotChat } from '@/plugins/hermes-bots/bot-state'
 import { useStore } from '@/store/atom'
 import {
@@ -73,6 +74,7 @@ export function SessionsWindowHost({ onClose }: { onClose: () => void }) {
     }
 
     window.addEventListener('keydown', onKeyDown)
+    logSessionsRoute('sessionsWindow_open', { tab: 'sessions' })
 
     return () => {
       release()

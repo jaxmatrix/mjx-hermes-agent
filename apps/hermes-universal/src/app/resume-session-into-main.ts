@@ -5,6 +5,7 @@
  * navigate; `useRouteResume` is the single hydrator.
  */
 import { openSession, type OpenSessionNavigate } from '@/app/open-session'
+import { logSessionsRoute } from '@/lib/sessions-route-log'
 import {
   forgetSessionOwnerHintsForSession,
   requestSessionResume,
@@ -22,6 +23,11 @@ export function resumeSessionIntoMain(
   }
 
   const ownerRoute = session ? sessionOwnerRouteFromRow(session) : undefined
+
+  logSessionsRoute('resumeSessionIntoMain', {
+    hasOwnerRoute: Boolean(ownerRoute),
+    sessionId
+  })
 
   if (ownerRoute) {
     requestSessionResume(sessionId, ownerRoute)
