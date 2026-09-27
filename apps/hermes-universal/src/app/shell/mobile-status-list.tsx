@@ -11,6 +11,7 @@ import { SidebarPanelLabel } from '@/app/shell/sidebar-label'
 import { type StatusbarItem, StatusbarItemView } from '@/app/shell/statusbar-controls'
 import { cn } from '@/lib/utils'
 import { $activeConnectionId } from '@/store/active-connection'
+import { requestGateway } from '@/store/gateway-client'
 import { $activeGatewayProfile } from '@/store/profile'
 import { $freshDraftReady, $gatewayState } from '@/store/session'
 
@@ -55,6 +56,11 @@ const SECTIONS: { title: string; ids: readonly string[] }[] = [
 // SECTIONS, because anything a section does not claim falls through into the
 // trailing contributed bucket.
 const HIDDEN_IDS = new Set(['agents', 'terminal'])
+
+// This surface only displays the command-center / agents descriptors; their
+// real doors live on the Workspace rail. Keep the inert callbacks stable so an
+// ambient status update does not rebuild every descriptor in useStatusbarItems.
+const ignoreStatusAction = () => {}
 
 // Re-shape a bar descriptor for the nav-styled row list:
 //   • icon-only items (command-center) have no label + a square layout
@@ -131,7 +137,7 @@ export function MobileStatusList() {
   const activeConnectionId = useStore($activeConnectionId)
   const activeGatewayProfile = useStore($activeGatewayProfile)
   const gatewayScope = `${activeConnectionId ?? ''}\0${activeGatewayProfile}`
-  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, async () => undefined as never, gatewayScope)
+  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, requestGateway, gatewayScope)
 
   const { leftStatusbarItems, statusbarItems } = useStatusbarItems({
     agentsOpen: false,
@@ -142,11 +148,11 @@ export function MobileStatusList() {
     freshDraftReady,
     gatewayState,
     inferenceStatus,
-    openAgents: () => {},
-    openCommandCenterSection: () => {},
-    requestGateway: async () => undefined as never,
+    openAgents: ignoreStatusAction,
+    openCommandCenterSection: ignoreStatusAction,
+    requestGateway,
     statusSnapshot,
-    toggleCommandCenter: () => {}
+    toggleCommandCenter: ignoreStatusAction
   })
 
   // Section assembly, memoized on the two groups. It allocates a Map, a Set and

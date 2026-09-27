@@ -1,6 +1,17 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type * as GatewayClientModule from '@/store/gateway-client'
+
+const requestGateway = vi.hoisted(() =>
+  vi.fn(async (method: string) => (method === 'config.get' ? { value: 'smart' } : {}))
+)
+
+vi.mock('@/store/gateway-client', async importOriginal => ({
+  ...(await importOriginal<typeof GatewayClientModule>()),
+  requestGateway
+}))
 
 // Same shim as use-statusbar-items.test.tsx: keep the health poller / getStatus
 // off the network while the list renders.
@@ -28,6 +39,10 @@ const renderList = () =>
       <MobileStatusList />
     </MemoryRouter>
   )
+
+beforeEach(() => {
+  requestGateway.mockClear()
+})
 
 afterEach(() => {
   resetChat()
@@ -101,6 +116,31 @@ describe('MobileStatusList', () => {
     renderList()
 
     expect(screen.getByTestId('chip').textContent).toBe('live')
+
+    dispose()
+  })
+
+  it('does not restart gateway synchronization after an unrelated contribution update', async () => {
+    renderList()
+
+    await waitFor(() => {
+      expect(requestGateway.mock.calls.filter(([method]) => method === 'config.get')).toHaveLength(1)
+    })
+
+    const dispose = registry.register({
+      area: 'statusBar.left',
+      data: { id: 'demo:rerender', label: 'Rerender', variant: 'text' },
+      id: 'demo:rerender',
+      source: 'plugin:demo'
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Rerender')).toBeInTheDocument()
+    expect(requestGateway.mock.calls.filter(([method]) => method === 'config.get')).toHaveLength(1)
 
     dispose()
   })
