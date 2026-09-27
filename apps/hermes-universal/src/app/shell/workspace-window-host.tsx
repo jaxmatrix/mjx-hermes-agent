@@ -1,14 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
-import { ProfilesView } from '@/app/profiles'
-import { RightSidebarPane } from '@/app/right-pane'
-import { PreviewRail } from '@/app/right-pane/preview/preview-rail'
-import { ReviewPane } from '@/app/right-pane/review'
-import { TerminalPaneChrome } from '@/app/right-pane/terminal/chrome'
 import { SECTIONS } from '@/app/settings/constants'
 import { defaultSectionForNavGroup, navGroupToSettingsView } from '@/app/settings/nav-group-section'
 import { useSettingsNavGroups } from '@/app/settings/settings-nav'
-import { SectionBody } from '@/app/settings/settings-section'
 import { settingsSubpages } from '@/app/settings/subpages'
 import { SettingsFooter } from '@/app/settings/settings-view'
 import { MobileStatusList } from '@/app/shell/mobile-status-list'
@@ -26,6 +20,42 @@ import { useStore } from '@/store/atom'
 import { previewFile } from '@/store/preview-open'
 import { openReview } from '@/store/review'
 import { openAgentsScreen } from '@/store/windows'
+
+const ProfilesView = lazy(async () => {
+  const mod = await import('@/app/profiles')
+
+  return { default: mod.ProfilesView }
+})
+
+const RightSidebarPane = lazy(async () => {
+  const mod = await import('@/app/right-pane')
+
+  return { default: mod.RightSidebarPane }
+})
+
+const PreviewRail = lazy(async () => {
+  const mod = await import('@/app/right-pane/preview/preview-rail')
+
+  return { default: mod.PreviewRail }
+})
+
+const ReviewPane = lazy(async () => {
+  const mod = await import('@/app/right-pane/review')
+
+  return { default: mod.ReviewPane }
+})
+
+const TerminalPaneChrome = lazy(async () => {
+  const mod = await import('@/app/right-pane/terminal/chrome')
+
+  return { default: mod.TerminalPaneChrome }
+})
+
+const SectionBody = lazy(async () => {
+  const mod = await import('@/app/settings/settings-section')
+
+  return { default: mod.SectionBody }
+})
 
 const DEFAULT_SETTINGS_SECTION = SECTIONS[0]?.id ?? 'model'
 
@@ -60,6 +90,19 @@ const $workspaceSettingsSection = persistentAtom<string>(
     encode: value => value
   }
 )
+
+/** Reset persisted workspace tabs between vitest cases. */
+export function resetWorkspaceWindowHostPrefsForTests(): void {
+  $workspacePrimary.set('control')
+  $workspaceTool.set('files')
+  $workspaceSettingsSection.set(DEFAULT_SETTINGS_SECTION)
+}
+
+function PaneFallback({ label }: { label: string }): ReactNode {
+  return (
+    <div className="grid min-h-0 flex-1 place-items-center text-sm text-muted-foreground">{label}</div>
+  )
+}
 
 /** Live host for the phone Workspace window (Control | tools | Settings | Profiles). */
 export function WorkspaceWindowHost({ onClose }: { onClose: () => void }) {
@@ -162,7 +205,20 @@ export function WorkspaceWindowHost({ onClose }: { onClose: () => void }) {
     $workspaceSettingsSection.set(id)
   }
 
-  const [visitedTools, setVisitedTools] = useState<Set<WorkspaceToolTab>>(() => new Set([tool]))
+  // Heavy panes (Settings / Profiles / Files / …) stay unmounted until first
+  // visit — opening Workspace on Control alone must not pay CodeMirror, model
+  // settings, or the project tree (mobile WebView OOM / freeze).
+  const [visitedPrimary, setVisitedPrimary] = useState<Set<WorkspacePrimaryTab>>(
+    () => new Set([primary])
+  )
+  const visitedPrimaryRef = useRef(visitedPrimary)
+  visitedPrimaryRef.current = visitedPrimary
+
+  const [visitedTools, setVisitedTools] = useState<Set<WorkspaceToolTab>>(() =>
+    // Remount already on Workspace → seed the persisted tool; Control-first
+    // opens with an empty set so Files stays cold.
+    primary === 'workspace' ? new Set([tool]) : new Set()
+  )
   const visitedRef = useRef(visitedTools)
   visitedRef.current = visitedTools
 
@@ -171,12 +227,39 @@ export function WorkspaceWindowHost({ onClose }: { onClose: () => void }) {
 
     if (!visitedRef.current.has(next)) {
       setVisitedTools(prev => new Set(prev).add(next))
+
+      if (next === 'review') {
+        openReview()
+      }
     }
   }
 
+  const selectPrimary = (next: WorkspacePrimaryTab) => {
+    if (!visitedPrimaryRef.current.has(next)) {
+      setVisitedPrimary(prev => new Set(prev).add(next))
+    }
+
+    $workspacePrimary.set(next)
+
+    if (next === 'workspace') {
+      showTool(tool)
+    }
+  }
+
+  // Restore onto Review: showTool did not run (tool already seeded).
+  const didRestoreReview = useRef(false)
+
   useEffect(() => {
-    openReview()
-  }, [])
+    if (didRestoreReview.current) {
+      return
+    }
+
+    didRestoreReview.current = true
+
+    if (primary === 'workspace' && tool === 'review') {
+      openReview()
+    }
+  }, [primary, tool])
 
   useEffect(() => {
     const release = pushEscapeLayer(ESCAPE_PRIORITY.overlay)
@@ -202,44 +285,50 @@ export function WorkspaceWindowHost({ onClose }: { onClose: () => void }) {
   // MobileWindowChrome the real top bar already cleared that band — zero it
   // the same way contrib `ZONE_CONTENT` does for docked tree zones.
   const zoneAside = 'h-full [&>aside]:h-full [&>aside]:w-full [&>aside]:pt-0'
+  const loading = t.common.loading
 
   const toolBodies = {
     editor: visitedTools.has('editor') ? (
-      <div className="flex h-full min-h-0 flex-col">
-        <PreviewRail />
-      </div>
+      <Suspense fallback={<PaneFallback label={loading} />}>
+        <div className="flex h-full min-h-0 flex-col">
+          <PreviewRail />
+        </div>
+      </Suspense>
     ) : null,
     files: visitedTools.has('files') ? (
-      <div className={cn('overflow-hidden', zoneAside)}>
-        <RightSidebarPane
-          onActivateFile={path => {
-            previewFile(path)
-            showTool('editor')
-          }}
-          onActivateFolder={previewFile}
-        />
-      </div>
+      <Suspense fallback={<PaneFallback label={loading} />}>
+        <div className={cn('overflow-hidden', zoneAside)}>
+          <RightSidebarPane
+            onActivateFile={path => {
+              previewFile(path)
+              showTool('editor')
+            }}
+            onActivateFolder={previewFile}
+          />
+        </div>
+      </Suspense>
     ) : null,
     review: visitedTools.has('review') ? (
-      <div className={cn('flex min-h-0 flex-col [&>aside]:min-h-0 [&>aside]:flex-1', zoneAside)}>
-        <ReviewPane />
-      </div>
+      <Suspense fallback={<PaneFallback label={loading} />}>
+        <div className={cn('flex min-h-0 flex-col [&>aside]:min-h-0 [&>aside]:flex-1', zoneAside)}>
+          <ReviewPane />
+        </div>
+      </Suspense>
     ) : null,
     terminal: visitedTools.has('terminal') ? (
-      <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-(--ui-terminal-surface-background)">
-        <TerminalPaneChrome />
-      </div>
+      <Suspense fallback={<PaneFallback label={loading} />}>
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-(--ui-terminal-surface-background)">
+          <TerminalPaneChrome />
+        </div>
+      </Suspense>
     ) : null
   }
 
+  // `absolute inset-0` inside the relative MobileShell — not `fixed` + vv vars
+  // + slide translate (that starts at translateX(100%) and OOMs/crashes the
+  // phone WebView before the panel can settle on screen).
   return (
-    <div
-      className="animate-in slide-in-from-end fixed inset-x-0 z-50 overflow-hidden bg-(--ui-bg-sidebar) duration-150"
-      style={{
-        height: 'var(--visual-viewport-height, 100%)',
-        top: 'var(--visual-viewport-top, 0px)'
-      }}
-    >
+    <div className="animate-in fade-in-0 absolute inset-0 z-50 overflow-hidden bg-(--ui-bg-sidebar) duration-150">
       <div className="h-full min-h-0">
         <WorkspaceWindow
           controlBody={<MobileStatusList />}
@@ -248,28 +337,38 @@ export function WorkspaceWindowHost({ onClose }: { onClose: () => void }) {
             void openAgentsScreen()
             onClose()
           }}
-          onSelectPrimary={next => $workspacePrimary.set(next)}
+          onSelectPrimary={selectPrimary}
           onSelectSettingsSection={selectSettingsGroup}
           onSelectTool={showTool}
           primaryTab={primary}
-          profilesBody={<ProfilesView embedded onClose={onClose} />}
+          profilesBody={
+            visitedPrimary.has('profiles') ? (
+              <Suspense fallback={<PaneFallback label={loading} />}>
+                <ProfilesView embedded onClose={onClose} />
+              </Suspense>
+            ) : null
+          }
           settingsBody={
-            <div className="flex h-full min-h-0 flex-col">
-              {submenuOptions.length > 0 && activeGroup ? (
-                <SettingsSubmenuButton
-                  onSelect={selectSettingsSection}
-                  options={submenuOptions}
-                  selectedId={resolvedSettingsSection}
-                  title={activeGroup.label}
-                />
-              ) : null}
-              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-                <SectionBody onSectionChange={selectSettingsSection} section={resolvedSettingsSection} />
+            visitedPrimary.has('settings') ? (
+              <div className="flex h-full min-h-0 flex-col">
+                {submenuOptions.length > 0 && activeGroup ? (
+                  <SettingsSubmenuButton
+                    onSelect={selectSettingsSection}
+                    options={submenuOptions}
+                    selectedId={resolvedSettingsSection}
+                    title={activeGroup.label}
+                  />
+                ) : null}
+                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+                  <Suspense fallback={<PaneFallback label={loading} />}>
+                    <SectionBody onSectionChange={selectSettingsSection} section={resolvedSettingsSection} />
+                  </Suspense>
+                </div>
+                <div className="flex shrink-0 items-center justify-end gap-1 border-t border-border/40 px-2 py-1.5">
+                  <SettingsFooter />
+                </div>
               </div>
-              <div className="flex shrink-0 items-center justify-end gap-1 border-t border-border/40 px-2 py-1.5">
-                <SettingsFooter />
-              </div>
-            </div>
+            ) : null
           }
           settingsSection={settingsGroupId(resolvedSettingsSection)}
           settingsSections={settingsSections}

@@ -119,13 +119,7 @@ export function SessionsWindowHost({ onClose }: { onClose: () => void }) {
   }, [onClose, tab])
 
   return (
-    <div
-      className="animate-in slide-in-from-start fixed inset-x-0 z-50 overflow-hidden bg-(--ui-bg-sidebar) duration-150"
-      style={{
-        height: 'var(--visual-viewport-height, 100%)',
-        top: 'var(--visual-viewport-top, 0px)'
-      }}
-    >
+    <div className="animate-in fade-in-0 absolute inset-0 z-50 overflow-hidden bg-(--ui-bg-sidebar) duration-150">
       <div className="h-full min-h-0">
         <SessionsWindow
           activeTab={tab}

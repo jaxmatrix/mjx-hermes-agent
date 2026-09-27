@@ -47,6 +47,7 @@ describe('MobileShell', () => {
     expect(screen.getByTestId('mobile-top-bar')).toBeTruthy()
 
     const shell = container.querySelector('[data-slot="mobile-shell"]') as HTMLElement
+    expect(shell.className).toMatch(/\brelative\b/)
     expect(shell.style.paddingLeft).toBe('var(--safe-area-inset-left, 0px)')
     expect(shell.style.paddingRight).toBe('var(--safe-area-inset-right, 0px)')
   })

@@ -16,6 +16,10 @@ import { WorkspaceWindowHost } from './workspace-window-host'
 //
 // SIDEBAR_NAV (New / Caps / Messaging / …) lives as a horizontal rail on the
 // left Sessions window only — not on this chat surface.
+//
+// WorkspaceWindowHost is a static import on purpose: `lazy(() => import(...))`
+// Suspense-gated the whole overlay behind a Vite chunk that 404s on Android
+// `tauri android dev` (stuck full-screen Loading, no host mount).
 
 export function MobileShell() {
   useKeyboardInset()
@@ -24,7 +28,7 @@ export function MobileShell() {
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-background"
+      className="relative flex h-full min-h-0 flex-col bg-background"
       data-slot="mobile-shell"
       // Horizontal insets only — MobileTopBar owns top, composer owns bottom.
       // Matches MobileWindowChrome so chat/thread stay inside the safe rectangle.
