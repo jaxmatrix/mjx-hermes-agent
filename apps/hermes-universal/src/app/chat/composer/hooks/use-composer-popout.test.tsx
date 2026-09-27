@@ -6,6 +6,15 @@ import { $composerPopout, $composerPopoutGesturesEnabled } from '@/store/compose
 
 import { useComposerPopout } from './use-composer-popout'
 
+const platform = vi.hoisted(() => ({ IS_MOBILE: false }))
+
+vi.mock('@/lib/platform', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  get IS_MOBILE() {
+    return platform.IS_MOBILE
+  }
+}))
+
 vi.mock('@/components/pane-shell/pane-visibility', () => ({
   usePaneGroup: () => 'test-zone',
   usePaneVisible: () => true
@@ -28,12 +37,14 @@ function PopoutAffordanceHarness() {
 
 describe('useComposerPopout', () => {
   beforeEach(() => {
+    platform.IS_MOBILE = false
     $composerPopout.set({ poppedOut: false, position: { bottom: 24, right: 24 } })
     $composerPopoutGesturesEnabled.set(true)
   })
 
   afterEach(() => {
     cleanup()
+    platform.IS_MOBILE = false
     $composerPopout.set({ poppedOut: false, position: { bottom: 24, right: 24 } })
     $composerPopoutGesturesEnabled.set(true)
   })
@@ -44,5 +55,19 @@ describe('useComposerPopout', () => {
     render(<PopoutAffordanceHarness />)
 
     expect(screen.queryByTestId('drag-region')).toBeNull()
+  })
+
+  it('removes the pop-out affordance on mobile', () => {
+    platform.IS_MOBILE = true
+
+    render(<PopoutAffordanceHarness />)
+
+    expect(screen.queryByTestId('drag-region')).toBeNull()
+  })
+
+  it('keeps the pop-out affordance on desktop when gestures are enabled', () => {
+    render(<PopoutAffordanceHarness />)
+
+    expect(screen.getByTestId('drag-region')).toBeTruthy()
   })
 })
