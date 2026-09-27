@@ -23,10 +23,7 @@ import type { CronJob } from '@/types/hermes'
 import { jobState, jobTitle, nextRunOverdueMs, STATE_DOT } from '../../cron/job-state'
 import { SidebarPanelLabel } from '../../shell/sidebar-label'
 
-import { SidebarRowBody, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
-import { SidebarLoadMoreRow } from './load-more-row'
-
-const INACTIVE_STATES = new Set(['completed', 'disabled', 'error', 'paused'])
+import { SIDEBAR_ROW_META, SidebarRowBody, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
 
 // Recent runs shown in the inline quick-peek — enough to glance at history
 // without turning the sidebar into the full Cron page.
@@ -38,10 +35,7 @@ const PEEK_RUN_LIMIT = 5
 const PEEK_POLL_INTERVAL_MS = 8000
 const PEEK_BACKSTOP_INTERVAL_MS = 60_000
 
-// Keep the section compact: show a few jobs up front, reveal more in larger
-// steps on demand (mirrors the messaging sections in the sidebar).
-const INITIAL_VISIBLE_JOBS = 3
-const LOAD_MORE_STEP = 10
+const INACTIVE_STATES = new Set(['completed', 'disabled', 'error', 'paused'])
 
 function nextRunMs(job: CronJob): null | number {
   if (!job.next_run_at) {
@@ -93,8 +87,6 @@ export function SidebarCronJobsSection({
   const [nowMs, setNowMs] = useState(() => Date.now())
   // Single-open inline peek so the section stays scannable.
   const [peekJobId, setPeekJobId] = useState<null | string>(null)
-  // Rows revealed so far; starts compact, grows in steps via "load more".
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_JOBS)
   const [triggeringJobIds, setTriggeringJobIds] = useState<ReadonlySet<string>>(() => new Set())
   const triggerControllerRef = useRef<CronTriggerController | null>(null)
 
@@ -172,9 +164,7 @@ export function SidebarCronJobsSection({
     })
   }, [jobs])
 
-  const cap = Math.min(visibleCount, max)
-  const shown = sorted.slice(0, cap)
-  const hiddenCount = Math.min(sorted.length, max) - shown.length
+  const shown = sorted.slice(0, max)
 
   return (
     <SidebarGroup className="shrink-0 p-0 pb-1">
@@ -192,7 +182,7 @@ export function SidebarCronJobsSection({
         </button>
       </div>
       {open && (
-        <SidebarGroupContent className="scrollbar-fade flex max-h-72 flex-col gap-px overflow-x-hidden overflow-y-auto overscroll-contain pb-1.75 compact:max-h-none compact:overflow-visible">
+        <SidebarGroupContent className="scrollbar-fade flex max-h-none flex-col gap-px overflow-visible overscroll-contain pb-1.75">
           {shown.map(job => (
             <CronJobSidebarRow
               busy={triggeringJobIds.has(job.id)}
@@ -206,12 +196,6 @@ export function SidebarCronJobsSection({
               onTrigger={() => triggerJob(job.id)}
             />
           ))}
-          {hiddenCount > 0 && (
-            <SidebarLoadMoreRow
-              onClick={() => setVisibleCount(count => count + LOAD_MORE_STEP)}
-              step={Math.min(LOAD_MORE_STEP, hiddenCount)}
-            />
-          )}
         </SidebarGroupContent>
       )}
     </SidebarGroup>
@@ -320,7 +304,7 @@ function CronJobSidebarRow({
                only pause/delete door without a right-click); fine pointers get
                hover quick-actions instead. */
             <div className="flex items-center gap-0.5">
-              <span className="text-[0.6875rem] text-(--ui-text-tertiary) tabular-nums group-hover/cron:hidden">
+              <span className={cn('tabular-nums text-(--ui-text-tertiary) group-hover/cron:hidden', SIDEBAR_ROW_META)}>
                 {meta}
               </span>
               <div className="flex items-center gap-0.5 fine:hidden">
@@ -457,17 +441,18 @@ function CronJobSidebarRuns({ jobId, onOpenRun }: { jobId: string; onOpenRun: (s
   return (
     <div className="mb-1 ms-[1.375rem] flex flex-col gap-px">
       {runs === null ? (
-        <div className="flex items-center gap-1.5 py-1 ps-1 text-[0.6875rem] text-(--ui-text-tertiary)">
+        <div className={cn('flex items-center gap-1.5 py-1 ps-1 text-(--ui-text-tertiary)', SIDEBAR_ROW_META)}>
           <GlyphSpinner ariaLabel={c.loading} className="text-[0.75rem]" />
         </div>
       ) : runs.length === 0 ? (
-        <div className="py-1 ps-1 text-[0.6875rem] text-(--ui-text-tertiary)">{c.noRuns}</div>
+        <div className={cn('py-1 ps-1 text-(--ui-text-tertiary)', SIDEBAR_ROW_META)}>{c.noRuns}</div>
       ) : (
         <>
           {runs.map(run => (
             <button
               className={cn(
-                'truncate rounded-md px-1.5 py-0.5 text-start text-[0.6875rem] tabular-nums focus-visible:bg-(--chrome-action-hover) focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                'truncate rounded-md px-1.5 py-0.5 text-start tabular-nums focus-visible:bg-(--chrome-action-hover) focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                SIDEBAR_ROW_META,
                 run.id === selectedSessionId
                   ? 'bg-(--ui-row-active-background) text-foreground'
                   : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'

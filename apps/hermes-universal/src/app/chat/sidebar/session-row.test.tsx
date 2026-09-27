@@ -54,7 +54,21 @@ vi.mock('@/i18n', () => ({
 }))
 
 vi.mock('@/app/chat/profile-tag', () => ({ ProfileTag: () => null }))
-vi.mock('@/app/chat/session-drag', () => ({ startSessionDrag: vi.fn() }))
+
+const startSessionDrag = vi.hoisted(() => vi.fn())
+const platform = vi.hoisted(() => ({ isMobile: false }))
+
+vi.mock('@/app/chat/session-drag', () => ({ startSessionDrag }))
+vi.mock('@/lib/platform', async importOriginal => {
+  const actual = await importOriginal<object>()
+
+  return {
+    ...actual,
+    get IS_MOBILE() {
+      return platform.isMobile
+    }
+  }
+})
 // PlatformAvatar is intentionally NOT mocked (do not reintroduce this — see
 // #67500, Gille's third pass): it's a forwardRef component that spreads its
 // props onto the rendered span, and mocking it with a stand-in that spreads
@@ -192,6 +206,76 @@ describe('SidebarSessionRow running arc', () => {
 describe('SidebarSessionRow', () => {
   afterEach(() => {
     vi.useRealTimers()
+    platform.isMobile = false
+    startSessionDrag.mockClear()
+  })
+
+  it('scopes the kebab overlay to fine pointers when trailing meta is present', () => {
+    // Default Show meta includes `updated`, so age fills the trailing slot.
+    // Coarse must keep the ⋯ in flow (not absolute over "15min"); fine keeps
+    // the reserved-width hover overlay via fine:absolute.
+    renderRow(makeSession({ last_active: Math.floor(Date.now() / 1000) - 900, title: 'Aged' }))
+
+    const kebab = screen.getByRole('button', { name: 'Session actions' })
+    const classes = kebab.className.split(/\s+/)
+
+    expect(classes).toContain('fine:absolute')
+    expect(classes).toContain('fine:end-0')
+    expect(classes).not.toContain('absolute')
+    expect(classes).not.toContain('end-0')
+  })
+
+  describe('tile drag vs resume tap', () => {
+    it('starts a tile drag with onTap resume on desktop', () => {
+      const onResume = vi.fn()
+      const { container } = render(
+        <SidebarSessionRow
+          isPinned={false}
+          isSelected={false}
+          onArchive={noop}
+          onDelete={noop}
+          onPin={noop}
+          onResume={onResume}
+          onToggleUnread={noop}
+          session={makeSession({ id: 'desk-1', title: 'Desktop' })}
+          unread={false}
+        />
+      )
+
+      const shell = container.querySelector('[data-slot="sidebar-row-shell"]') ?? container.firstElementChild!
+
+      fireEvent.pointerDown(shell, { button: 0, clientX: 10, clientY: 10 })
+
+      expect(startSessionDrag).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'desk-1' }),
+        expect.anything(),
+        { onTap: onResume }
+      )
+    })
+
+    it('does not start a tile drag on phone so the resume tap can fire', () => {
+      platform.isMobile = true
+      const onResume = vi.fn()
+      const { container } = render(
+        <SidebarSessionRow
+          isPinned={false}
+          isSelected={false}
+          onArchive={noop}
+          onDelete={noop}
+          onPin={noop}
+          onResume={onResume}
+          onToggleUnread={noop}
+          session={makeSession({ id: 'phone-1', title: 'Phone' })}
+          unread={false}
+        />
+      )
+
+      const shell = container.querySelector('[data-slot="sidebar-row-shell"]') ?? container.firstElementChild!
+
+      fireEvent.pointerDown(shell, { button: 0, clientX: 10, clientY: 10 })
+
+      expect(startSessionDrag).not.toHaveBeenCalled()
+    })
   })
 
   // Full-title tooltip on hover (#83000-class ask): the label is a tooltip

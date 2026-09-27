@@ -53,7 +53,7 @@ export function SidebarProfileGroup({ group, onNewSession, renderRows }: Sidebar
   const nextCount = Math.min(SIDEBAR_GROUP_PAGE, hiddenCount)
 
   return (
-    <SidebarRowStack>
+    <SidebarRowStack className="gap-0.5">
       <SidebarRowShell
         actions={
           onNewSession && (

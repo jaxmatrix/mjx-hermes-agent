@@ -167,7 +167,7 @@ export function SidebarWorkspaceGroup({
   )
 
   return (
-    <SidebarRowStack>
+    <SidebarRowStack className="gap-0.5">
       {isProfileGroup ? (
         // A profile heads its sessions the way a project does, so it takes the
         // project row's shape rather than the tree caption the lanes below use.

@@ -19,6 +19,7 @@ import { pathLeaf } from '@/lib/display-path'
 import { triggerHaptic } from '@/lib/haptics'
 import { middleClickHandlers } from '@/lib/middle-click'
 import { displayModelName } from '@/lib/model-status-label'
+import { IS_MOBILE } from '@/lib/platform'
 import { sessionProjectLabel } from '@/lib/session-project-label'
 import { handoffOriginSource, sessionSourceLabel } from '@/lib/session-source'
 import { coarseElapsed } from '@/lib/time'
@@ -38,6 +39,7 @@ import { SessionStatusDot } from '../session-status-dot'
 
 import {
   SIDEBAR_ROW_CARD_MIN_H,
+  SIDEBAR_ROW_META,
   SIDEBAR_TRUNCATED_LEADING,
   SidebarRowBody,
   SidebarRowGrab,
@@ -107,11 +109,12 @@ function disarmMarquee(event: React.PointerEvent<HTMLElement>) {
   delete event.currentTarget.dataset.marquee
 }
 
-// The last thing in the trailing slot hands its place to the ⋯ button on hover,
-// and is never narrower than the button that has to cover it. A PR chip is the
-// exception while the pointer is on it: it's a link, and the kebab sits
-// absolute over this space, so it has to stop taking clicks too, not just fade.
-const TAIL_HIDES = 'session-row-tail min-w-5 transition-opacity group-hover:opacity-0'
+// Fine pointers: the last trailing bit hands its place to the ⋯ on hover
+// (absolute overlay, reserved width — no title reflow). Coarse: both stay in
+// flow side by side (cron row pattern; styles.css fine:/coarse: house rule).
+// A PR chip is the exception while the pointer is on it: it's a link, and the
+// fine overlay sits over this space, so it has to stop taking clicks too.
+const TAIL_HIDES = 'session-row-tail min-w-5 transition-opacity fine:group-hover:opacity-0'
 const KEBAB_YIELDS = 'session-row-kebab'
 
 function formatAge(seconds: number, r: Translations['sidebar']['row']): string {
@@ -164,8 +167,8 @@ function SidebarSessionRowImpl({
   // rather than threaded as props: the subscription re-renders past the memo
   // below, and a toggle should repaint every row at once anyway.
   const rowMeta = useStore($sidebarRowMeta)
-  // Pinned metadata occupies the actions slot and swaps out for the kebab on
-  // hover, so the row reserves the same width either way and never reflows.
+  // Pinned metadata occupies the actions slot; on fine pointers it swaps for
+  // the kebab on hover so the row keeps width. Coarse keeps both in flow.
   const pinnedAge = rowMeta.includes('updated')
   // The default profile has no mark worth spending a row slot on — a chip on
   // every row that says "the normal one" is noise. Named profiles only.
@@ -221,7 +224,7 @@ function SidebarSessionRowImpl({
     trailing.push({
       key: 'figures',
       node: (
-        <span className="pointer-events-none whitespace-nowrap text-[0.625rem] leading-none text-(--ui-text-tertiary)">
+        <span className={cn('pointer-events-none whitespace-nowrap leading-none text-(--ui-text-tertiary)', SIDEBAR_ROW_META)}>
           {head}
           {/* The figures own their tail: the separator goes with it. */}
           <span className={cn('inline-block text-end', TAIL_HIDES)}>
@@ -290,12 +293,11 @@ function SidebarSessionRowImpl({
     </SidebarRowLeadGlyph>
   ) : null
 
-  // The trailing metadata sits in normal flow and the kebab lifts out of it,
-  // so this cluster's intrinsic width IS the metadata's. In the one-line row
-  // it rides the shell's `auto` actions column and the title truncates
-  // against it. In the card it renders INSIDE the header row instead — the
-  // shell column would span the card's full height and shave every line,
-  // when only the header shares its line with the age and kebab.
+  // Trailing meta sits in flow. Fine: kebab overlays the end on hover so the
+  // cluster width stays the meta's (title doesn't reflow). Coarse: kebab stays
+  // in flow beside meta — absolute overlay would paint on top of "15min".
+  // One-line row: shell `auto` actions column. Card: INSIDE the header row —
+  // a shell column would span the card height and shave every line.
   const actionsNode = (
     <div className="relative z-2 flex shrink-0 items-center justify-end gap-1" data-row-actions>
       {trailing.map(({ key, node }, index) => (
@@ -323,10 +325,10 @@ function SidebarSessionRowImpl({
         <Button
           aria-label={r.sessionActions}
           className={cn(
-            // Transparent until hover on fine pointers; always tinted on coarse
-            // so the ⋯ is findable without a cursor (phone left surface).
+            // Transparent until hover on fine; always tinted on coarse so the
+            // ⋯ is findable without a cursor (phone left surface).
             'size-5 rounded-[4px] bg-transparent text-transparent transition-colors duration-100 hover:bg-(--ui-control-active-background) hover:text-foreground focus-visible:bg-(--ui-control-active-background) focus-visible:text-foreground focus-visible:ring-0 data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground group-hover:text-(--ui-text-tertiary) coarse:text-(--ui-text-tertiary) [&_svg]:size-3.5!',
-            trailing.length > 0 && 'absolute end-0',
+            trailing.length > 0 && 'fine:absolute fine:end-0',
             pr && KEBAB_YIELDS
           )}
           size="icon"
@@ -396,11 +398,18 @@ function SidebarSessionRowImpl({
             return
           }
 
-          // A POINTER drag on the shared drag session (never native HTML5 DnD:
-          // no macOS snap-back, Esc aborts instantly). Sub-threshold releases
-          // stay ordinary clicks, so resume / pin / open-in-window are
-          // untouched.
-          startSessionDrag({ id: session.id, profile: session.profile || 'default', title }, event)
+          // Phone has no tile drop zones under Sessions — starting a tile drag
+          // there eats the tap (wobble ≥ threshold → suppressDragClick) so
+          // resume never runs. Desktop keeps the drag; onTap covers sub-threshold
+          // releases that skip the body's onClick.
+          if (!IS_MOBILE) {
+            startSessionDrag(
+              { id: session.id, profile: session.profile || 'default', title },
+              event,
+              { onTap: onResume }
+            )
+          }
+
           dragHandleProps?.onPointerDown?.(event)
         }}
         // Cross-profile hover pre-warms that backend; the dwell starts on a real
@@ -518,8 +527,8 @@ function SidebarSessionRowImpl({
                     {density !== 'compact' && details.metadata && (
                       <span
                         className={cn(
-                          'mt-0.5 block truncate text-[0.625rem] text-(--ui-text-tertiary)',
-                          SIDEBAR_TRUNCATED_LEADING
+                          'mt-0.5 block truncate text-(--ui-text-tertiary)',
+                          SIDEBAR_ROW_META
                         )}
                       >
                         {details.metadata}
@@ -528,8 +537,8 @@ function SidebarSessionRowImpl({
                     {density === 'detailed' && details.preview && (
                       <span
                         className={cn(
-                          'mt-1 block truncate text-[0.625rem] text-(--ui-text-quaternary)',
-                          SIDEBAR_TRUNCATED_LEADING
+                          'mt-1 block truncate text-(--ui-text-quaternary)',
+                          SIDEBAR_ROW_META
                         )}
                       >
                         {details.preview}
@@ -551,8 +560,8 @@ function SidebarSessionRowImpl({
                   {leadNode}
                   <span
                     className={cn(
-                      'min-w-0 flex-1 truncate text-[0.6875rem] text-(--ui-text-tertiary)',
-                      SIDEBAR_TRUNCATED_LEADING
+                      'min-w-0 flex-1 truncate text-(--ui-text-tertiary)',
+                      SIDEBAR_ROW_META
                     )}
                   >
                     {context}
@@ -566,7 +575,7 @@ function SidebarSessionRowImpl({
                   <OverflowTip label={title} placement="row">
                     <SidebarRowLabel
                       className={cn(
-                        'hover-marquee text-[0.8125rem] font-medium text-(--ui-text-primary) group-data-[working=true]:text-foreground',
+                        'hover-marquee font-medium text-(--ui-text-primary) group-data-[working=true]:text-foreground',
                         SIDEBAR_TRUNCATED_LEADING
                       )}
                       onPointerEnter={armMarquee}
@@ -578,8 +587,8 @@ function SidebarSessionRowImpl({
                   {session.preview && rowMeta.includes('preview') ? (
                     <span
                       className={cn(
-                        'min-w-0 truncate text-[0.625rem] text-(--ui-text-quaternary)',
-                        SIDEBAR_TRUNCATED_LEADING
+                        'min-w-0 truncate text-(--ui-text-quaternary)',
+                        SIDEBAR_ROW_META
                       )}
                     >
                       {session.preview}
@@ -589,8 +598,8 @@ function SidebarSessionRowImpl({
                 {model || size || todoProgress ? (
                   <span
                     className={cn(
-                      'flex min-w-0 items-baseline gap-2 text-[0.625rem] text-(--ui-text-tertiary)',
-                      SIDEBAR_TRUNCATED_LEADING
+                      'flex min-w-0 items-baseline gap-2 text-(--ui-text-tertiary)',
+                      SIDEBAR_ROW_META
                     )}
                   >
                     {model ? <span className="min-w-0 truncate">{model}</span> : null}
