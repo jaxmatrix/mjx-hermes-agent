@@ -1381,6 +1381,8 @@ describe('loadMoreSessions', () => {
     $sessions.set([row('a', 'A'), row('b', 'B')])
     $sessionsLimit.set(SIDEBAR_SESSIONS_PAGE_SIZE)
     vi.mocked(listProfileSessionsPage).mockResolvedValue({
+      limit: SIDEBAR_SESSIONS_PAGE_SIZE,
+      offset: SIDEBAR_SESSIONS_PAGE_SIZE,
       sessions: [row('c', 'C'), row('d', 'D')],
       total: SIDEBAR_SESSIONS_PAGE_SIZE + 2,
       errors: []
