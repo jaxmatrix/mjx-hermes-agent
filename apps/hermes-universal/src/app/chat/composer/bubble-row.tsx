@@ -13,6 +13,9 @@ import { triggerHaptic } from '@/lib/haptics'
 import { MessageCircle, Plus } from '@/lib/icons'
 import { rafCoalesce } from '@/lib/raf-coalesce'
 import { cn } from '@/lib/utils'
+import { BotFace } from '@/plugins/hermes-bots/avatar'
+import { appearanceForBotChat } from '@/plugins/hermes-bots/bubble-avatar'
+import { $botMeta } from '@/plugins/hermes-bots/data'
 import { useStore } from '@/store/atom'
 import {
   $chatBubbles,
@@ -25,6 +28,7 @@ import {
 import { $draftTitles, draftTitleIn } from '@/store/composer'
 import { $activeStoredSessionId, refreshSessions } from '@/store/session-lifecycle'
 import { chatTabTitle, useSessionRowLookup } from '@/store/session-lookup'
+import { $botChatScopes, $botChatSessionIds } from '@/store/session-states'
 
 import { SessionStatusDot } from '../session-status-dot'
 
@@ -96,6 +100,12 @@ export function BubbleRow() {
   const { t } = useI18n()
   const bubbles = useStore($chatBubbles)
   const activeId = useStore($activeStoredSessionId)
+  const botChatIds = useStore($botChatSessionIds)
+  // Re-paint when roster meta or bot-chat scopes land (openBotChat writes the
+  // scope; profiles.list merge fills $botMeta) — without these, the strip would
+  // stick on a name-only default face until some other store tick.
+  useStore($botChatScopes)
+  useStore($botMeta)
   // The WIDE lookup, not a `$sessions.find(...)`. The recents page is
   // paginated, so a bubble for an older chat resolved to nothing: a title
   // permanently stuck on "Loading…" (MJXHRM-386's own symptom, which the tile
@@ -535,17 +545,31 @@ export function BubbleRow() {
             const isCentered = index === centeredIndex
             const armed = isCentered && preview?.closeArmed
             const session = rowFor(bubble.storedSessionId)
+            const isBotChat = Boolean(bubble.storedSessionId && botChatIds.has(bubble.storedSessionId))
+            const botFace = isBotChat
+              ? appearanceForBotChat(bubble.storedSessionId, {
+                  connectionId: bubble.connectionId,
+                  profile: bubble.profile
+                })
+              : null
 
             return (
               <button
                 aria-label={titleOf(bubble)}
                 className={cn(
-                  'relative flex size-8 shrink-0 touch-none items-center justify-center rounded-full transition-[transform,color,background-color] duration-200',
+                  'relative flex size-8 shrink-0 touch-none items-center justify-center transition-[transform,color,background-color] duration-200',
+                  botFace ? 'rounded-none bg-transparent' : 'rounded-full',
                   armed
-                    ? 'scale-110 bg-destructive/15 text-destructive'
+                    ? botFace
+                      ? 'scale-110'
+                      : 'scale-110 bg-destructive/15 text-destructive'
                     : isCentered
-                      ? 'scale-110 bg-(--ui-bg-chrome) text-(--ui-text-primary)'
-                      : 'scale-90 text-(--ui-text-tertiary)'
+                      ? botFace
+                        ? 'scale-110'
+                        : 'scale-110 bg-(--ui-bg-chrome) text-(--ui-text-primary)'
+                      : botFace
+                        ? 'scale-90 opacity-80'
+                        : 'scale-90 text-(--ui-text-tertiary)'
                 )}
                 key={bubble.storedSessionId ?? 'draft'}
                 ref={el => {
@@ -553,7 +577,18 @@ export function BubbleRow() {
                 }}
                 type="button"
               >
-                <MessageCircle size={18} />
+                {botFace ? (
+                  <BotFace
+                    color={botFace.fill}
+                    image={botFace.photo}
+                    mood="idle"
+                    name={botFace.name}
+                    shape={botFace.shape}
+                    size={28}
+                  />
+                ) : (
+                  <MessageCircle size={18} />
+                )}
                 {/* The SAME status dot the sidebar row, the pane tabs and the
                     switcher render — this badge used to paint amber for a
                     RUNNING turn and red for an unread one, which is the amber

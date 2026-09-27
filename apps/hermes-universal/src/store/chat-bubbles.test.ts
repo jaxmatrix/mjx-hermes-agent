@@ -49,6 +49,17 @@ const lifecycle = vi.hoisted(() => {
 
 vi.mock('@/store/session-lifecycle', () => lifecycle)
 
+const routeNav = vi.hoisted(() => ({
+  navigateTo: vi.fn(),
+  requestSessionResume: vi.fn()
+}))
+
+vi.mock('@/lib/route-nav', () => ({ navigateTo: routeNav.navigateTo }))
+vi.mock('@/store/session', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  requestSessionResume: (...args: unknown[]) => routeNav.requestSessionResume(...args)
+}))
+
 // The reverse index stands in for the real session map: `live` holds the stored
 // ids that currently have a slice, so the store's "is this session already
 // live?" questions are answerable without booting the whole session graph.
@@ -70,6 +81,7 @@ vi.mock('@/store/session-key-states', () => ({
   })
 }))
 
+import { NEW_CHAT_ROUTE, sessionRoute } from '@/app/routes'
 import { dropSessionState, sessionTileDelegate } from '@/store/session-key-states'
 import { $activeSessionKey } from '@/store/session-state-types'
 
@@ -77,6 +89,7 @@ import {
   $chatBubbles,
   addBubble,
   newChatBubble,
+  openStoredSessionInBubble,
   removeBubble,
   requestRemoveBubble,
   switchToBubble
@@ -116,12 +129,14 @@ describe('chat-bubbles store', () => {
     expect(ids()).toEqual(['a', 'b'])
   })
 
-  it('switchToBubble promotes the target to active', () => {
+  it('switchToBubble lands home on the target via resume + route', () => {
     $activeStoredSessionId.set('a')
     addBubble('b')
 
     switchToBubble('b')
     expect($activeStoredSessionId.get()).toBe('b')
+    expect(routeNav.requestSessionResume).toHaveBeenCalledWith('b')
+    expect(routeNav.navigateTo).toHaveBeenCalledWith(sessionRoute('b'))
   })
 
   it('removeBubble is non-destructive and just drops the row entry', () => {
@@ -131,25 +146,31 @@ describe('chat-bubbles store', () => {
     removeBubble('b')
     expect(ids()).toEqual(['a'])
     expect($activeStoredSessionId.get()).toBe('a') // untouched
+    expect(routeNav.navigateTo).not.toHaveBeenCalled()
   })
 
-  it('removing the active bubble promotes a neighbor', () => {
+  it('removing the active bubble promotes a neighbor via route', () => {
     $activeStoredSessionId.set('a')
     addBubble('b') // ['a','b'], active 'a'
 
     removeBubble('a')
     expect(ids()).toEqual(['b'])
-    expect($activeStoredSessionId.get()).toBe('b') // neighbor promoted
+    expect($activeStoredSessionId.get()).toBe('b')
+    expect(routeNav.requestSessionResume).toHaveBeenCalledWith('b')
+    expect(routeNav.navigateTo).toHaveBeenCalledWith(sessionRoute('b'))
   })
 
-  it('closing the last bubble opens a fresh chat', () => {
+  it('closing the last bubble opens a fresh chat on the new-chat route', () => {
     $activeStoredSessionId.set('a')
     addBubble('b')
-    removeBubble('a') // -> ['b'] active 'b'
+    removeBubble('a') // -> ['b']
+    routeNav.navigateTo.mockClear()
+    routeNav.requestSessionResume.mockClear()
     removeBubble('b') // empties
 
     expect(ids()).toEqual([])
     expect($activeStoredSessionId.get()).toBeNull()
+    expect(routeNav.navigateTo).toHaveBeenCalledWith(NEW_CHAT_ROUTE)
   })
 
   // MJXHRM-390 — the mobile half of the close verb, and the half that did not
@@ -235,6 +256,25 @@ describe('chat-bubbles store', () => {
     newChatBubble()
     expect(ids()).toEqual(['a', null]) // current + draft
     expect($activeStoredSessionId.get()).toBeNull() // now on the draft
+    expect(routeNav.navigateTo).toHaveBeenCalledWith(NEW_CHAT_ROUTE)
+  })
+
+  it('openStoredSessionInBubble seeds the previous chat and appends the target', () => {
+    $activeStoredSessionId.set('a')
+
+    openStoredSessionInBubble('b')
+    expect(ids()).toEqual(['a', 'b'])
+    expect(routeNav.navigateTo).not.toHaveBeenCalled()
+
+    openStoredSessionInBubble('b')
+    expect(ids()).toEqual(['a', 'b'])
+  })
+
+  it('openStoredSessionInBubble from a draft seeds the draft and the target', () => {
+    $activeStoredSessionId.set(null)
+
+    openStoredSessionInBubble('a')
+    expect(ids()).toEqual([null, 'a'])
   })
 
   it('newChatBubble puts the draft on the side it was pulled open from', () => {

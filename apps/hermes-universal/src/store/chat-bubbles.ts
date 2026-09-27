@@ -6,22 +6,21 @@
  * no pane graph on a phone, just an ordered list of sessions.
  *
  * Runtime model: every bubble — foreground or background, saved or draft — is
- * just a session in `$sessionKeyStates`. Switching moves `$activeSessionKey`; it
- * does not move state anywhere.
+ * just a session in `$sessionKeyStates`. Background bubbles stay warm in their
+ * slices (MJX-132); a session that was streaming keeps streaming into its own
+ * slice when you leave it.
  *
- * This used to be a hybrid: the active bubble lived in the global chat atoms and
- * a background bubble was demoted into a slice on every switch, then DROPPED and
- * re-resumed on the way back. Two async, unsynchronized steps per switch, with
- * the live slice discarded in the middle — which is how a background turn's
- * tokens ended up in the chat on screen (MJX-132). Now the only thing a switch
- * has to do is point at a different key, and a session that was streaming keeps
- * streaming into its own slice throughout.
+ * Foreground switch/new/close is route-shaped for phone home ChatView: navigate
+ * + `requestSessionResume` → `useRouteResume` → `resumeSession`. Lifecycle
+ * `openSession` is only for background warm (`ensureLiveSession` / `addBubble`).
  *
  * The store itself is platform-agnostic (directly unit-testable); only the UI
  * mount and the new-session call sites are gated to `IS_MOBILE`. On desktop the
  * list simply stays empty, so every subscription here is inert.
  */
 
+import { NEW_CHAT_ROUTE, sessionRoute } from '@/app/routes'
+import { navigateTo } from '@/lib/route-nav'
 import { readJson, writeJson } from '@/lib/storage'
 import { atom, computed } from '@/store/atom'
 import { requestClose } from '@/store/close-confirm'
@@ -31,13 +30,14 @@ import {
   isAmbientConnection,
   releaseConnectionClient
 } from '@/store/connection-clients'
+import { requestSessionResume } from '@/store/session'
 import {
   dropSessionState,
   runtimeKeyForStoredSession,
   sessionKeyNeedsCloseConfirm,
   sessionTileDelegate
 } from '@/store/session-key-states'
-import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session-lifecycle'
+import { $activeStoredSessionId, newSession, sameStoredSession } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
   DEFAULT_SESSION_PROFILE,
@@ -328,20 +328,39 @@ function ensureLiveSession(storedId: null | string) {
     })
 }
 
-/** Show a bubble. A draft starts a fresh chat; anything else opens its session —
- *  synchronously when it already has a slice.
- *
- *  Note what is NOT here: the outgoing session is not demoted, and the incoming
- *  session's slice is not dropped and re-resumed. Both sessions keep the state
- *  they had, which is the point. */
+/** Land the home ChatView on a bubble via the route-shaped door (navigate +
+ *  resume). Selection moves immediately so the strip highlight tracks the tap;
+ *  `useRouteResume` hydrates `$activeSessionId` / messages from the route. */
 function promote(storedId: null | string) {
   if (storedId === null) {
     newSession()
+    navigateTo(NEW_CHAT_ROUTE)
 
     return
   }
 
-  void openSession(storedId)
+  requestSessionResume(storedId)
+  $activeStoredSessionId.set(storedId)
+  navigateTo(sessionRoute(storedId))
+}
+
+/** Seed the chat you're leaving (draft or real) into the strip and ensure the
+ *  target is a bubble. Does not navigate — the Sessions host opens via
+ *  `resumeSessionIntoMain`. Only that host calls this (not cold restore). */
+export function openStoredSessionInBubble(storedSessionId: string) {
+  if (!storedSessionId) {
+    return
+  }
+
+  // Always keep what you're leaving — including a draft — so the strip reaches
+  // 2+ bubbles and BubbleRow becomes visible after the first sidebar open.
+  ensureBubble($activeStoredSessionId.get())
+
+  if ($chatBubbles.get().some(b => sameStoredSession(b.storedSessionId, storedSessionId))) {
+    return
+  }
+
+  setBubbles([...$chatBubbles.get(), bubbleForStoredId(storedSessionId)])
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +458,7 @@ export function removeBubble(target: null | string) {
 
   if (next.length === 0) {
     newSession()
+    navigateTo(NEW_CHAT_ROUTE)
 
     return
   }
@@ -496,6 +516,7 @@ export function newChatBubble(side?: 'end' | 'start'): boolean {
   }
 
   newSession()
+  navigateTo(NEW_CHAT_ROUTE)
 
   return true
 }
