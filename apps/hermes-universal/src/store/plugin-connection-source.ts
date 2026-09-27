@@ -40,6 +40,11 @@ export interface PluginAgent {
   profile: string
   label: string
   isDefault: boolean
+  /** Registry connection kind (`local` | `remote` | `ssh` | …). Present on
+   *  multi-source Desktop rosters; optional for the single-connection answer. */
+  connectionKind?: string
+  /** Backend profile the agent dials when it differs from `profile`. */
+  targetProfile?: string
 }
 
 export interface PluginAgentRoster {
@@ -111,8 +116,9 @@ function describeLiveConnection(): null | PluginConnection {
 const singleConnectionSource: PluginConnectionSource = {
   agents: async () => {
     const connectionId = liveConnectionId()
+    const live = describeLiveConnection()
 
-    if (!describeLiveConnection()) {
+    if (!live) {
       return { agents: [], sources: [{ connectionId, error: AGENT_ROUTING_UNAVAILABLE, observed: false, ok: false }] }
     }
 
@@ -122,12 +128,14 @@ const singleConnectionSource: PluginConnectionSource = {
       return {
         agents: (roster.profiles ?? []).map(profile => ({
           connectionId,
+          connectionKind: live.kind,
           isDefault: profile.is_default ?? false,
           label: profile.display_name || profile.name,
-          profile: profile.name
+          profile: profile.name,
+          targetProfile: profile.name
         })),
         // It answered — this is the one branch here that dialled anything.
-        sources: [{ connectionId, observed: true, ok: true }]
+        sources: [{ connectionId, kind: live.kind, observed: true, ok: true }]
       }
     } catch (error) {
       // The connection's own error, carried on its row — the roster still
