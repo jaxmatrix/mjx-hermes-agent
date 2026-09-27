@@ -26,7 +26,6 @@ import {
   getSession,
   getSessionMessages,
   listAllProfileSessions,
-  listProfileSessionsPage,
   renameSession,
   searchSessions,
   setSessionArchived
@@ -50,7 +49,11 @@ import { confirm } from '@/store/confirm'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway-client'
 import { registerGatewayWipeExtra } from '@/store/gateway-switch'
-import { $pinnedSessionIds } from '@/store/layout'
+import {
+  $pinnedSessionIds,
+  $sessionsLimit,
+  resetSessionsLimit
+} from '@/store/layout'
 import { $liveSessionStatuses } from '@/store/live-session-registry'
 import { notify, notifyError } from '@/store/notifications'
 import { flashPetActivity } from '@/store/pet'
@@ -63,8 +66,8 @@ import { $profiles } from '@/store/profiles'
 import {
   $messagingSessions,
   $selectedStoredSessionId,
+  $sessionProfilesTruncated,
   $sessions,
-  $sessionsLoading,
   $unreadFinishedSessionIds,
   knownSessionProfile as knownSessionProfileFromRows,
   markAllSessionsRead,
@@ -73,6 +76,7 @@ import {
   setActiveSessionId,
   setSessions
 } from '@/store/session'
+import { loadMoreSidebarSessions, loadMoreMessagingForPlatform as loadMoreMessagingShared, refreshSidebarSessions } from '@/store/session-list-refresh'
 import {
   $removedSessionIds,
   $sessionMutationsInFlight,
@@ -108,15 +112,14 @@ import type { SessionCreateResponse, SessionInfo, SessionResumeResult, SessionSe
 // (list rows, $activeStoredSessionId) vs the RUNTIME id ($sessionId in chat.ts,
 // what prompt.submit targets), bound by session.resume.
 
-const PAGE = 30
-
 /** Where the pinned-row fallback cache lives (see `$pinnedSessionCache`). */
 const PINNED_CACHE_KEY = 'hermes.pinnedSessionRows'
 
 /** Counts SUCCESSFUL full-window refreshes. See `refreshSessions`. */
 export const $sessionsListEpoch = atom(0)
 export const $sessionsTotal = atom(0)
-export const $sessionsLimit = atom(PAGE)
+/** Same atom as layout — one limit for ScrollBody + list-actions + wipe. */
+export { $sessionsLimit }
 // Universal's STORED selection is desktop's `$selectedStoredSessionId` — not
 // `$activeSessionId`, which is the gateway RUNTIME id after resume. Aliasing
 // stored → runtime wrote list ids into the submit target and saved runtime ids
@@ -1025,146 +1028,48 @@ export async function refreshMessagingSessions(): Promise<void> {
   }
 }
 
-// Recents come from the cross-profile aggregator in BOTH scope modes, mirroring
-// desktop's `recentsProfile`: 'all' for the browse view, else the concrete profile
-// key. Going through the aggregator (rather than listSessions, which is NOT
-// profile-scoped) is what actually scopes the sidebar to the active profile, and
-// it tags every row with its owning `profile` — which the lanes and ProfileTag
-// need. `$sessionsLimit` stays global, so in browse mode a limit of N is split
-// across profiles by recency; `resetSessionsPaging()` keeps a big browse-mode
-// limit from leaking into a small single profile.
-//
-// This RELOADS the whole loaded window (offset 0, `$sessionsLimit` rows) rather
-// than paging: it runs when the list may have changed underneath us, so every
-// loaded row has to be re-read to stay correct. Paging deeper is
-// `loadMoreSessions`, which appends a single offset-addressed page.
-/**
- * How deep into the RECENCY WINDOW a page reached.
- *
- * Not `page.length`. Both list endpoints pass `include_pinned=True`, which
- * back-fills pinned conversations past the limit and APPENDS them after the
- * recency window — so a page of `limit` can carry more than `limit` rows, and
- * the extras are not window positions. Paging with the raw row count as the next
- * `offset` therefore skips one real conversation per back-filled pin, and they
- * are gone from the list entirely: never fetched, never rendered, no gap to see.
- *
- * Reported by SE-H, who fixed the sibling instance of this in `hermes.ts`
- * (`pageWindow`, MJXHRM-229): that one DISCARDED the appended pins, this one
- * MISCOUNTS them. Correct before and after that lands — today no pins are
- * appended and `min` is just the row count.
- */
-function recencyDepth(page: readonly SessionInfo[] | undefined, limit: number): number {
-  return Math.min(page?.length ?? 0, limit)
-}
+// Canonical list refresh: batched `/api/profiles/sessions/sidebar` with merge,
+// keep-ids, and stale-request guards (same path as useSessionListActions). Phone
+// ScrollBody, live-sync, and host.refreshSessions used to full-replace via
+// listAllProfileSessions and race-clobber the merged list.
+export async function refreshSessions(shouldPublish: () => boolean = () => true): Promise<void> {
+  const { published, serverSessionIds } = await refreshSidebarSessions({ shouldPublish })
 
-export async function refreshSessions(): Promise<void> {
-  $sessionsLoading.set(true)
-
-  const scope = $profileScope.get()
-  const limit = $sessionsLimit.get()
-
-  try {
-    const res = await listAllProfileSessions(limit, 1, 'exclude', 'recent', scope === ALL_PROFILES ? 'all' : scope)
-
-    // A refresh can race an in-flight delete/archive, and the page it returns
-    // may predate it. Honouring the optimistic tombstones is what keeps the row
-    // from flashing back; the ids the server DID return then lift the ones it
-    // has caught up with.
-    //
-    // Through `reuseUnchanged` (MJXHRM-383): this response was JSON-parsed, so
-    // every row is a fresh object even when nothing changed, and
-    // `SidebarSessionRow`'s memo comparator bails only on
-    // `Object.is(prev.session, next.session)`. Stored verbatim, a poll every
-    // ~10s re-rendered every mounted row for nothing. Reusing the rows that did
-    // not move is what lets the memo actually skip; an unchanged page comes back
-    // as the SAME array, which nanostores does not even publish.
-    $sessions.set(reuseUnchanged($sessions.get(), withoutTombstoned(res.sessions ?? [])))
-    pruneSessionTombstones((res.sessions ?? []).map(session => session.id))
-    $sessionsTotal.set(scope === ALL_PROFILES ? res.total : (res.profile_totals?.[scope] ?? res.total))
-    // Bumped only on the success path, and only here: this says "a WHOLE window
-    // just landed", which is the one moment a pin's absence from `$sessions`
-    // carries information (the backend back-fills pinned rows past the limit,
-    // so a live pin cannot miss a fresh page). `loadMoreSessions` appends a
-    // deeper page and proves nothing about the head, and a failed fetch leaves
-    // the list saying nothing at all. store/session-pin-sync.ts sweeps on it.
-    $sessionsListEpoch.set($sessionsListEpoch.get() + 1)
-  } catch (err) {
-    // A list-fetch failure is not any one chat's status: surface it as a
-    // notification instead of pinning it to whichever session is on screen.
-    logSessionsRoute('refreshSessions_failed', {
-      err: String(err),
-      limit,
-      scope
-    })
-    notifyError(err, 'Failed to load sessions')
-  } finally {
-    $sessionsLoading.set(false)
+  if (!published) {
+    return
   }
+
+  // Approximate total for ScrollBody's `sessions.length < total` hasMore until
+  // that UI switches fully to profiles_truncated (ChatSidebar already did).
+  const scope = $profileScope.get()
+  const truncated = $sessionProfilesTruncated.get()
+  const hasMore =
+    scope === ALL_PROFILES ? Object.values(truncated).some(Boolean) : Boolean(truncated[scope])
+  const loaded = $sessions.get().length
+
+  $sessionsTotal.set(hasMore ? Math.max($sessionsTotal.get(), loaded + 1) : loaded)
+  // Server still listing a tombstoned id → keep the tombstone; absent → lift.
+  pruneSessionTombstones(serverSessionIds)
+  // Whole-window land: pin absence from `$sessions` is informative.
+  $sessionsListEpoch.set($sessionsListEpoch.get() + 1)
 }
 
 /** Drop back to the first page — called when the profile scope changes, and when a
  *  soft gateway switch starts the list over. */
 export function resetSessionsPaging(): void {
-  $sessionsLimit.set(PAGE)
+  resetSessionsLimit()
 }
 
 /**
- * Append the NEXT page — one `offset`-addressed fetch of `PAGE` rows, not a
- * re-fetch of the whole window. `$sessionsLimit` tracks how many rows are
- * loaded so a later `refreshSessions()` restores the same depth.
- *
- * Rows are de-duplicated by id: the list is ordered by recency, so a session
- * that gets a message between the two fetches shifts toward the head and can
- * appear in both pages. Without the guard it would render twice and React would
- * warn on the duplicate key.
+ * Append the next recency page (offset) without re-fetching the whole window.
  */
 export async function loadMoreSessions(): Promise<void> {
-  const loaded = $sessions.get()
-  const scope = $profileScope.get()
-  // The cursor is the recency DEPTH reached so far, not the number of rows on
-  // screen: back-filled pins ride along in every page without occupying a
-  // window position, so `loaded.length` overshoots by the pin count and each
-  // page silently skips that many conversations.
-  const offset = $sessionsLimit.get()
+  await loadMoreSidebarSessions()
+}
 
-  $sessionsLoading.set(true)
-
-  try {
-    // listProfileSessionsPage, not listAllProfileSessions: desktop's version
-    // hardcodes offset=0, so paging through it would re-fetch page 1 forever.
-    // See src/api/universal.ts.
-    const res = await listProfileSessionsPage(
-      PAGE,
-      1,
-      'exclude',
-      'recent',
-      scope === ALL_PROFILES ? 'all' : scope,
-      {},
-      offset
-    )
-
-    // De-duplicated by id: the list is recency-ordered, so a session that gets a
-    // message between the two fetches shifts toward the head and can appear in
-    // both pages — and a back-filled pin appears in EVERY page by construction.
-    const seen = new Set(loaded.map(session => session.id))
-    const fresh = withoutTombstoned(res.sessions ?? []).filter(session => !seen.has(session.id))
-
-    if (fresh.length) {
-      $sessions.set([...loaded, ...fresh])
-    }
-
-    $sessionsLimit.set(offset + recencyDepth(res.sessions, PAGE))
-    $sessionsTotal.set(scope === ALL_PROFILES ? res.total : (res.profile_totals?.[scope] ?? res.total))
-  } catch (err) {
-    logSessionsRoute('loadMoreSessions_failed', {
-      err: String(err),
-      offset,
-      scope
-    })
-    notifyError(err, 'Failed to load sessions')
-  } finally {
-    $sessionsLoading.set(false)
-  }
+/** Page one messaging platform's sidebar slice. */
+export async function loadMoreMessagingForPlatform(platform: string): Promise<void> {
+  await loadMoreMessagingShared(platform)
 }
 
 // Only the newest open may write chat state. Two async sources (the REST
@@ -1230,7 +1135,7 @@ export interface OpenSessionOptions {
  * Allowed callers (satellite / in-place hydrate — NOT route-shaped primary opens):
  * - HUD / tile windows (`hud-window`, `tile-window`)
  * - HUD handoff reclaim (`handoff-satellite`, often `{ forceResume: true }`)
- * - Mobile bubble promote (`chat-bubbles.promote`)
+ * - Background bubble warm (`chat-bubbles.ensureLiveSession` / `addBubble`)
  * - Plugin host wake (`plugin-open-session`)
  *
  * Phone Sessions, cold restore, MobileSurfaceShell, and SidebarScrollBody must
