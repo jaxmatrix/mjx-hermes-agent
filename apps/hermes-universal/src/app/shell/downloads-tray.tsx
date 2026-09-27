@@ -1,11 +1,13 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Progress } from '@/components/ui/progress'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { IS_MOBILE } from '@/lib/platform'
 import { createTap, isCoarsePointer } from '@/lib/touch'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
@@ -42,6 +44,10 @@ import { type TitlebarButtonVariantProps, titlebarButtonVariants } from './title
 // download. The list is session-only by design: nothing here is persisted, so a
 // reload starts empty rather than restoring rows whose Rust-side transfer died
 // with the old webview.
+//
+// On phones the panel is a bottom Sheet (not a floating dropdown) — same thumb
+// language as every other mobile action surface. The body is not a flat action
+// list, so MenuDrawer / DRAWER_KIT do not apply.
 
 /**
  * A button that resolves its own taps (rule 31).
@@ -210,32 +216,114 @@ function DownloadRow({ item }: { item: DownloadItem }) {
   )
 }
 
+function DownloadsPanel({ items }: { items: DownloadItem[] }) {
+  const { t } = useI18n()
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2 px-2.5 pt-1 pb-1.5">
+        <span className="text-[0.625rem] font-medium tracking-wide text-(--ui-text-quaternary) uppercase">
+          {t.downloads.title}
+        </span>
+        {items.some(item => !isActive(item)) && (
+          <TapButton
+            className="size-auto w-auto px-1 text-[0.625rem] coarse:size-auto coarse:min-h-11 coarse:px-2"
+            label={t.downloads.clearFinished}
+            onTap={clearFinishedDownloads}
+          >
+            {t.downloads.clearFinished}
+          </TapButton>
+        )}
+      </div>
+      <ul className="flex flex-col gap-0.5">
+        {/* The button is unconditional now, so the list it opens can be
+            empty — and an empty `<ul>` renders as a menu with a heading and
+            nothing under it, which reads as broken rather than as idle. */}
+        {items.length === 0 ? (
+          <li className="px-2.5 py-3 text-center text-xs text-(--ui-text-quaternary)">{t.downloads.empty}</li>
+        ) : (
+          items.map(item => <DownloadRow item={item} key={item.id} />)
+        )}
+      </ul>
+    </>
+  )
+}
+
 export function DownloadsTray({ density = 'desktop' }: TitlebarButtonVariantProps) {
   const { t } = useI18n()
   const items = useStore($recentDownloads)
   const activeCount = items.filter(isActive).length
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  const ariaLabel = activeCount > 0 ? t.downloads.inProgress(activeCount) : t.downloads.title
+
+  const trigger = (
+    <Button
+      // Same CVA as every other titlebar control, but NOT wrapped in `Tip`:
+      // a tooltip fights an open menu, so the trigger names itself with
+      // `aria-label` exactly the way `LayoutMenu` does.
+      aria-label={ariaLabel}
+      className={cn(
+        titlebarButtonVariants({ density }),
+        'relative',
+        drawerOpen && 'bg-(--chrome-action-hover) text-foreground'
+      )}
+      onClick={IS_MOBILE ? () => setDrawerOpen(true) : undefined}
+      size="icon"
+      type="button"
+      variant="ghost"
+    >
+      <Codicon name="cloud-download" size={density === 'mobile' ? '1.4rem' : undefined} />
+      {activeCount > 0 && (
+        // A dot, not a number: the count is in the aria-label and the list,
+        // and a digit at this size is unreadable next to the glyph.
+        <span className="absolute top-0.5 end-0.5 size-1.5 rounded-full bg-primary" />
+      )}
+    </Button>
+  )
+
+  if (IS_MOBILE) {
+    return (
+      <>
+        {trigger}
+        <Sheet onOpenChange={setDrawerOpen} open={drawerOpen}>
+          <SheetContent
+            className={cn(
+              'flex max-h-[min(75vh,var(--visual-viewport-height,100vh))] flex-col gap-0 rounded-t-xl p-0',
+              'pb-[max(0.5rem,var(--safe-area-inset-bottom,0px))]',
+              'outline-none focus:outline-none focus-visible:outline-none'
+            )}
+            onOpenAutoFocus={event => {
+              event.preventDefault()
+              ;(event.currentTarget as HTMLElement | null)?.focus?.()
+            }}
+            showCloseButton={false}
+            side="bottom"
+          >
+            <div className="flex shrink-0 items-center gap-2 border-b border-border/65 px-2 py-1.5">
+              <SheetTitle className="min-w-0 flex-1 truncate px-2 text-sm font-medium">{t.downloads.title}</SheetTitle>
+              <Button
+                aria-label={t.common.close}
+                onClick={() => setDrawerOpen(false)}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <Codicon name="close" size="1rem" />
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+              <DownloadsPanel items={items} />
+            </div>
+          </SheetContent>
+        </Sheet>
+      </>
+    )
+  }
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          // Same CVA as every other titlebar control, but NOT wrapped in `Tip`:
-          // a tooltip fights an open menu, so the trigger names itself with
-          // `aria-label` exactly the way `LayoutMenu` does.
-          aria-label={activeCount > 0 ? t.downloads.inProgress(activeCount) : t.downloads.title}
-          className={cn(titlebarButtonVariants({ density }), 'relative')}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <Codicon name="cloud-download" size={density === 'mobile' ? '1.4rem' : undefined} />
-          {activeCount > 0 && (
-            // A dot, not a number: the count is in the aria-label and the list,
-            // and a digit at this size is unreadable next to the glyph.
-            <span className="absolute top-0.5 end-0.5 size-1.5 rounded-full bg-primary" />
-          )}
-        </Button>
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
         aria-label={t.downloads.title}
@@ -246,30 +334,7 @@ export function DownloadsTray({ density = 'desktop' }: TitlebarButtonVariantProp
         // viewport, and on a phone that is taller than what the user can see.
         style={{ maxHeight: 'calc(var(--visual-viewport-height, 100vh) - 5rem)' }}
       >
-        <div className="flex items-center justify-between gap-2 px-2.5 pt-1 pb-1.5">
-          <span className="text-[0.625rem] font-medium tracking-wide text-(--ui-text-quaternary) uppercase">
-            {t.downloads.title}
-          </span>
-          {items.some(item => !isActive(item)) && (
-            <TapButton
-              className="size-auto w-auto px-1 text-[0.625rem] coarse:size-auto coarse:min-h-11 coarse:px-2"
-              label={t.downloads.clearFinished}
-              onTap={clearFinishedDownloads}
-            >
-              {t.downloads.clearFinished}
-            </TapButton>
-          )}
-        </div>
-        <ul className="flex flex-col gap-0.5">
-          {/* The button is unconditional now, so the list it opens can be
-              empty — and an empty `<ul>` renders as a menu with a heading and
-              nothing under it, which reads as broken rather than as idle. */}
-          {items.length === 0 ? (
-            <li className="px-2.5 py-3 text-center text-xs text-(--ui-text-quaternary)">{t.downloads.empty}</li>
-          ) : (
-            items.map(item => <DownloadRow item={item} key={item.id} />)
-          )}
-        </ul>
+        <DownloadsPanel items={items} />
       </DropdownMenuContent>
     </DropdownMenu>
   )

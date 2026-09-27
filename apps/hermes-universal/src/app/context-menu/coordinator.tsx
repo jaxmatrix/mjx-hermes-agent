@@ -18,7 +18,7 @@ import { classifyGesture, contextTargetProvider } from '@/app/context-menu/regis
 import { $contextMenu, applyClipboardProbe, closeContextMenu, openContextMenu } from '@/app/context-menu/store'
 import type { ContextMenuDomTarget } from '@/app/context-menu/target'
 import type { TerminalMenuHandle } from '@/app/right-pane/terminal/context-menu'
-import { DROPDOWN_KIT, renderActionItem } from '@/components/ui/actions-menu'
+import { DROPDOWN_KIT, type MenuKit, renderActionItem } from '@/components/ui/actions-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,12 +26,14 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { MenuDrawer } from '@/components/ui/menu-drawer'
 import { ContribBoundary } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { useI18n } from '@/i18n'
 import { readClipboardText } from '@/lib/clipboard-tauri'
 import { triggerHaptic } from '@/lib/haptics'
 import { createLongPress } from '@/lib/long-press'
+import { IS_MOBILE } from '@/lib/platform'
 import { readKeyboardInset } from '@/lib/safe-area'
 import { isCoarsePointer, TAP_MAX_MS } from '@/lib/touch'
 import { useStore } from '@/store/atom'
@@ -277,17 +279,17 @@ function installGestureListeners(): () => void {
   }
 }
 
-function renderRow(spec: ContextMenuItemSpec, fallbackKey: string) {
+function renderRow(spec: ContextMenuItemSpec, fallbackKey: string, kit: MenuKit = DROPDOWN_KIT) {
   const { shortcut, ...rest } = spec
   const key = rest.key ?? (typeof rest.label === 'string' ? rest.label : fallbackKey)
 
-  if (!shortcut) {
-    return renderActionItem(DROPDOWN_KIT, { ...rest, key })
+  if (!shortcut || kit !== DROPDOWN_KIT) {
+    return renderActionItem(kit, { ...rest, key })
   }
 
   // Accelerators are DISPLAY ONLY — the engine already runs the chord, and
   // re-dispatching it would double the edit.
-  return renderActionItem(DROPDOWN_KIT, {
+  return renderActionItem(kit, {
     ...rest,
     key,
     label: (
@@ -364,13 +366,53 @@ export function AppContextMenu() {
   const builtIn = built.sections.filter(section => section.length > 0)
   const plugin = built.plugin.filter(section => section.length > 0)
 
-  const renderSections = (sections: ContextMenuSection[], offset: number) =>
+  const renderSections = (sections: ContextMenuSection[], offset: number, kit: MenuKit = DROPDOWN_KIT) =>
     sections.map((section, index) => (
       <Fragment key={offset + index}>
-        {offset + index > 0 && <DropdownMenuSeparator />}
-        {section.map((spec, itemIndex) => renderRow(spec, `${offset + index}-${itemIndex}`))}
+        {offset + index > 0 && (kit === DROPDOWN_KIT ? <DropdownMenuSeparator /> : <kit.Separator />)}
+        {section.map((spec, itemIndex) => renderRow(spec, `${offset + index}-${itemIndex}`, kit))}
       </Fragment>
     ))
+
+  const body = (kit: MenuKit) => (
+    <>
+      {renderSections(builtIn, 0, kit)}
+      {plugin.length > 0 && (
+        // Rule 27: a contribution that throws while RENDERING (not while
+        // providing) degrades to an inline error row instead of taking the
+        // menu — and with it the window's whole overlay tree — down.
+        <ContribBoundary id={CONTEXT_MENU_ITEMS_AREA} variant="chip">
+          {renderSections(plugin, builtIn.length, kit)}
+        </ContribBoundary>
+      )}
+      {built.failed.length > 0 && (
+        <>
+          {kit === DROPDOWN_KIT ? <DropdownMenuSeparator /> : <kit.Separator />}
+          {renderRow(
+            {
+              disabled: true,
+              key: 'context-menu-failed',
+              label: t.contextMenu.someItemsFailed,
+              onSelect: () => undefined
+            },
+            'failed',
+            kit
+          )}
+        </>
+      )}
+    </>
+  )
+
+  if (IS_MOBILE) {
+    return (
+      <MenuDrawer
+        onOpenChange={next => !next && closeContextMenu()}
+        open
+        render={kit => body(kit)}
+        title={t.sidebar.row.sessionActions}
+      />
+    )
+  }
 
   return (
     <DropdownMenu modal={false} onOpenChange={next => !next && closeContextMenu()} open>
@@ -387,29 +429,7 @@ export function AppContextMenu() {
         side="bottom"
         sideOffset={2}
       >
-        {renderSections(builtIn, 0)}
-        {plugin.length > 0 && (
-          // Rule 27: a contribution that throws while RENDERING (not while
-          // providing) degrades to an inline error row instead of taking the
-          // menu — and with it the window's whole overlay tree — down.
-          <ContribBoundary id={CONTEXT_MENU_ITEMS_AREA} variant="chip">
-            {renderSections(plugin, builtIn.length)}
-          </ContribBoundary>
-        )}
-        {built.failed.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            {renderRow(
-              {
-                disabled: true,
-                key: 'context-menu-failed',
-                label: t.contextMenu.someItemsFailed,
-                onSelect: () => undefined
-              },
-              'failed'
-            )}
-          </>
-        )}
+        {body(DROPDOWN_KIT)}
       </DropdownMenuContent>
     </DropdownMenu>
   )

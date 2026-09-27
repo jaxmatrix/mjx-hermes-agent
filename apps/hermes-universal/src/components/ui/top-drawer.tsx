@@ -1,19 +1,23 @@
 import type { ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Codicon } from '@/components/ui/codicon'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useI18n } from '@/i18n'
 import { ChevronLeft } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 /**
- * A menu presented as a drawer down from the top, for touch.
+ * A menu presented as a bottom drawer, for touch.
  *
  * WHY A DRAWER AND NOT THE DROPDOWN. A dropdown is anchored to its trigger and
  * sized to its content, which is fine beside a mouse and wrong under a thumb:
  * on a phone it opens off the edge, its rows are sized by their text, and a
  * submenu is reached by HOVER, which a finger does not have. A drawer is
  * full-width, its rows are real touch targets, and a submenu becomes a PAGE.
+ *
+ * WHY BOTTOM. Action and chrome menus on the phone shell open under the thumb
+ * (same gesture language as ThemePicker / ModelDrawer). `offsetTop` is ignored.
  *
  * PAGES ARE THE CALLER'S. This owns the surface — the panel, the header, the
  * close — and takes `onBack` when the caller has pushed a page, because only
@@ -57,7 +61,7 @@ export function topBarBottom(el: HTMLElement | null): number {
 export function TopDrawer({
   children,
   className,
-  offsetTop,
+  offsetTop: _offsetTop,
   onBack,
   onOpenChange,
   open,
@@ -65,11 +69,7 @@ export function TopDrawer({
 }: {
   children: ReactNode
   className?: string
-  /** Where the panel's top edge sits, in px — normally the BOTTOM of the control
-   *  that opened it, so the drawer appears to come out from under the bar rather
-   *  than over it. Measured by the caller rather than assumed here: the chat's
-   *  top bar and the Settings / Command Center nav strip are different heights,
-   *  so any constant would be wrong on one of them. */
+  /** @deprecated Bottom sheets ignore bar anchoring; kept for call-site compat. */
   offsetTop?: number
   /** Present = a sub-page is showing; renders the back button. */
   onBack?: () => void
@@ -83,16 +83,10 @@ export function TopDrawer({
     <Sheet onOpenChange={onOpenChange} open={open}>
       <SheetContent
         className={cn(
-          'flex flex-col gap-0 p-0',
-          // No focus ring. The panel is focused on open (see below) and a
-          // `tabIndex={-1}` container takes the platform's default outline with
-          // it — which is where the stray blue line above the list came from.
-          // It is not a theme colour and never was.
+          'flex max-h-[min(75vh,var(--visual-viewport-height,100vh))] flex-col gap-0 rounded-t-xl p-0',
+          'pb-[max(0.5rem,var(--safe-area-inset-bottom,0px))]',
           'outline-none focus:outline-none focus-visible:outline-none',
-          // Hangs off the bar: square at the top, rounded below, and no top
-          // border, so it reads as the bar continuing downward rather than as a
-          // separate card floating under it.
-          'rounded-t-none rounded-b-xl border-t-0',
+          'keyboard-open:mb-[var(--keyboard-inset,0px)]',
           className
         )}
         data-top-drawer
@@ -104,40 +98,21 @@ export function TopDrawer({
           event.preventDefault()
           ;(event.currentTarget as HTMLElement | null)?.focus?.()
         }}
-        /* The scrim starts where the panel does. Covering the bar dimmed AND
-           blurred the very chrome the menu belongs to, which is what made this
-           read as a modal sheet instead of a menu. */
         showCloseButton={false}
-        side="top"
-        style={{
-          // 75% of the visible screen, and capped by what is actually left below
-          // the bar — whichever is smaller. The second term matters on a short
-          // screen or with the keyboard up, where 75% of the viewport would run
-          // the panel off the bottom.
-          maxHeight: `min(75vh, calc(var(--visual-viewport-height, 100vh) - ${offsetTop ?? 0}px - 2rem))`,
-          top: offsetTop ?? 0
-        }}
+        side="bottom"
       >
-        {/* The panel clips; THIS slides. Keeping the two apart is what makes
-            the menu appear from under the bar — see the `top-drawer` block in
-            styles.css. */}
         <div className="flex min-h-0 flex-1 flex-col" data-top-drawer-inner>
-          {/* Radix needs an accessible name; the BAR already shows it, so
-              repeating it as a heading just said "Settings" twice down the
-              screen. Visually hidden, not removed. */}
-          <SheetTitle className="sr-only">{title}</SheetTitle>
-
-          {/* A header only when there is somewhere to go back to. At the top
-              level the rows are the whole menu — a hamburger has no title bar of
-              its own, and the close is the same control you opened it with. */}
-          {onBack && (
-            <div className="flex shrink-0 items-center gap-2 border-b border-border/65 px-2 py-1.5">
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/65 px-2 py-1.5">
+            {onBack ? (
               <Button aria-label={common.back} onClick={onBack} size="icon" type="button" variant="ghost">
                 <ChevronLeft className="size-5" />
               </Button>
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-            </div>
-          )}
+            ) : null}
+            <SheetTitle className="min-w-0 flex-1 truncate px-2 text-sm font-medium">{title}</SheetTitle>
+            <Button aria-label={common.close} onClick={() => onOpenChange(false)} size="icon" type="button" variant="ghost">
+              <Codicon name="close" size="1rem" />
+            </Button>
+          </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">{children}</div>
         </div>

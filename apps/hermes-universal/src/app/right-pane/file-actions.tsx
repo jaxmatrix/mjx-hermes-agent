@@ -1,14 +1,8 @@
 import { useStore } from '@nanostores/react'
 import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useRef, useState } from 'react'
 
+import { ActionsContextMenu, type MenuKit } from '@/components/ui/actions-menu'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger
-} from '@/components/ui/context-menu'
 import { translateNow, useI18n } from '@/i18n'
 import { isDesktopFsRemoteMode } from '@/lib/desktop-fs'
 import { isSubmitEnter } from '@/lib/ime'
@@ -55,7 +49,9 @@ interface FileEntryContextMenuProps {
   relativeTo?: null | string
 }
 
-/** Right-click menu shared by both file trees (browser + review/git). */
+/** Right-click menu shared by both file trees (browser + review/git).
+ *
+ *  On mobile, long-press opens a bottom `MenuDrawer` via `ActionsContextMenu`. */
 export function FileEntryContextMenu({ children, isDirectory, name, path, relativeTo }: FileEntryContextMenuProps) {
   const { t } = useI18n()
   const m = t.fileMenu
@@ -67,41 +63,44 @@ export function FileEntryContextMenu({ children, isDirectory, name, path, relati
   const target: FileActionTarget = { isDirectory, name, path }
   const revealLabel = pickRevealLabel(m.revealFinder, m.revealExplorer, m.revealFileManager)
 
+  const items = (kit: MenuKit) => (
+    <>
+      {localFs && (
+        <>
+          <kit.Item onSelect={() => void revealFile(path)}>{revealLabel}</kit.Item>
+          <kit.Separator />
+        </>
+      )}
+      <kit.Item onSelect={() => void copyFilePath(path)}>{m.copyPath}</kit.Item>
+      {relativeTo && (
+        <kit.Item onSelect={() => void copyFilePath(toRelativePath(path, relativeTo))}>
+          {m.copyRelativePath}
+        </kit.Item>
+      )}
+      {remoteDownload && (
+        <>
+          <kit.Separator />
+          <kit.Item onSelect={() => void downloadRemoteFile(path)}>{m.download}</kit.Item>
+        </>
+      )}
+      {localFs && (
+        <>
+          <kit.Separator />
+          <kit.Item onSelect={() => beginInlineRename(path)}>{m.rename}</kit.Item>
+          <kit.Item onSelect={() => requestFileDelete(target)} variant="destructive">
+            {m.delete}
+          </kit.Item>
+        </>
+      )}
+    </>
+  )
+
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      {/* Don't restore focus to the row on close: "Rename" mounts an autofocused
-          inline input, and the default focus-return would blur it immediately. */}
-      <ContextMenuContent onCloseAutoFocus={event => event.preventDefault()}>
-        {localFs && (
-          <>
-            <ContextMenuItem onSelect={() => void revealFile(path)}>{revealLabel}</ContextMenuItem>
-            <ContextMenuSeparator />
-          </>
-        )}
-        <ContextMenuItem onSelect={() => void copyFilePath(path)}>{m.copyPath}</ContextMenuItem>
-        {relativeTo && (
-          <ContextMenuItem onSelect={() => void copyFilePath(toRelativePath(path, relativeTo))}>
-            {m.copyRelativePath}
-          </ContextMenuItem>
-        )}
-        {remoteDownload && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => void downloadRemoteFile(path)}>{m.download}</ContextMenuItem>
-          </>
-        )}
-        {localFs && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => beginInlineRename(path)}>{m.rename}</ContextMenuItem>
-            <ContextMenuItem onSelect={() => requestFileDelete(target)} variant="destructive">
-              {m.delete}
-            </ContextMenuItem>
-          </>
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
+    // Don't restore focus to the row on close: "Rename" mounts an autofocused
+    // inline input, and the default focus-return would blur it immediately.
+    <ActionsContextMenu items={items} onCloseAutoFocus={event => event.preventDefault()}>
+      {children}
+    </ActionsContextMenu>
   )
 }
 
@@ -176,7 +175,7 @@ export function InlineRenameInput({ className, name, path }: InlineRenameInputPr
       autoCorrect="off"
       autoFocus
       className={cn(
-        'min-w-0 flex-1 rounded-sm border border-[color-mix(in_srgb,var(--dt-composer-ring)_55%,transparent)] bg-(--ui-bg-elevated) px-1 py-0 text-xs text-foreground outline-none',
+        'min-w-0 flex-1 rounded-sm border border-[color-mix(in_srgb,var(--dt-composer-ring)_55%,transparent)] bg-(--ui-bg-elevated) px-1 py-0 text-[length:var(--file-tree-font-size,0.75rem)] text-foreground outline-none',
         className
       )}
       onBlur={event => {

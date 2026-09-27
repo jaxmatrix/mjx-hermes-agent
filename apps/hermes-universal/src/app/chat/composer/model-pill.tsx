@@ -1,9 +1,12 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 
 import { useSessionView } from '@/app/chat/session-view'
 import { useTourMarker } from '@/app/chat/tour-marker'
+import { ModelDrawer } from '@/app/shell/model-drawer'
+import { useModelMenuHost } from '@/app/shell/model-menu-host-context'
 import { ModelMenuCloseContext } from '@/app/shell/model-menu-panel'
+import { useModelMenuController } from '@/app/shell/use-model-menu-controller'
 import { isElementInHiddenPane } from '@/components/pane-shell/pane-visibility'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -13,6 +16,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { ChevronDown } from '@/lib/icons'
 import { formatModelPillLabel, providerDisplayName } from '@/lib/model-status-label'
+import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { $currentModelSource, setModelPickerOpen } from '@/store/session'
 
@@ -33,6 +37,9 @@ const PILL = cn(
  * Composer model selector — the relocated status-bar pill. Reuses the live
  * `model.options` dropdown (`modelMenuContent`) verbatim; falls back to the
  * full picker when the gateway is closed and no live menu exists.
+ *
+ * On mobile opens `ModelDrawer` (bottom sheet) via the host context — Dropdown
+ * catalogs are untouchable (hover submenus, anchored popovers).
  *
  * Display follows THIS surface's SessionView (primary or tile) — never the
  * primary-only globals — so side-by-side panes each show their own model.
@@ -62,7 +69,9 @@ export function ModelPill({
   const [open, setOpen] = useState(false)
   const restoreSelection = useRef<(() => void) | null>(null)
   const scope = useComposerScope()
+  const host = useModelMenuHost()
   const hasLiveMenu = Boolean(model.modelMenuContent)
+  const useDrawer = IS_MOBILE && hasLiveMenu && host !== null
 
   // The `composer.modelPicker` hotkey, routed to exactly one surface (the pane
   // under the pointer, else the active composer — see requestModelMenuToggle).
@@ -160,6 +169,17 @@ export function ModelPill({
 
   const title = pinnedOverride ? `${baseTitle} — ${copy.modelPinned}` : baseTitle
 
+  // Closing the menu ends its claim on the keyboard: Radix restores focus to
+  // this pill (a toolbar button), so without the release the Enter that
+  // committed a model also swallows whatever you type next.
+  const setMenuOpen = (next: boolean) => {
+    setOpen(next)
+
+    if (!next) {
+      releaseTypingFocus()
+    }
+  }
+
   if (!model.modelMenuContent) {
     return (
       <Tip label={pinnedOverride ? `${copy.openModelPicker} — ${copy.modelPinned}` : copy.openModelPicker} side="top">
@@ -178,15 +198,20 @@ export function ModelPill({
     )
   }
 
-  // Closing the menu ends its claim on the keyboard: Radix restores focus to
-  // this pill (a toolbar button), so without the release the Enter that
-  // committed a model also swallows whatever you type next.
-  const setMenuOpen = (next: boolean) => {
-    setOpen(next)
-
-    if (!next) {
-      releaseTypingFocus()
-    }
+  if (useDrawer && host) {
+    return (
+      <MobileModelPill
+        disabled={disabled}
+        host={host}
+        label={label}
+        open={open}
+        pillClass={pillClass}
+        restoreSelection={restoreSelection}
+        setOpen={setMenuOpen}
+        title={title}
+        tourMarker={tourMarker}
+      />
+    )
   }
 
   return (
@@ -226,5 +251,62 @@ export function ModelPill({
         </ModelMenuCloseContext.Provider>
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+function MobileModelPill({
+  disabled,
+  host,
+  label,
+  open,
+  pillClass,
+  restoreSelection,
+  setOpen,
+  title,
+  tourMarker
+}: {
+  disabled: boolean
+  host: NonNullable<ReturnType<typeof useModelMenuHost>>
+  label: ReactNode
+  open: boolean
+  pillClass: string
+  restoreSelection: MutableRefObject<(() => void) | null>
+  setOpen: (open: boolean) => void
+  title: string
+  tourMarker?: string
+}) {
+  const { activeSessionId, controller } = useModelMenuController(host)
+
+  return (
+    <>
+      <Tip label={title} side="top">
+        <Button
+          aria-label={title}
+          className={pillClass}
+          data-tour={tourMarker}
+          disabled={disabled}
+          onClick={() => setOpen(true)}
+          type="button"
+          variant="ghost"
+        >
+          {label}
+        </Button>
+      </Tip>
+      <ModelDrawer
+        controller={controller}
+        gateway={host.gateway}
+        onOpenChange={next => {
+          setOpen(next)
+
+          if (!next) {
+            restoreSelection.current?.()
+            restoreSelection.current = null
+          }
+        }}
+        open={open}
+        profile={host.profile}
+        sessionId={activeSessionId}
+      />
+    </>
   )
 }

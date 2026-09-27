@@ -7,6 +7,7 @@ import { TreeSkeleton } from '@/components/chat/skeletons'
 import { Codicon } from '@/components/ui/codicon'
 import { markRightPanePerf } from '@/debug/right-pane-events'
 import { useResizeObserver } from '@/hooks/use-resize-observer'
+import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { type RepoChangeKind, repoChangeKindForPath } from '@/store/coding-status'
 import { $renamingPath, beginInlineRename } from '@/store/file-actions'
@@ -17,7 +18,8 @@ import { FileEntryContextMenu, InlineRenameInput, isRenameShortcut } from '../fi
 import { getFileTreeDndManager } from './dnd-manager'
 import type { TreeNode } from './use-project-tree'
 
-const ROW_HEIGHT = 22
+// Must match --file-tree-row-height (1.375rem desktop / 2.5rem on html.is-mobile).
+const ROW_HEIGHT = IS_MOBILE ? 40 : 22
 const INDENT = 10
 /** Fixed base inset (`px-6.5`) layered on top of arborist's depth indent. */
 const TREE_ROW_INSET = '17px'
@@ -295,7 +297,7 @@ function ProjectTreeRow({
       aria-expanded={isFolder ? node.isOpen : undefined}
       aria-selected={node.isSelected}
       className={cn(
-        'group/row row-hover flex h-full select-none items-center gap-1 border border-transparent px-3 text-xs font-normal leading-(--file-tree-row-height) text-(--ui-text-secondary) hover:text-foreground',
+        'group/row row-hover flex h-full select-none items-center gap-1 border border-transparent px-3 text-[length:var(--file-tree-font-size,0.75rem)] font-normal leading-(--file-tree-row-height) text-(--ui-text-secondary) hover:text-foreground',
         node.isSelected && 'bg-(--ui-row-active-background) text-foreground',
         isPlaceholder && 'pointer-events-none italic text-muted-foreground/70'
       )}
