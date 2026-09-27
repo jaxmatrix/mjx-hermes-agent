@@ -268,17 +268,17 @@ fn transient(message: impl Into<String>) -> SshError {
 /// auto-switch line printed to stdout before the command even runs — can
 /// never be mistaken for the OS name.
 pub async fn probe_platform(session: &SshSession) -> Result<RemotePlatform, SshError> {
-    println!("[ssh probe] running fenced `uname -s; uname -m`");
+    log::info!("[ssh probe] running fenced `uname -s; uname -m`");
     let out = session
         .exec_fenced("uname -s; uname -m", None)
         .await?
         .require_success("uname")?;
-    println!("[ssh probe] fenced uname output: {out:?}");
+    log::info!("[ssh probe] fenced uname output: {out:?}");
 
     let mut lines = out.lines().map(str::trim).filter(|l| !l.is_empty());
     let os = lines.next().unwrap_or_default().to_string();
     let arch = lines.next().unwrap_or_default().to_string();
-    println!("[ssh probe] parsed os={os:?} arch={arch:?}");
+    log::info!("[ssh probe] parsed os={os:?} arch={arch:?}");
 
     check_supported_os(&os)?;
 
@@ -291,7 +291,7 @@ pub async fn probe_platform(session: &SshSession) -> Result<RemotePlatform, SshE
 /// actually there as missing.
 async fn is_executable(session: &SshSession, candidate: &str) -> bool {
     let Ok(path) = expand_remote_path(candidate) else {
-        println!("[ssh probe] is_executable: {candidate:?} is not a valid remote path");
+        log::info!("[ssh probe] is_executable: {candidate:?} is not a valid remote path");
         return false;
     };
 
@@ -301,7 +301,7 @@ async fn is_executable(session: &SshSession, candidate: &str) -> bool {
         .map(|out| out.stdout.trim() == "OK")
         .unwrap_or(false);
 
-    println!("[ssh probe] is_executable: {path:?} -> {result}");
+    log::info!("[ssh probe] is_executable: {path:?} -> {result}");
     result
 }
 
@@ -319,13 +319,13 @@ pub async fn locate_hermes(
     explicit: Option<&str>,
 ) -> Result<String, SshError> {
     if let Some(explicit) = explicit.filter(|p| !p.trim().is_empty()) {
-        println!("[ssh probe] locate_hermes: checking explicit path {explicit:?}");
+        log::info!("[ssh probe] locate_hermes: checking explicit path {explicit:?}");
 
         if is_executable(session, explicit).await {
             return resolve_launcher(session, explicit).await;
         }
 
-        println!("[ssh probe] locate_hermes: explicit path {explicit:?} is not executable");
+        log::warn!("[ssh probe] locate_hermes: explicit path {explicit:?} is not executable");
 
         return Err(SshError::new(
             SshErrorKind::HermesNotFound,
@@ -339,7 +339,7 @@ pub async fn locate_hermes(
 
     let mut candidates: Vec<String> = Vec::new();
 
-    println!("[ssh probe] locate_hermes: probing login shell for `command -v hermes`");
+    log::info!("[ssh probe] locate_hermes: probing login shell for `command -v hermes`");
     if let Ok(found) = session
         .exec_fenced(&format!("sh -lc {}", shq("command -v hermes")), None)
         .await
@@ -352,22 +352,22 @@ pub async fn locate_hermes(
             .filter(|l| !l.is_empty())
             .next_back()
         {
-            println!("[ssh probe] locate_hermes: login shell found {path:?}");
+            log::info!("[ssh probe] locate_hermes: login shell found {path:?}");
             candidates.push(path.to_string());
         }
     }
 
     candidates.extend(FALLBACK_HERMES_PATHS.iter().map(|p| (*p).to_string()));
-    println!("[ssh probe] locate_hermes: candidates to try {candidates:?}");
+    log::info!("[ssh probe] locate_hermes: candidates to try {candidates:?}");
 
     for candidate in candidates {
         if is_executable(session, &candidate).await {
-            println!("[ssh probe] locate_hermes: using {candidate:?}");
+            log::info!("[ssh probe] locate_hermes: using {candidate:?}");
             return resolve_launcher(session, &candidate).await;
         }
     }
 
-    println!("[ssh probe] locate_hermes: no candidate was executable");
+    log::warn!("[ssh probe] locate_hermes: no candidate was executable");
 
     Err(SshError::new(
         SshErrorKind::HermesNotFound,
@@ -377,21 +377,12 @@ pub async fn locate_hermes(
     ))
 }
 
-/// Follow an `exec` shim to the real binary. Falls back to the candidate.
-/// Fenced so shell startup noise can't get mistaken for the resolved path.
-async fn resolve_launcher(session: &SshSession, candidate: &str) -> Result<String, SshError> {
-    let out = session
-        .exec_fenced(&remote_scripts::resolve_launcher(candidate), None)
-        .await;
-
-    let resolved = out.map(|o| o.stdout.trim().to_string()).unwrap_or_default();
-    let resolved = if resolved.is_empty() {
-        candidate.to_string()
-    } else {
-        resolved
-    };
-
-    println!("[ssh probe] resolve_launcher: {candidate:?} -> {resolved:?}");
+/// Keep the launcher path as-is (#74411). Falls back to the candidate.
+/// No remote round-trip: following `exec` shims returned only Python and broke
+/// `hermes serve --help` capability probing (false `update-required`).
+async fn resolve_launcher(_session: &SshSession, candidate: &str) -> Result<String, SshError> {
+    let resolved = remote_scripts::resolve_launcher(candidate);
+    log::info!("[ssh probe] resolve_launcher: keeping candidate {candidate:?}");
     Ok(resolved)
 }
 
@@ -418,7 +409,7 @@ pub async fn probe_hermes_version(session: &SshSession, hermes_path: &str) -> St
         .and_then(|o| o.stdout.lines().next().map(|l| l.trim().to_string()))
         .unwrap_or_default();
 
-    println!("[ssh probe] probe_hermes_version: {path:?} -> {version:?}");
+    log::info!("[ssh probe] probe_hermes_version: {path:?} -> {version:?}");
     version
 }
 
@@ -449,7 +440,14 @@ pub async fn supports_ssh_ownership(
         .exec_fenced(&build_capability_probe(hermes_path)?, None)
         .await?;
 
-    Ok(capability_probe_passed(&out.stdout))
+    let passed = capability_probe_passed(&out.stdout);
+    if !passed {
+        let snippet: String = out.stdout.chars().take(240).collect();
+        log::warn!(
+            "[ssh probe] supports_ssh_ownership: {hermes_path:?} probe failed; stdout snippet={snippet:?}"
+        );
+    }
+    Ok(passed)
 }
 
 /// Read the ownership record, if any.
@@ -472,7 +470,7 @@ pub async fn read_lockfile(
         })?;
 
     let lock = parse_lock(&out.stdout, ownership_id);
-    println!("[ssh probe] read_lockfile: {path:?} -> {lock:?}");
+    log::info!("[ssh probe] read_lockfile: {path:?} -> {lock:?}");
     Ok(lock)
 }
 
@@ -503,7 +501,7 @@ pub async fn write_lockfile(
         )
     })?;
 
-    println!(
+    log::info!(
         "[ssh probe] write_lockfile: writing to {final_path:?} (pid={}, port={})",
         lock.pid, lock.port
     );
@@ -521,7 +519,7 @@ pub async fn write_lockfile(
         )
         .await?
         .require_success("writing the ownership record")?;
-    println!("[ssh probe] write_lockfile: wrote {final_path:?}");
+    log::info!("[ssh probe] write_lockfile: wrote {final_path:?}");
 
     Ok(())
 }
@@ -548,7 +546,7 @@ pub async fn remote_pid_alive(session: &SshSession, pid: i64) -> Result<bool, Ss
         .map_err(|e| transient(format!("Could not verify the SSH backend process: {e}")))?;
 
     let alive = out.stdout.trim() == "ALIVE";
-    println!(
+    log::info!(
         "[ssh probe] remote_pid_alive: pid={pid} -> {alive} (raw={:?})",
         out.stdout
     );
@@ -565,12 +563,22 @@ pub async fn pid_is_our_dashboard(
     pid: i64,
     spawn_nonce: &str,
     hermes_path: &str,
+    hermes_home: &str,
+    ownership_id: &str,
+    profile: &str,
 ) -> Result<bool, SshError> {
     if pid <= 0 || hermes_path.is_empty() || validate_spawn_nonce(spawn_nonce).is_err() {
         return Ok(false);
     }
 
-    let command = remote_scripts::pid_is_our_dashboard(pid, spawn_nonce, hermes_path)?;
+    let command = remote_scripts::pid_is_our_dashboard(
+        pid,
+        spawn_nonce,
+        hermes_path,
+        hermes_home,
+        ownership_id,
+        profile,
+    )?;
 
     let out = session.exec_fenced(&command, None).await.map_err(|e| {
         transient(format!(
@@ -579,7 +587,7 @@ pub async fn pid_is_our_dashboard(
     })?;
 
     let owned = out.stdout.trim() == "OWNED";
-    println!(
+    log::info!(
         "[ssh probe] pid_is_our_dashboard: pid={pid} nonce={spawn_nonce:?} -> {owned} (raw={:?})",
         out.stdout
     );
@@ -594,13 +602,22 @@ pub async fn cleanup_stale(
     lock: &BackendLock,
     pid_alive: bool,
 ) -> Result<(), SshError> {
-    println!(
+    log::info!(
         "[ssh probe] cleanup_stale: pid={} pid_alive={pid_alive}",
         lock.pid
     );
 
     if pid_alive
-        && pid_is_our_dashboard(session, lock.pid, &lock.spawn_nonce, &lock.hermes_path).await?
+        && pid_is_our_dashboard(
+            session,
+            lock.pid,
+            &lock.spawn_nonce,
+            &lock.hermes_path,
+            &lock.hermes_home,
+            ownership_id,
+            &lock.profile,
+        )
+        .await?
     {
         // Wait for it to actually go away (5s), rather than assuming the signal
         // took: respawning while the old process still holds its port would give
@@ -610,7 +627,7 @@ pub async fn cleanup_stale(
         // then make the final statement the thing whose exit status the
         // fence's trailing marker captures: 0 if the process died in time, 1
         // if the wait timed out.
-        println!(
+        log::info!(
             "[ssh probe] cleanup_stale: killing pid={} and waiting up to 5s",
             lock.pid
         );
@@ -651,13 +668,15 @@ pub async fn spawn_remote_dashboard(
     ownership_id: &str,
     spawn_nonce: &str,
 ) -> Result<SpawnedBackend, SshError> {
-    println!("[ssh probe] spawn_remote_dashboard: checking ownership-contract support for {hermes_path:?}");
+    log::info!("[ssh probe] spawn_remote_dashboard: checking ownership-contract support for {hermes_path:?}");
     if !supports_ssh_ownership(session, hermes_path).await? {
-        println!("[ssh probe] spawn_remote_dashboard: {hermes_path:?} does not support the ownership contract");
+        log::warn!("[ssh probe] spawn_remote_dashboard: {hermes_path:?} does not support the ownership contract");
         return Err(SshError::new(
             SshErrorKind::UpdateRequired,
-            "The remote Hermes install does not support --ssh-session-token-file and --ssh-owner-nonce. \
-             Update Hermes on the remote host to continue using SSH gateway mode.",
+            format!(
+                "The remote Hermes install at {hermes_path} does not support --ssh-session-token-file and --ssh-owner-nonce. \
+                 Update Hermes on the remote host to continue using SSH gateway mode."
+            ),
         ));
     }
 
@@ -666,7 +685,7 @@ pub async fn spawn_remote_dashboard(
     let token_file_path = format!("{}/{spawn_nonce}.token", ownership_directory(ownership_id)?);
     let log_path = spawn_log_path(ownership_id, spawn_nonce)?;
 
-    println!("[ssh probe] spawn_remote_dashboard: uploading session token to {token_file_path:?}");
+    log::info!("[ssh probe] spawn_remote_dashboard: uploading session token to {token_file_path:?}");
     // The secret goes over stdin, never argv.
     if let Err(err) = session
         .exec_fenced(
@@ -676,7 +695,7 @@ pub async fn spawn_remote_dashboard(
         .await
         .and_then(|o| o.require_success("uploading the session token"))
     {
-        println!("[ssh probe] spawn_remote_dashboard: token upload failed: {err}");
+        log::warn!("[ssh probe] spawn_remote_dashboard: token upload failed: {err}");
         remove_token_file(session, &token_file_path).await;
 
         return Err(err);
@@ -690,7 +709,7 @@ pub async fn spawn_remote_dashboard(
         Some(spawn_nonce),
     )?;
 
-    println!("[ssh probe] spawn_remote_dashboard: spawning backend, log={log_path:?}");
+    log::info!("[ssh probe] spawn_remote_dashboard: spawning backend, log={log_path:?}");
     let out = match session
         .exec_fenced(&spawn_command, None)
         .await
@@ -698,13 +717,13 @@ pub async fn spawn_remote_dashboard(
     {
         Ok(out) => out,
         Err(err) => {
-            println!("[ssh probe] spawn_remote_dashboard: spawn command failed: {err}");
+            log::warn!("[ssh probe] spawn_remote_dashboard: spawn command failed: {err}");
             remove_token_file(session, &token_file_path).await;
 
             return Err(err);
         }
     };
-    println!("[ssh probe] spawn_remote_dashboard: spawn command stdout: {out:?}");
+    log::info!("[ssh probe] spawn_remote_dashboard: spawn command stdout: {out:?}");
 
     let pid = out
         .lines()
@@ -715,7 +734,7 @@ pub async fn spawn_remote_dashboard(
         .filter(|pid| *pid > 0);
 
     let Some(pid) = pid else {
-        println!("[ssh probe] spawn_remote_dashboard: no pid found in spawn output");
+        log::warn!("[ssh probe] spawn_remote_dashboard: no pid found in spawn output");
         remove_token_file(session, &token_file_path).await;
 
         return Err(SshError::new(
@@ -724,7 +743,7 @@ pub async fn spawn_remote_dashboard(
         ));
     };
 
-    println!("[ssh probe] spawn_remote_dashboard: spawned pid={pid}");
+    log::info!("[ssh probe] spawn_remote_dashboard: spawned pid={pid}");
 
     Ok(SpawnedBackend {
         pid,
@@ -756,14 +775,14 @@ pub async fn wait_for_ready_port(
     let remote_log = expand_remote_path(log_path)?;
     let deadline = tokio::time::Instant::now() + timeout;
 
-    println!(
+    log::info!(
         "[ssh probe] wait_for_ready_port: polling {remote_log:?} for pid={pid}, timeout={}s",
         timeout.as_secs()
     );
 
     while tokio::time::Instant::now() < deadline {
         if !remote_pid_alive(session, pid).await? {
-            println!("[ssh probe] wait_for_ready_port: pid={pid} died before announcing a port");
+            log::warn!("[ssh probe] wait_for_ready_port: pid={pid} died before announcing a port");
             return Err(SshError::new(
                 SshErrorKind::Unknown,
                 "The remote backend exited before announcing its port.",
@@ -777,14 +796,14 @@ pub async fn wait_for_ready_port(
             .unwrap_or_default();
 
         if let Some(port) = scrape_ready_port(&tail) {
-            println!("[ssh probe] wait_for_ready_port: pid={pid} announced port={port}");
+            log::info!("[ssh probe] wait_for_ready_port: pid={pid} announced port={port}");
             return Ok(port);
         }
 
         tokio::time::sleep(READY_POLL_INTERVAL).await;
     }
 
-    println!(
+    log::info!(
         "[ssh probe] wait_for_ready_port: timed out after {}s for pid={pid}",
         timeout.as_secs()
     );

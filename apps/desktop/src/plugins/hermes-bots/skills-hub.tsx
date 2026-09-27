@@ -97,10 +97,15 @@ export function HubSkillsSection({ bot, onInstalled }: HubSkillsSectionProps) {
     setResults(null)
 
     try {
-      const res: { results?: HubSkillResult[] } = await host.request('skills.manage', {
-        action: 'search',
-        query: q
-      })
+      const res: { results?: HubSkillResult[] } = await (bot
+        ? requestForBot(bot, 'skills.manage', {
+            action: 'search',
+            query: q
+          })
+        : host.request('skills.manage', {
+            action: 'search',
+            query: q
+          }))
 
       setResults(res.results || [])
     } catch {

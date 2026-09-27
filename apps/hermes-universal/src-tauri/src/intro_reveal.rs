@@ -9,7 +9,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager};
+#[cfg(desktop)]
+use tauri::{State, WebviewUrl, WebviewWindowBuilder};
 
 /// Longer than the renderer's INTRO_DEADMAN_MS so a stalled clock still closes.
 pub const INTRO_REVEAL_WATCHDOG_MS: u64 = 34_000;
@@ -46,6 +48,7 @@ pub struct OkResult {
     pub ok: bool,
 }
 
+#[cfg(desktop)]
 fn show_main(app: &AppHandle) {
     if let Some(main) = app.get_webview_window(crate::window::MAIN_WINDOW_LABEL) {
         let _ = main.unminimize();
@@ -54,12 +57,14 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+#[cfg(desktop)]
 fn hide_main(app: &AppHandle) {
     if let Some(main) = app.get_webview_window(crate::window::MAIN_WINDOW_LABEL) {
         let _ = main.hide();
     }
 }
 
+#[cfg(desktop)]
 fn arm_watchdog(app: AppHandle, generation: u64) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(INTRO_REVEAL_WATCHDOG_MS)).await;
@@ -91,6 +96,7 @@ fn invalidate_generation(state: &IntroRevealState) {
     let _ = bump_generation(state);
 }
 
+#[cfg(desktop)]
 async fn close_intro_reveal_inner(
     app: &AppHandle,
     state: &IntroRevealState,
@@ -123,8 +129,13 @@ async fn close_intro_reveal_inner(
 /// and notifies the main renderer (Electron `closed` handler).
 pub fn on_destroyed(app: &AppHandle, state: &IntroRevealState) {
     invalidate_generation(state);
+    #[cfg(desktop)]
     if state.hid_main.swap(false, Ordering::SeqCst) {
         show_main(app);
+    }
+    #[cfg(mobile)]
+    {
+        let _ = state.hid_main.swap(false, Ordering::SeqCst);
     }
     let _ = app.emit(CLOSED_EVENT, ());
 }

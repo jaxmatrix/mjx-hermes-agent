@@ -18,6 +18,7 @@ import {
   type SidebarListRow,
   toSessionRows
 } from '@/lib/session-date-groups'
+import { IS_MOBILE } from '@/lib/platform'
 import { sessionBucketLabel } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import {
@@ -74,18 +75,27 @@ function SidebarSectionHeader({
   const labelBody = (
     <>
       {icon}
-      <SidebarPanelLabel>{label}</SidebarPanelLabel>
+      <SidebarPanelLabel
+        className={IS_MOBILE ? 'text-[0.75rem] tracking-[0.12em]' : undefined}
+      >
+        {label}
+      </SidebarPanelLabel>
       {meta && <SidebarSectionMeta>{meta}</SidebarSectionMeta>}
     </>
   )
 
   return (
-    <div className="group/section flex shrink-0 items-center justify-between gap-1 pb-1 pt-1.5">
+    <div
+      className={cn(
+        'group/section flex min-w-0 shrink-0 items-center justify-between gap-1 pb-1 pt-1.5',
+        IS_MOBILE && 'min-h-11 gap-1.5 py-1.5'
+      )}
+    >
       {collapsible ? (
         <button
-          // min-w-0 lets the label truncate at narrow sidebar widths instead of
-          // pushing the header's trailing action icons out of view.
-          className="group/section-label flex w-fit min-w-0 items-center gap-1 bg-transparent text-start leading-none"
+          // flex-1 + min-w-0 lets the label truncate at narrow sidebar widths
+          // instead of pushing the header's trailing action icons out of view.
+          className="group/section-label flex min-w-0 flex-1 items-center gap-1 overflow-hidden bg-transparent text-start leading-none"
           onClick={onToggle}
           type="button"
         >
@@ -96,7 +106,7 @@ function SidebarSectionHeader({
           />
         </button>
       ) : (
-        <div className="flex w-fit min-w-0 items-center gap-1 leading-none">{labelBody}</div>
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden leading-none">{labelBody}</div>
       )}
       {action}
     </div>
@@ -125,6 +135,8 @@ interface SidebarSessionsSectionProps {
   forceEmptyState?: boolean
   headerAction?: React.ReactNode
   footer?: React.ReactNode
+  /** Scroll listener on the section body (messaging near-bottom load). */
+  onContentScroll?: (event: { currentTarget: HTMLElement }) => void
   groups?: SidebarSessionGroup[]
   tree?: SidebarWorkspaceTree[]
   // Project overview: when present, render a drill-in list of project rows
@@ -213,6 +225,7 @@ export function SidebarSessionsSection({
   forceEmptyState = false,
   headerAction,
   footer,
+  onContentScroll,
   groups,
   projectOverview,
   projectOverviewPreviews,
@@ -631,12 +644,11 @@ export function SidebarSessionsSection({
         open={sectionOpen}
       />
       {sectionOpen && (
-        <SidebarGroupContent className={resolvedContentClassName}>
+        <SidebarGroupContent className={resolvedContentClassName} onScroll={onContentScroll}>
           {inner}
           {footer}
         </SidebarGroupContent>
-      )}
-    </SidebarGroup>
+      )}    </SidebarGroup>
   )
 }
 

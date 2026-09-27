@@ -133,4 +133,53 @@ describe('hover-revealed buttons stay reachable on touch', () => {
 
     expect(violations, violations.join('\n')).toEqual([])
   })
+
+  // Message action rails wrap buttons in a hover-revealed container. The button
+  // scan above misses those wrappers (ActionBarPrimitive.Root / plain divs), so
+  // the whole rail stayed invisible on coarse pointers while this suite stayed
+  // green. Named slots are the contract for those wrappers.
+  it('message action rail wrappers carry a coarse-pointer companion', () => {
+    const slots = ['aui_msg-actions', 'aui_user-msg-actions'] as const
+    const violations: string[] = []
+
+    for (const [globPath, content] of Object.entries(SOURCES)) {
+      const relativePath = globPath.replace(/^\//, '')
+
+      for (const slot of slots) {
+        const slotMark = `data-slot="${slot}"`
+        let from = 0
+
+        while (true) {
+          const at = content.indexOf(slotMark, from)
+
+          if (at === -1) {
+            break
+          }
+
+          // Walk back to the opening `<` of this tag so we can read its attrs.
+          const tagStart = content.lastIndexOf('<', at)
+
+          if (tagStart === -1) {
+            from = at + slotMark.length
+
+            continue
+          }
+
+          const nameEnd = content.slice(tagStart + 1).search(/\s|\/|>/u)
+          const attrs = openingTagAttrs(content, tagStart + 1 + Math.max(nameEnd, 0))
+          const lineNum = content.slice(0, tagStart).split('\n').length
+
+          if (HOVER_REVEALED.test(attrs) && HOVER_REVEAL.test(attrs) && !TOUCH_COMPANION.test(attrs)) {
+            violations.push(
+              `${relativePath}:${lineNum} [data-slot="${slot}"] is hover-revealed with no touch companion — add coarse:opacity-100`
+            )
+          }
+
+          from = at + slotMark.length
+        }
+      }
+    }
+
+    expect(violations, violations.join('\n')).toEqual([])
+  })
 })

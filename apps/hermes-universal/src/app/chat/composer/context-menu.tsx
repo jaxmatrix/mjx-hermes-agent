@@ -13,14 +13,17 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Kbd } from '@/components/ui/kbd'
+import { MenuDrawer } from '@/components/ui/menu-drawer'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { Clipboard, FileText, FolderOpen, type IconComponent, ImageIcon, Link, MessageSquareText } from '@/lib/icons'
+import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
 import { useComposerAttachmentProviders } from './contrib'
 import { GHOST_ICON_BTN } from './controls'
 import type { ChatBarState } from './types'
+import type { MenuKit } from '@/components/ui/actions-menu'
 
 const SNIPPET_KEYS = ['codeReview', 'implementationPlan', 'explainThis']
 
@@ -40,84 +43,180 @@ export function ContextMenu({
   // window (composer "+" anchor), so we promoted it to a real Dialog —
   // easier to grow with search / descriptions, and no positioning math.
   const [snippetsOpen, setSnippetsOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   // `composer.attachments` contributions — plugin/core-registered rows that
   // extend this menu through the same registry as every other surface.
   const attachmentProviders = useComposerAttachmentProviders()
 
+  const renderItems = (kit: MenuKit) => (
+    <>
+      <kit.Label className="px-2 pb-0.5 pt-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-(--ui-text-tertiary)">
+        {c.attachLabel}
+      </kit.Label>
+      <AttachItem disabled={!onPickFiles} icon={FileText} kit={kit} onSelect={onPickFiles}>
+        {c.files}
+      </AttachItem>
+      <AttachItem disabled={!onPickFolders} icon={FolderOpen} kit={kit} onSelect={onPickFolders}>
+        {c.folder}
+      </AttachItem>
+      <AttachItem disabled={!onPickImages} icon={ImageIcon} kit={kit} onSelect={onPickImages}>
+        {c.images}
+      </AttachItem>
+      <AttachItem
+        disabled={!onPasteClipboardImage}
+        icon={Clipboard}
+        kit={kit}
+        onSelect={onPasteClipboardImage ? () => void onPasteClipboardImage() : undefined}
+      >
+        {c.pasteImage}
+      </AttachItem>
+      <AttachItem icon={Link} kit={kit} onSelect={onOpenUrlDialog}>
+        {c.url}
+      </AttachItem>
+
+      <kit.Separator />
+
+      <AttachItem icon={MessageSquareText} kit={kit} onSelect={() => setSnippetsOpen(true)}>
+        {c.promptSnippets}
+      </AttachItem>
+
+      {attachmentProviders.length > 0 && <kit.Separator />}
+      {attachmentProviders.map(provider => (
+        <kit.Item key={provider.key} onSelect={() => void provider.run({ insertText: onInsertText })}>
+          <Codicon name={provider.icon ?? 'plug'} size="0.875rem" />
+          <span>{provider.label}</span>
+        </kit.Item>
+      ))}
+
+      <kit.Separator />
+
+      <div className="px-2 py-1 text-[0.7rem] text-muted-foreground/80">
+        {c.tipPre}
+        <Kbd size="sm">@</Kbd>
+        {c.tipPost}
+      </div>
+    </>
+  )
+
   return (
     <>
-      <DropdownMenu>
-        <Tip label={state.tools.label} placement="control">
-          <DropdownMenuTrigger asChild>
+      {IS_MOBILE ? (
+        <>
+          <Tip label={state.tools.label} placement="control">
             <Button
               aria-label={state.tools.label}
-              className={cn(
-                GHOST_ICON_BTN,
-                'data-[state=open]:bg-(--chrome-action-hover) data-[state=open]:text-foreground'
-              )}
+              className={cn(GHOST_ICON_BTN, drawerOpen && 'bg-(--chrome-action-hover) text-foreground')}
               disabled={!state.tools.enabled}
+              onClick={() => setDrawerOpen(true)}
               size="icon"
               type="button"
               variant="ghost"
             >
               <Codicon name="add" size="0.875rem" />
             </Button>
-          </DropdownMenuTrigger>
-        </Tip>
-        <DropdownMenuContent align="start" className={cn('w-60', composerPanelCard)} side="top" sideOffset={6}>
-          <DropdownMenuLabel className="px-2 pb-0.5 pt-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-(--ui-text-tertiary)">
-            {c.attachLabel}
-          </DropdownMenuLabel>
-          <ContextMenuItem disabled={!onPickFiles} icon={FileText} onSelect={onPickFiles}>
-            {c.files}
-          </ContextMenuItem>
-          <ContextMenuItem disabled={!onPickFolders} icon={FolderOpen} onSelect={onPickFolders}>
-            {c.folder}
-          </ContextMenuItem>
-          <ContextMenuItem disabled={!onPickImages} icon={ImageIcon} onSelect={onPickImages}>
-            {c.images}
-          </ContextMenuItem>
-          <ContextMenuItem
-            disabled={!onPasteClipboardImage}
-            icon={Clipboard}
-            onSelect={onPasteClipboardImage ? () => void onPasteClipboardImage() : undefined}
-          >
-            {c.pasteImage}
-          </ContextMenuItem>
-          <ContextMenuItem icon={Link} onSelect={onOpenUrlDialog}>
-            {c.url}
-          </ContextMenuItem>
-
-          <DropdownMenuSeparator />
-
-          <ContextMenuItem icon={MessageSquareText} onSelect={() => setSnippetsOpen(true)}>
-            {c.promptSnippets}
-          </ContextMenuItem>
-
-          {attachmentProviders.length > 0 && <DropdownMenuSeparator />}
-          {attachmentProviders.map(provider => (
-            <DropdownMenuItem
-              className="text-[length:var(--conversation-tool-font-size)] focus:bg-(--ui-bg-tertiary)"
-              key={provider.key}
-              onSelect={() => void provider.run({ insertText: onInsertText })}
+          </Tip>
+          <MenuDrawer
+            onOpenChange={setDrawerOpen}
+            open={drawerOpen}
+            render={renderItems}
+            title={state.tools.label}
+          />
+        </>
+      ) : (
+        <DropdownMenu>
+          <Tip label={state.tools.label} placement="control">
+            <DropdownMenuTrigger asChild>
+              <Button
+                aria-label={state.tools.label}
+                className={cn(
+                  GHOST_ICON_BTN,
+                  'data-[state=open]:bg-(--chrome-action-hover) data-[state=open]:text-foreground'
+                )}
+                disabled={!state.tools.enabled}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <Codicon name="add" size="0.875rem" />
+              </Button>
+            </DropdownMenuTrigger>
+          </Tip>
+          <DropdownMenuContent align="start" className={cn('w-60', composerPanelCard)} side="top" sideOffset={6}>
+            <DropdownMenuLabel className="px-2 pb-0.5 pt-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-(--ui-text-tertiary)">
+              {c.attachLabel}
+            </DropdownMenuLabel>
+            <ContextMenuItem disabled={!onPickFiles} icon={FileText} onSelect={onPickFiles}>
+              {c.files}
+            </ContextMenuItem>
+            <ContextMenuItem disabled={!onPickFolders} icon={FolderOpen} onSelect={onPickFolders}>
+              {c.folder}
+            </ContextMenuItem>
+            <ContextMenuItem disabled={!onPickImages} icon={ImageIcon} onSelect={onPickImages}>
+              {c.images}
+            </ContextMenuItem>
+            <ContextMenuItem
+              disabled={!onPasteClipboardImage}
+              icon={Clipboard}
+              onSelect={onPasteClipboardImage ? () => void onPasteClipboardImage() : undefined}
             >
-              <Codicon name={provider.icon ?? 'plug'} size="0.875rem" />
-              <span>{provider.label}</span>
-            </DropdownMenuItem>
-          ))}
+              {c.pasteImage}
+            </ContextMenuItem>
+            <ContextMenuItem icon={Link} onSelect={onOpenUrlDialog}>
+              {c.url}
+            </ContextMenuItem>
 
-          <DropdownMenuSeparator />
+            <DropdownMenuSeparator />
 
-          <div className="px-2 py-1 text-[0.7rem] text-muted-foreground/80">
-            {c.tipPre}
-            <Kbd size="sm">@</Kbd>
-            {c.tipPost}
-          </div>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <ContextMenuItem icon={MessageSquareText} onSelect={() => setSnippetsOpen(true)}>
+              {c.promptSnippets}
+            </ContextMenuItem>
+
+            {attachmentProviders.length > 0 && <DropdownMenuSeparator />}
+            {attachmentProviders.map(provider => (
+              <DropdownMenuItem
+                className="text-[length:var(--conversation-tool-font-size)] focus:bg-(--ui-bg-tertiary)"
+                key={provider.key}
+                onSelect={() => void provider.run({ insertText: onInsertText })}
+              >
+                <Codicon name={provider.icon ?? 'plug'} size="0.875rem" />
+                <span>{provider.label}</span>
+              </DropdownMenuItem>
+            ))}
+
+            <DropdownMenuSeparator />
+
+            <div className="px-2 py-1 text-[0.7rem] text-muted-foreground/80">
+              {c.tipPre}
+              <Kbd size="sm">@</Kbd>
+              {c.tipPost}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       <PromptSnippetsDialog onInsertText={onInsertText} onOpenChange={setSnippetsOpen} open={snippetsOpen} />
     </>
+  )
+}
+
+function AttachItem({
+  children,
+  disabled,
+  icon: Icon,
+  kit,
+  onSelect
+}: {
+  children: string
+  disabled?: boolean
+  icon: IconComponent
+  kit: MenuKit
+  onSelect?: () => void
+}) {
+  return (
+    <kit.Item disabled={disabled} onSelect={onSelect}>
+      <Icon />
+      <span>{children}</span>
+    </kit.Item>
   )
 }
 

@@ -27,14 +27,11 @@ import type { WebhookCreateResponse } from '@/hermes'
 // supply your own secret at create time, which this client offers precisely so
 // the one-time reveal is optional).
 //
-// The one boundary this cannot cross: on Android the Webhooks page can open as
-// a native screen ACTIVITY, which is its own WebView with its own JS heap, and
-// the hardware Back button finishes that Activity from Kotlin with no JS hook to
-// intercept (`store/windows.ts` → `open_screen_window`). Inside the reveal every
-// in-page dismissal is blocked, so leaving is deliberate — but a hardware Back
-// there ends the heap this atom lives in. That is exactly why the create form
-// offers a caller-supplied secret and why the reveal states the delete-and-
-// recreate recovery in words: neither depends on this atom surviving.
+// The one boundary this used to fear: Android Webhooks as a ScreenActivity
+// WebView (separate JS heap) finished by hardware Back with no intercept. Phone
+// surfaces are SPA overlays on MainActivity now (`openAppRoute` → navigate), so
+// this atom shares the home heap. Caller-supplied secret + delete-and-recreate
+// copy remain for any remaining activity deep-link or overlay unmount.
 
 export interface PendingWebhookSecret {
   /** True once a copy actually reached the clipboard (CopyButton's onCopied). */

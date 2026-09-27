@@ -9,7 +9,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
+#[cfg(desktop)]
+use tauri::Emitter;
+#[cfg(desktop)]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as Edge};
 
 const FILE_NAME: &str = "quick-entry.json";
@@ -239,6 +242,7 @@ fn canonical_key(key: &str) -> String {
     }
 }
 
+#[cfg(desktop)]
 fn release(app: &AppHandle, state: &QuickEntryState) {
     let mut reg = state.inner.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(active) = reg.active.take() {
@@ -248,6 +252,7 @@ fn release(app: &AppHandle, state: &QuickEntryState) {
     reg.error = None;
 }
 
+#[cfg(desktop)]
 fn apply(
     app: &AppHandle,
     state: &QuickEntryState,
@@ -299,6 +304,7 @@ fn apply(
     status_from(&reg, settings.enabled)
 }
 
+#[cfg(desktop)]
 fn status_from(reg: &Registration, enabled: bool) -> QuickEntryStatus {
     QuickEntryStatus {
         enabled,
@@ -313,6 +319,7 @@ fn status_from(reg: &Registration, enabled: bool) -> QuickEntryStatus {
 }
 
 /// Restore the chord on cold launch (main setup).
+#[cfg(desktop)]
 pub fn boot(app: &AppHandle, state: &QuickEntryState) {
     let settings = read_settings(app);
     let _ = apply(app, state, &settings);

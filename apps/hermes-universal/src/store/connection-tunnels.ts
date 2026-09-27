@@ -536,9 +536,16 @@ export function liveTunnelBase(connectionId: string): null | string {
   return held.get(connectionId)?.descriptor?.baseUrl ?? null
 }
 
-/** Where `api({connectionId})` sends a call: the row's URL, else its live tunnel. */
+/**
+ * Where `api({connectionId})` sends a call.
+ *
+ * Prefer a live tunnel loopback over the registry row's advertised URL: a phone
+ * often cannot reach the LAN address the row stores, while the SSH/local tunnel
+ * this window holds is reachable. Fall back to the row URL when there is no
+ * tunnel (plain remote / cloud).
+ */
 export function connectionBase(rowUrl: null | string | undefined, connectionId: string): null | string {
-  return rowUrl ?? liveTunnelBase(connectionId)
+  return liveTunnelBase(connectionId) ?? rowUrl ?? null
 }
 
 export const __testing = {

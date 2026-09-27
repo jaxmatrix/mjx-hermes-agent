@@ -31,8 +31,8 @@ interface SidebarCtx {
   openMobile: boolean
   setOpenMobile: (v: boolean) => void
   toggleMobile: () => void
-  // Right drawer (mobile). Symmetric with the left; its content is a later step,
-  // so the toggle is wired but no drawer is mounted yet.
+  // Phone: left = Sessions|Bots window; right = Workspace window. Both hosts
+  // live in MobileShell and key off these flags (not AppShell Sheets).
   openMobileRight: boolean
   setOpenMobileRight: (v: boolean) => void
   toggleMobileRight: () => void
@@ -69,7 +69,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>
 }
 
-/** Hamburger that opens the phone drawer. Screens drop this into their own header (usually `md:hidden`). */
+/** Opens the phone Sessions window (MobileShell). Screens drop this into their own header (usually `md:hidden`). */
 export function SidebarTrigger({ className }: { className?: string }) {
   const { toggleMobile } = useSidebar()
 

@@ -3,6 +3,7 @@ import { type RefObject, useCallback, useLayoutEffect, useState } from 'react'
 
 import { useResizeObserver } from '@/hooks/use-resize-observer'
 import { triggerHaptic } from '@/lib/haptics'
+import { IS_MOBILE } from '@/lib/platform'
 import {
   $composerPopout,
   $composerPopoutGesturesEnabled,
@@ -88,7 +89,7 @@ function usePopoutPlacement(
 export function useComposerPopout({ composerRef }: UseComposerPopoutOptions) {
   const surfaceId = useComposerSurfaceId()
   const gesturesEnabled = useStore($composerPopoutGesturesEnabled)
-  const popoutAllowed = gesturesEnabled && !isSecondaryWindow()
+  const popoutAllowed = !IS_MOBILE && gesturesEnabled && !isSecondaryWindow()
   const state = useStore($composerPopout)
   const poppedOut = state.poppedOut && popoutAllowed
 

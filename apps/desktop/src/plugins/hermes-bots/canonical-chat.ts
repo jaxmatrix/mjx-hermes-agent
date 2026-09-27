@@ -13,6 +13,7 @@ import { host } from '@hermes/plugin-sdk'
 
 import { $botMeta, botMetaKey, botOwner, persistBotMetaSnapshot } from './data'
 import { botsText } from './i18n'
+import { noteBotConnectionOpened } from './relay'
 import { backendTargetProfile, botConnectionRoute, botRosterMeta, botWorkspaceOwnerKey, requestForBot } from './routing'
 import type { RpcErrorLike } from './routing'
 import { getPluginCtx } from './shared'
@@ -596,6 +597,12 @@ export async function prepareBotSource(bot: RosterRow) {
       getPluginCtx()?.i18n?.t('bot.remoteConnectionsUnsupported') ??
         'Update Hermes Desktop to chat with bots on other connections.'
     )
+  }
+
+  // Mark the home gateway warm so the cross-connection relay may background-
+  // dial it; until then connect-on-demand sources stay out of the 30s drain.
+  if (bot.connectionId) {
+    noteBotConnectionOpened(bot.connectionId)
   }
 
   if (!route && typeof host.ensureAgent === 'function') {

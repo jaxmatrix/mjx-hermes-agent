@@ -28,6 +28,27 @@ import { BotAvatar, RoomAvatar } from './avatar'
 import { CreateRoomDialog } from './create-room-dialog'
 import { openRoomPane } from './room-pane'
 
+/** Pre-warm a row for open: multi-source rows use warmAgent; local use warmProfile. */
+export function warmBotRow(row: Pick<RosterRow, 'connectionId' | 'profile'>): void {
+  if (row.connectionId && typeof host.warmAgent === 'function') {
+    try {
+      host.warmAgent(row.connectionId, row.profile)
+    } catch {
+      /* warm is best-effort */
+    }
+
+    return
+  }
+
+  if (typeof host.warmProfile === 'function') {
+    try {
+      host.warmProfile(row.profile)
+    } catch {
+      /* warm is best-effort */
+    }
+  }
+}
+
 /** The verbs on a bot row. ONE declaration, three surfaces (kebab, right-click,
  *  long-press) — see `plugin.tsx`, which feeds the same list to 478's area. */
 export function botRowVerbs(
@@ -73,7 +94,7 @@ function BotRow({ row }: { row: RosterRow }) {
   const warm = () => {
     if (!warmed) {
       setWarmed(true)
-      void host.warmProfile(row.profile)
+      warmBotRow(row)
     }
   }
 

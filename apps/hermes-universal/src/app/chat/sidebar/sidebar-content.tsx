@@ -1,9 +1,10 @@
+import { KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { refreshCronJobs, triggerAndRefreshCronJobs } from '@/app/cron/cron-actions'
-import { PlatformAvatar } from '@/app/messaging/platform-icon'
-import { cronJobRoute, sessionRoute } from '@/app/routes'
+import { cronJobRoute } from '@/app/routes'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { SearchField } from '@/components/ui/search-field'
@@ -18,6 +19,7 @@ import { useStoreSelector } from '@/lib/use-session-slice'
 import { useStore } from '@/store/atom'
 import { $busy, $sessionId } from '@/store/chat'
 import { $cronJobs } from '@/store/cron'
+import { $showsAdvancedChrome } from '@/store/interface-mode'
 import { $dismissedAutoProjectIds, $pinnedSessionIds, $sidebarAgentsGrouped, $sidebarMessagingOpenIds, $sidebarOrdering, $sidebarPinsOpen, $sidebarPrFilter, $sidebarProjectFilter, $sidebarProjectOrderIds, $sidebarRecentsOpen, $sidebarSessionOrderIds, $sidebarSessionOrderManual, $sidebarShowArchived, $sidebarStatusFilter, pinSession, setPinnedSessionOrder, setSidebarAgentsGrouped, setSidebarPinsOpen, setSidebarProjectOrderIds, setSidebarRecentsOpen, setSidebarSessionOrderIds, setSidebarSessionOrderManual, type SidebarOrdering, toggleSidebarMessagingOpen, unpinSession } from '@/store/layout'
 import { $sidebarCronOpen, setSidebarCronOpen } from '@/store/layout'
 import { livePollIntervalMs } from '@/store/live-poll'
@@ -25,7 +27,7 @@ import { $changeEventsAvailable, $cronChangeTick } from '@/store/live-sync'
 import { startNewSession } from '@/store/new-session'
 import { notifyError } from '@/store/notifications'
 import { SESSION_SEARCH_FOCUS_EVENT } from '@/store/pane-geometry'
-import { $profileScope, ALL_PROFILES, normalizeProfileKey } from '@/store/profile'
+import { $profileScope, ALL_PROFILES, messagingTotalsKey, normalizeProfileKey, sidebarProfileForScope } from '@/store/profile'
 import { $profiles } from '@/store/profiles'
 import {
   $activeProjectId,
@@ -52,21 +54,22 @@ import {
   refreshPullRequests,
   sessionPrKey
 } from '@/store/pull-requests'
-import { $messagingSessions, $sessions, $sessionsLoading, sessionPinId } from '@/store/session'
+import { $messagingPlatformTotals, $messagingSessions, $messagingTruncated, $sessionProfilesTruncated, $sessions, $sessionsLoading, sessionPinId } from '@/store/session'
 import { $sessionDotStateById, sessionStatusBucket, sessionStatusRank } from '@/store/session-dot-state'
+import { resumeSessionIntoMain } from '@/app/resume-session-into-main'
 import {
   $activeStoredSessionId,
   $pinnedSessionCache,
   $searchLoading,
   $sessionSearch,
-  $sessionsTotal,
   $workingSessionIds,
   archiveSessionLocal,
+  branchStoredSession,
   deleteSessionLocal,
   isMessagingSource,
+  loadMoreMessagingForPlatform,
   loadMoreSessions,
   messagingSourceLabel,
-  openSession,
   pinnedSessionRows,
   refreshMessagingSessions,
   refreshSessions,
@@ -80,7 +83,7 @@ import type { SessionInfo, SessionSearchResult } from '@/types/hermes'
 
 import { SidebarCronJobsSection } from './cron-jobs-section'
 import { SidebarFilterMenu } from './filter-menu'
-import { SidebarLoadMoreRow } from './load-more-row'
+import { MessagingPlatformSection } from './messaging-platform-section'
 import { ProjectDialog } from './project-dialog'
 import { type SidebarProjectTree, sortProjectsForOverview, useRepoWorktreeMap } from './projects/model'
 import { ProjectBackRow } from './projects/overview-row'
@@ -91,6 +94,7 @@ import { SidebarPinnedEmptyState } from './section-states'
 import type { SessionDotState } from './session-row-state'
 import { SidebarSessionsSection } from './sessions-section'
 import { stripFtsMarkers } from './strip-fts-markers'
+import { useNearBottomLoad } from './use-near-bottom-load'
 
 // Synthesize a minimal row for a server search hit not in the loaded page.
 function searchResultToSession(r: SessionSearchResult): SessionInfo {
@@ -182,14 +186,18 @@ function applyManualOrder<T extends { id: string }>(items: T[], ids: string[]): 
   return [...fresh, ...known]
 }
 
-const SESSIONS_CONTENT_CLASS =
-  'flex min-h-0 flex-1 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain pb-1 pe-1.5'
+// Phone Sessions window owns ONE outer scroller (SidebarScrollBody root). Nested
+// overflow-y-auto here would grow unbounded (parent was not flex) or fight the
+// outer port — keep the list overflow-visible so the outer port pages.
+const SESSIONS_CONTENT_CLASS = 'flex flex-col gap-0.5 overflow-visible px-0.5 pt-0.5 pb-1 pe-1.5'
 
 // All-profiles lanes need breathing room between group headers; the flat list
-// packs rows at gap-px.
-const SESSIONS_CONTENT_GROUPED_CLASS = SESSIONS_CONTENT_CLASS.replace('gap-px', 'gap-3')
+// packs rows at gap-0.5 (room for the outward running-turn arc).
+const SESSIONS_CONTENT_GROUPED_CLASS = SESSIONS_CONTENT_CLASS.replace('gap-0.5', 'gap-3')
 
-const SESSIONS_ROOT_CLASS = 'flex min-h-0 flex-1 flex-col p-0'
+const SESSIONS_ROOT_CLASS = 'shrink-0 flex flex-col p-0'
+
+const SCROLL_Y = 'overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-fade'
 
 // Legacy cadences, kept for a gateway that does not broadcast change events;
 // on one that does, the same fetch becomes a slow backstop behind the ticks.
@@ -215,9 +223,16 @@ let cachedEnteredProject: { project: null | SidebarProjectTree; scope: string } 
 // list. Pinned lands in Phase 5; messaging groups + cron in Phases 7–8.
 export function SidebarScrollBody({
   onNavigate,
+  onResumeSession: onResumeSessionProp,
   searchPlacement = 'top'
 }: {
   onNavigate?: () => void
+  /**
+   * Open a stored chat. Phone Sessions host always passes this (owner-aware
+   * `resumeSessionIntoMain`). Default is the same door — never lifecycle
+   * `openSession` (that is for satellites / bubble promote only).
+   */
+  onResumeSession?: (sessionId: string, session?: SessionInfo) => void
   /** `bottom` puts the field just above the phone surface's nav bar, where a
    *  thumb already is; the docked pane keeps it at the top of the list. */
   searchPlacement?: 'bottom' | 'top'
@@ -225,7 +240,7 @@ export function SidebarScrollBody({
   const { t } = useI18n()
   const s = t.sidebar
   const sessions = useStore($sessions)
-  const total = useStore($sessionsTotal)
+  const sessionProfilesTruncated = useStore($sessionProfilesTruncated)
   const sessionsLoading = useStore($sessionsLoading)
   const activeId = useStore($activeStoredSessionId)
   const changeEventsAvailable = useStore($changeEventsAvailable)
@@ -267,11 +282,11 @@ export function SidebarScrollBody({
   const messagingOpenIds = useStore($sidebarMessagingOpenIds)
   const cronJobs = useStore($cronJobs)
   const cronOpen = useStore($sidebarCronOpen)
+  const showsAdvancedChrome = useStore($showsAdvancedChrome)
   const busy = useStore($busy)
   const runtimeSessionId = useStore($sessionId)
   const profileScope = useStore($profileScope)
   const profiles = useStore($profiles)
-  const [messagingReveal, setMessagingReveal] = useState<Record<string, number>>({})
 
   const [enteredProject, setEnteredProjectState] = useState<SidebarProjectTree | null>(() =>
     cachedEnteredProject?.scope === scope ? cachedEnteredProject.project : null
@@ -561,6 +576,11 @@ export function SidebarScrollBody({
     return orderManual && orderIds.length ? applyManualOrder(base, orderIds) : base
   }, [pool, pinnedIds, orderManual, orderIds, ordering, dotStates, filtersNarrow, sessionMatchesFilters])
 
+  const messagingTruncated = useStore($messagingTruncated)
+  const messagingPlatformTotals = useStore($messagingPlatformTotals)
+  const messagingProfile = sidebarProfileForScope(profileScope)
+  const [messagingLoadMorePending, setMessagingLoadMorePending] = useState<Record<string, boolean>>({})
+
   // Per-platform messaging groups (Discord, Telegram, …), busiest first.
   const messagingGroups = useMemo(() => {
     const map = new Map<string, SessionInfo[]>()
@@ -578,13 +598,31 @@ export function SidebarScrollBody({
     }
 
     return [...map.entries()]
-      .map(([sourceId, groupSessions]) => ({
-        label: messagingSourceLabel(sourceId),
-        sessions: groupSessions,
-        sourceId
-      }))
+      .map(([sourceId, groupSessions]) => {
+        const known = messagingPlatformTotals[messagingTotalsKey(messagingProfile, sourceId)]
+        const total = Math.max(groupSessions.length, known ?? 0)
+
+        return {
+          hasMore: known != null ? known > groupSessions.length : messagingTruncated,
+          label: messagingSourceLabel(sourceId),
+          sessions: groupSessions,
+          sourceId,
+          total
+        }
+      })
       .sort((a, b) => b.sessions.length - a.sessions.length)
-  }, [messagingSessions])
+  }, [messagingSessions, messagingPlatformTotals, messagingTruncated, messagingProfile])
+
+  const loadMoreForMessaging = useCallback((platform: string) => {
+    if (messagingLoadMorePending[platform]) {
+      return
+    }
+
+    setMessagingLoadMorePending(prev => ({ ...prev, [platform]: true }))
+    void loadMoreMessagingForPlatform(platform).finally(() => {
+      setMessagingLoadMorePending(prev => ({ ...prev, [platform]: false }))
+    })
+  }, [messagingLoadMorePending])
 
   // Desktop's `multiProfile` gate: with a single profile the rail hides its
   // toggle, so a persisted browse flag would trap the user in the grouped view.
@@ -758,16 +796,26 @@ export function SidebarScrollBody({
   // `store/session.ts` / `store/projects.ts`.
   const onArchiveSession = useCallback((id: string) => void archiveSessionLocal(id), [])
   const onDeleteSession = useCallback((id: string) => void deleteSessionLocal(id), [])
+  const onBranchSession = useCallback((id: string) => void branchStoredSession(id), [])
 
   const onResumeSession = useCallback(
-    (id: string) => {
-      void openSession(id)
-      // Route back to the session so a page view (Capabilities/Messaging/
-      // Artifacts) unmounts and the resumed chat is actually shown.
-      navigate(sessionRoute(id))
+    (id: string, session?: SessionInfo) => {
+      if (onResumeSessionProp) {
+        onResumeSessionProp(id, session)
+      } else {
+        resumeSessionIntoMain(id, navigate, session)
+      }
+
       onNavigate?.()
     },
-    [navigate, onNavigate]
+    [navigate, onNavigate, onResumeSessionProp]
+  )
+
+  // Same activation distance as desktop ChatSidebar — without it, default
+  // PointerSensor arms on tiny touch moves and steals the resume tap.
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
   // `activeId` and `working` legitimately change what a row renders, so they
@@ -775,22 +823,63 @@ export function SidebarScrollBody({
   const rowHandlers = useMemo(
     () => ({
       activeSessionId: activeId,
+      dndSensors,
       onArchiveSession,
+      onBranchSession,
       onDeleteSession,
       onResumeSession,
       onTogglePin: togglePin,
       onToggleUnread: toggleUnread,
       workingSessionIdSet: working
     }),
-    [activeId, onArchiveSession, onDeleteSession, onResumeSession, toggleUnread, working]
+    [
+      activeId,
+      dndSensors,
+      onArchiveSession,
+      onBranchSession,
+      onDeleteSession,
+      onResumeSession,
+      toggleUnread,
+      working
+    ]
   )
 
-  const hasMore = sessions.length < total
+  const hasMore =
+    !showArchived &&
+    (profileScope === ALL_PROFILES
+      ? Object.values(sessionProfilesTruncated).some(Boolean)
+      : Boolean(sessionProfilesTruncated[profileScope]))
+
+  const [recentsLoadMorePending, setRecentsLoadMorePending] = useState(false)
+
+  const loadMoreRecents = useCallback(async () => {
+    if (recentsLoadMorePending || !hasMore || grouped) {
+      return
+    }
+
+    setRecentsLoadMorePending(true)
+
+    try {
+      await loadMoreSessions()
+    } finally {
+      setRecentsLoadMorePending(false)
+    }
+  }, [grouped, hasMore, recentsLoadMorePending])
+
+  const onSessionsScroll = useNearBottomLoad({
+    hasMore: hasMore && !grouped && !trimmed,
+    loading: sessionsLoading || recentsLoadMorePending,
+    onLoadMore: () => void loadMoreRecents()
+  })
 
   const searchField = (
-    <div className="shrink-0 px-2 pb-1 pt-1">
+    <div className="shrink-0 px-2 pb-1 pt-1" data-slot="sessions-search">
       <SearchField
         aria-label={s.searchAria}
+        // Phone sidebar type tokens — larger than the shared text-xs default.
+        containerClassName="w-full gap-2"
+        iconClassName="size-4"
+        inputClassName="h-[var(--sidebar-row-min-h)] text-[length:var(--sidebar-row-title-size)]"
         inputRef={searchInputRef}
         loading={searching}
         onChange={setQuery}
@@ -801,8 +890,14 @@ export function SidebarScrollBody({
   )
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-1.5">
+    <div className="flex h-full min-h-0 flex-1 flex-col px-2.5 pb-1.5">
       {searchPlacement === 'top' && searchField}
+
+      <div
+        className={`flex min-h-0 flex-1 flex-col ${SCROLL_Y}`}
+        data-slot="sessions-scroll-port"
+        onScroll={onSessionsScroll}
+      >
 
       {trimmed ? (
         <SidebarSessionsSection
@@ -822,7 +917,7 @@ export function SidebarScrollBody({
         <>
           <SidebarSessionsSection
             {...rowHandlers}
-            contentClassName="flex max-h-44 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain rounded-lg pb-2 pt-1"
+            contentClassName="flex max-h-44 flex-col gap-0.5 overflow-y-auto overflow-x-hidden overscroll-contain rounded-lg px-0.5 pb-2 pt-1"
             emptyState={<SidebarPinnedEmptyState />}
             label={s.pinned}
             onReorderSessions={ids => {
@@ -847,16 +942,10 @@ export function SidebarScrollBody({
                 {grouped ? s.projectEmpty : s.noSessions}
               </div>
             }
-            footer={
-              !grouped && hasMore ? (
-                <div className="pt-1">
-                  <SidebarLoadMoreRow loading={sessionsLoading} onClick={() => void loadMoreSessions()} step={0} />
-                </div>
-              ) : null
-            }
+            footer={null}
             groups={profileGroups}
             headerAction={
-              <div className="flex shrink-0 items-center gap-0.5">
+              <div className="flex shrink-0 flex-nowrap items-center gap-0.5 pe-1.5">
                 {/* Inside a project: spin up a worktree off its repo root. The
                     same dialog the composer's ⌘⇧B opens. */}
                 {inProject && enteredProject?.path && <StartWorkButton repoPath={enteredProject.path} />}
@@ -864,18 +953,18 @@ export function SidebarScrollBody({
                   <Tip label={s.projects.newButton}>
                     <button
                       aria-label={s.projects.newButton}
-                      className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/section:opacity-100 coarse:opacity-100"
+                      className="grid size-8 shrink-0 place-items-center rounded-sm text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/section:opacity-100 coarse:opacity-100"
                       onClick={openProjectCreate}
                       type="button"
                     >
-                      <Codicon name="add" size="0.75rem" />
+                      <Codicon name="add" size="0.875rem" />
                     </button>
                   </Tip>
                 )}
                 <Tip label={grouped ? s.groupTitleGrouped : s.groupTitleUngrouped}>
                   <button
                     aria-label={grouped ? s.showSessions : s.showProjects}
-                    className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) opacity-70 transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100"
+                    className="grid size-8 shrink-0 place-items-center rounded-sm text-(--ui-text-tertiary) opacity-100 transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground"
                     onClick={() => {
                       if (grouped) {
                         exitProjectScope()
@@ -885,7 +974,7 @@ export function SidebarScrollBody({
                     }}
                     type="button"
                   >
-                    <Codicon name={grouped ? 'list-unordered' : 'root-folder'} size="0.75rem" />
+                    <Codicon name={grouped ? 'list-unordered' : 'root-folder'} size="0.875rem" />
                   </button>
                 </Tip>
                 {/* Same placement and same gate as desktop: the view menu sits
@@ -893,9 +982,10 @@ export function SidebarScrollBody({
                     scope hides it — its grouping, ordering and project filter
                     all describe a single-profile list. */}
                 {!showAllProfiles && (
-                  <div className="grid size-5 place-items-center">
-                    <SidebarFilterMenu className="text-(--ui-text-tertiary) opacity-70 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100 focus-visible:opacity-100" />
-                  </div>
+                  <SidebarFilterMenu
+                    className="shrink-0 text-(--ui-text-tertiary) opacity-100 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:opacity-100"
+                    size="icon-sm"
+                  />
                 )}
               </div>
             }
@@ -915,7 +1005,7 @@ export function SidebarScrollBody({
                   <GlyphSpinner ariaLabel={s.loading} className="text-[0.6875rem] text-(--ui-text-quaternary)" />
                 ) : undefined
               ) : (
-                sessionListMeta(recents.length, total)
+                sessionListMeta(recents.length, hasMore ? recents.length + 1 : recents.length)
               )
             }
             onEnterProject={enterProject}
@@ -946,47 +1036,30 @@ export function SidebarScrollBody({
           />
 
           {/* Messaging platform groups (Discord etc.) — flat view only, below
-              recents; collapsed by default, progressive reveal. */}
+              recents; collapsed by default, progressive reveal on scroll. */}
           {!grouped &&
-            messagingGroups.map(group => {
-              const shown = messagingReveal[group.sourceId] ?? 3
+            messagingGroups.map(group => (
+              <MessagingPlatformSection
+                contentClassName="flex max-h-56 flex-col gap-0.5 overflow-y-auto overflow-x-hidden overscroll-contain px-0.5 pt-0.5 pb-1.5"
+                group={group}
+                key={group.sourceId}
+                labelMeta={sessionListMeta(
+                  Math.min(3, group.sessions.length),
+                  group.sessions.length
+                )}
+                loadingMore={Boolean(messagingLoadMorePending[group.sourceId])}
+                onRevealExhausted={() => loadMoreForMessaging(group.sourceId)}
+                onToggle={() => toggleSidebarMessagingOpen(group.sourceId)}
+                open={messagingOpenIds.includes(group.sourceId)}
+                rootClassName="shrink-0 p-0"
+                rowHandlers={rowHandlers}
+              />
+            ))}
 
-              return (
-                <SidebarSessionsSection
-                  {...rowHandlers}
-                  contentClassName="flex max-h-56 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain pb-1.5"
-                  emptyState={null}
-                  footer={
-                    group.sessions.length > shown ? (
-                      <div className="flex pt-0.5">
-                        <SidebarLoadMoreRow
-                          onClick={() => setMessagingReveal(r => ({ ...r, [group.sourceId]: shown + 10 }))}
-                          step={10}
-                        />
-                      </div>
-                    ) : null
-                  }
-                  key={group.sourceId}
-                  label={group.label}
-                  labelIcon={
-                    <PlatformAvatar
-                      className="size-4 rounded-[4px] text-[0.5625rem] [&_svg]:size-3"
-                      platformId={group.sourceId}
-                      platformName={group.label}
-                    />
-                  }
-                  labelMeta={sessionListMeta(Math.min(shown, group.sessions.length), group.sessions.length)}
-                  onToggle={() => toggleSidebarMessagingOpen(group.sourceId)}
-                  open={messagingOpenIds.includes(group.sourceId)}
-                  pinned={false}
-                  rootClassName="shrink-0 p-0"
-                  sessions={group.sessions.slice(0, shown)}
-                />
-              )
-            })}
-
-          {/* Cron jobs — flat view only, collapsed by default, live countdowns. */}
-          {!grouped && cronJobs.length > 0 && (
+          {/* Cron jobs — flat view only, collapsed by default, live countdowns.
+              Advanced chrome only: Simple mode keeps the setup destinations,
+              not the scheduled-jobs readout (matches desktop SIDEBAR_NAV). */}
+          {!grouped && showsAdvancedChrome && cronJobs.length > 0 && (
             <SidebarCronJobsSection
               jobs={cronJobs}
               label={s.cronJobs}
@@ -994,11 +1067,7 @@ export function SidebarScrollBody({
               // row lands on whichever job sorts first — the kebab acting on
               // someone else's job.
               onManageJob={jobId => openAppRoute(cronJobRoute(jobId))}
-              onOpenRun={id => {
-                void openSession(id)
-                navigate(sessionRoute(id))
-                onNavigate?.()
-              }}
+              onOpenRun={onResumeSession}
               onToggle={() => setSidebarCronOpen(!cronOpen)}
               onTriggerJob={onTriggerCronJob}
               open={cronOpen}
@@ -1006,6 +1075,8 @@ export function SidebarScrollBody({
           )}
         </>
       )}
+
+      </div>
 
       {searchPlacement === 'bottom' && searchField}
 

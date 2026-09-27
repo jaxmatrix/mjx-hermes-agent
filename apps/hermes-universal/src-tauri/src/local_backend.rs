@@ -810,6 +810,23 @@ pub(crate) fn close_log(app: &AppHandle, until: tokio::time::Instant) {
 #[cfg(mobile)]
 pub(crate) fn close_log(_app: &tauri::AppHandle, _until: tokio::time::Instant) {}
 
+/// Wait for pipe drains from a killed local child (quit path).
+#[cfg(desktop)]
+pub(crate) async fn await_log_drains(
+    drains: Vec<tokio::task::JoinHandle<()>>,
+    until: tokio::time::Instant,
+) {
+    crate::backend_log::await_drains(drains, until).await
+}
+
+#[cfg(mobile)]
+pub(crate) async fn await_log_drains(
+    drains: Vec<tokio::task::JoinHandle<()>>,
+    _until: tokio::time::Instant,
+) {
+    drop(drains);
+}
+
 /// Start the child for a background lease (MJXHRM-592).
 #[cfg(desktop)]
 pub(crate) async fn dial_tunnel(app: &AppHandle, dial: Dial) {

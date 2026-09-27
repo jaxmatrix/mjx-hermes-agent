@@ -209,7 +209,12 @@ export const VirtualSessionList: FC<VirtualSessionListProps> = ({
       // virtualized (#84964) — the scrollbar still dragged, only the wheel
       // died. The outer sidebar scroller keeps its own overscroll-contain, so
       // the gesture still never escapes the sidebar.
-      className={cn('scrollbar-fade relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto', className)}
+      className={cn(
+        // px/pt-0.5: room for the outward running-turn arc inside the clip edge
+        // (including above the first row).
+        'scrollbar-fade relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-0.5 pt-0.5',
+        className
+      )}
       ref={scrollerRef}
     >
       <div className="relative" style={{ height: `${totalSize}px` }}>

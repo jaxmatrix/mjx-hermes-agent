@@ -9,13 +9,11 @@ import { useStatusbarItems } from '@/app/shell/hooks/use-statusbar-items'
 import { NAV_ROW_ACTIVE } from '@/app/shell/nav-row'
 import { SidebarPanelLabel } from '@/app/shell/sidebar-label'
 import { type StatusbarItem, StatusbarItemView } from '@/app/shell/statusbar-controls'
-import { useI18n } from '@/i18n'
-import { Settings, Users } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { $activeConnectionId } from '@/store/active-connection'
+import { requestGateway } from '@/store/gateway-client'
 import { $activeGatewayProfile } from '@/store/profile'
 import { $freshDraftReady, $gatewayState } from '@/store/session'
-import { openProfilesScreen, openSettingsScreen } from '@/store/windows'
 
 /** MobileStatusList CVA (MJXHRM-315). */
 export const mobileStatusListVariants = cva('flex min-h-0 flex-1 flex-col overflow-y-auto px-2.5 py-2')
@@ -46,17 +44,23 @@ const PLUGINS_SECTION = 'Plugins'
 
 const SECTIONS: { title: string; ids: readonly string[] }[] = [
   { title: 'Session', ids: ['running-timer', 'session-timer', 'context-usage'] },
-  { title: 'Status', ids: ['gateway-health', 'workspace-cwd', 'agents', 'cron', 'approval-mode'] },
+  { title: 'Status', ids: ['gateway-health', 'workspace-cwd', 'cron', 'approval-mode'] },
   { title: 'Updates', ids: ['version-client', 'version-backend'] },
   { title: 'System', ids: ['command-center'] }
 ]
 
 // Ids this list deliberately drops. `terminal` toggles `$terminalOpen`, which
 // only desktop surfaces read — on a phone the terminal is a Workspace tab, so
-// the row looked live and did nothing. It has to be named here rather than just
-// left out of SECTIONS, because anything a section does not claim falls through
-// into the trailing contributed bucket.
-const HIDDEN_IDS = new Set(['terminal'])
+// the row looked live and did nothing. `agents` / Settings / Profiles live on
+// the Workspace bottom rail instead. Named here rather than just left out of
+// SECTIONS, because anything a section does not claim falls through into the
+// trailing contributed bucket.
+const HIDDEN_IDS = new Set(['agents', 'terminal'])
+
+// This surface only displays the command-center / agents descriptors; their
+// real doors live on the Workspace rail. Keep the inert callbacks stable so an
+// ambient status update does not rebuild every descriptor in useStatusbarItems.
+const ignoreStatusAction = () => {}
 
 // Re-shape a bar descriptor for the nav-styled row list:
 //   • icon-only items (command-center) have no label + a square layout
@@ -122,7 +126,6 @@ function MobileStatusRow({
 // `rich`) as vertical nav-styled rows, grouped into Session / Status / System
 // sections with sidebar-style headers.
 export function MobileStatusList() {
-  const { t } = useI18n()
   const navigate = useNavigate()
   // The phone never mounts the Statusbar (MobileController gates it on
   // !IS_MOBILE), so this list is the ONLY place `statusBar.*` contributions can
@@ -134,7 +137,7 @@ export function MobileStatusList() {
   const activeConnectionId = useStore($activeConnectionId)
   const activeGatewayProfile = useStore($activeGatewayProfile)
   const gatewayScope = `${activeConnectionId ?? ''}\0${activeGatewayProfile}`
-  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, async () => undefined as never, gatewayScope)
+  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, requestGateway, gatewayScope)
 
   const { leftStatusbarItems, statusbarItems } = useStatusbarItems({
     agentsOpen: false,
@@ -145,43 +148,12 @@ export function MobileStatusList() {
     freshDraftReady,
     gatewayState,
     inferenceStatus,
-    openAgents: () => {},
-    openCommandCenterSection: () => {},
-    requestGateway: async () => undefined as never,
+    openAgents: ignoreStatusAction,
+    openCommandCenterSection: ignoreStatusAction,
+    requestGateway,
     statusSnapshot,
-    toggleCommandCenter: () => {}
+    toggleCommandCenter: ignoreStatusAction
   })
-
-  // Open Settings — appended to the System section (opens the Settings activity on
-  // Android, the in-app overlay elsewhere). A synthetic action item so it renders
-  // identically to the other System rows (command-center). Memoized like every
-  // other descriptor here: these two go straight into `StatusbarItemView`, so a
-  // fresh literal per render is a guaranteed memo miss (MJXHRM-303).
-  const openSettingsRow: StatusbarItem = useMemo(
-    () => ({
-      icon: <Settings className="size-3.5" />,
-      id: 'open-settings',
-      label: t.titlebar.openSettings,
-      onSelect: () => void openSettingsScreen(),
-      title: t.titlebar.openSettings,
-      variant: 'action'
-    }),
-    [t.titlebar.openSettings]
-  )
-
-  // Profiles — the third windowable screen; opens the Profiles surface (native
-  // screen activity on Android, in-app overlay elsewhere).
-  const openProfilesRow: StatusbarItem = useMemo(
-    () => ({
-      icon: <Users className="size-3.5" />,
-      id: 'open-profiles',
-      label: t.profiles.title,
-      onSelect: () => void openProfilesScreen(),
-      title: t.profiles.title,
-      variant: 'action'
-    }),
-    [t.profiles.title]
-  )
 
   // Section assembly, memoized on the two groups. It allocates a Map, a Set and
   // four arrays, and the hook above re-runs on ~20 stores — the groups only
@@ -234,14 +206,6 @@ export function MobileStatusList() {
                 navigate={navigate}
               />
             ))}
-            {/* The screen switcher (Open Settings · Profiles) sits at the end of
-                the System section, next to Command Center. */}
-            {section.title === 'System' && (
-              <>
-                <StatusbarItemView item={openSettingsRow} navigate={navigate} row />
-                <StatusbarItemView item={openProfilesRow} navigate={navigate} row />
-              </>
-            )}
           </div>
         </div>
       ))}

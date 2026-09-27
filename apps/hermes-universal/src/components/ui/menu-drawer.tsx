@@ -1,13 +1,17 @@
 import { createContext, type ReactNode, useContext, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { TopDrawer, TopDrawerRow } from '@/components/ui/top-drawer'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { TopDrawerRow } from '@/components/ui/top-drawer'
+import { useI18n } from '@/i18n'
+import { ChevronLeft } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 import type { MenuItemProps, MenuKit, MenuSectionProps } from './actions-menu'
 
 /**
- * A `MenuKit` that renders a menu as a top DRAWER, with submenus as PAGES.
+ * A `MenuKit` that renders a menu as a bottom DRAWER, with submenus as PAGES.
  *
  * The menu itself is not rewritten. A caller already describes its rows once and
  * hands the description to `DROPDOWN_KIT` or `CONTEXT_KIT`; this is a third
@@ -18,6 +22,10 @@ import type { MenuItemProps, MenuKit, MenuSectionProps } from './actions-menu'
  * not have, and lands a second floating panel over the first. Here a submenu row
  * pushes its content as a page with a back button: one panel, full-width rows,
  * and the same gesture for every level.
+ *
+ * WHY BOTTOM. On the phone shell every action/context menu should land under the
+ * thumb. Top drawers remain for chrome that hangs under a title bar; MenuDrawer
+ * is the action-list path and always sheets from the bottom.
  */
 
 interface DrawerPage {
@@ -85,10 +93,14 @@ function DrawerItem({ children, className, disabled, onSelect, variant }: MenuIt
     <TopDrawerRow
       onSelect={() => {
         // Radix hands `onSelect` a DOM event it can `preventDefault()` to keep
-        // the menu open. Nothing in a drawer reads it, but the signature is the
-        // caller's, so give it a real event rather than a cast.
-        onSelect?.(new Event('select'))
-        close()
+        // the menu open (voice toggles). Honour that here so a drawer toggle
+        // does not slam shut the moment you flip it.
+        const event = new Event('select', { cancelable: true })
+        onSelect?.(event)
+
+        if (!event.defaultPrevented) {
+          close()
+        }
       }}
     >
       <span className={cn('flex min-w-0 flex-1 items-center gap-3', variant === 'destructive' && 'text-destructive')}>
@@ -149,35 +161,33 @@ function DrawerSeparator() {
 }
 
 export const DRAWER_KIT: MenuKit = {
-  Item: DrawerItem,
-  Label: DrawerLabel,
-  Separator: DrawerSeparator,
-  Sub: DrawerSub,
-  SubContent: DrawerSubContent,
-  SubTrigger: DrawerSubTrigger,
+  Item: DrawerItem as MenuKit['Item'],
+  Label: DrawerLabel as MenuKit['Label'],
+  Separator: DrawerSeparator as MenuKit['Separator'],
+  Sub: DrawerSub as MenuKit['Sub'],
+  SubContent: DrawerSubContent as MenuKit['SubContent'],
+  SubTrigger: DrawerSubTrigger as MenuKit['SubTrigger'],
   copyAppearance: 'menu-item'
 }
 
 /**
- * Host a kit-rendered menu in a top drawer.
+ * Host a kit-rendered menu in a bottom drawer.
  *
  * Owns the page stack so `DRAWER_KIT` can push from anywhere inside the tree
  * without the caller threading state through its spec list.
  */
 export function MenuDrawer({
-  offsetTop,
   onOpenChange,
   open,
   render,
   title
 }: {
-  /** Bottom edge of the control that opened this — see `TopDrawer`. */
-  offsetTop?: number
   onOpenChange: (open: boolean) => void
   open: boolean
   render: (kit: MenuKit) => ReactNode
   title: string
 }) {
+  const common = useI18n().t.common
   const [page, setPage] = useState<DrawerPage | null>(null)
 
   const close = () => {
@@ -187,20 +197,46 @@ export function MenuDrawer({
     setPage(null)
   }
 
+  const heading = page ? page.title : title
+
   return (
     <Ctx.Provider value={{ close, push: setPage }}>
-      <TopDrawer
-        offsetTop={offsetTop}
-        onBack={page ? () => setPage(null) : undefined}
-        onOpenChange={next => (next ? onOpenChange(true) : close())}
-        open={open}
-        title={page ? page.title : title}
-      >
-        {/* The page is where a submenu's `SubContent` class lands — the one
-            element that stands for that submenu's body on this flavour. The
-            markers stay markers; they never reach the DOM. */}
-        {page ? <div className={page.className}>{page.content}</div> : render(DRAWER_KIT)}
-      </TopDrawer>
+      <Sheet onOpenChange={next => (next ? onOpenChange(true) : close())} open={open}>
+        <SheetContent
+          className={cn(
+            'flex max-h-[min(75vh,var(--visual-viewport-height,100vh))] flex-col gap-0 rounded-t-xl p-0',
+            'pb-[max(0.5rem,var(--safe-area-inset-bottom,0px))]',
+            'outline-none focus:outline-none focus-visible:outline-none',
+            // Lift above the soft keyboard when it is up (portal lives on body).
+            'keyboard-open:mb-[var(--keyboard-inset,0px)]'
+          )}
+          data-menu-drawer
+          onOpenAutoFocus={event => {
+            event.preventDefault()
+            ;(event.currentTarget as HTMLElement | null)?.focus?.()
+          }}
+          showCloseButton={false}
+          side="bottom"
+        >
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/65 px-2 py-1.5">
+            {page ? (
+              <Button aria-label={common.back} onClick={() => setPage(null)} size="icon" type="button" variant="ghost">
+                <ChevronLeft className="size-5" />
+              </Button>
+            ) : null}
+            <SheetTitle className="min-w-0 flex-1 truncate px-2 text-sm font-medium">{heading}</SheetTitle>
+            <Button aria-label={common.close} onClick={close} size="icon" type="button" variant="ghost">
+              <Codicon name="close" size="1rem" />
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+            {/* The page is where a submenu's `SubContent` class lands — the one
+                element that stands for that submenu's body on this flavour. The
+                markers stay markers; they never reach the DOM. */}
+            {page ? <div className={page.className}>{page.content}</div> : open ? render(DRAWER_KIT) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
     </Ctx.Provider>
   )
 }

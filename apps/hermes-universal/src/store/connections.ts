@@ -38,7 +38,7 @@ import {
 } from '@/store/connection-tunnels'
 import { disposeSecondariesForConnection } from '@/store/gateway'
 import type { AuthMode, Connection, GatewayMode } from '@/store/gateway-config'
-import { $restoring, claimPendingOAuth, loadGatewayTarget } from '@/store/gateway-restore'
+import { claimPendingOAuth, beginGatewayRestore, finishGatewayRestore, loadGatewayTarget } from '@/store/gateway-restore'
 import { notify } from '@/store/notifications'
 import {
   $activeGatewayProfile,
@@ -639,8 +639,9 @@ function identityOf(resolved: ResolvedDial, connection?: Connection) {
       ? { ...connection, mode: resolved.mode, profile }
       : {
           // A tunnel's token never leaves Rust, which attaches it by base.
+          // Prefer the live tunnel over an advertised LAN URL (phone REST).
           authMode: tunnelled ? 'token' : resolved.mode === 'cloud' ? 'oauth' : (resolved.authMode ?? 'none'),
-          baseUrl: resolved.baseUrl ?? liveTunnelBase(resolved.connectionId) ?? '',
+          baseUrl: liveTunnelBase(resolved.connectionId) ?? resolved.baseUrl ?? '',
           mode: resolved.mode,
           profile,
           ...(resolved.remoteHost && { remoteHost: resolved.remoteHost })
@@ -705,6 +706,11 @@ async function resumePendingSignIn(registry: RegistryView): Promise<boolean> {
  * `owner` is the window that owns the app's persisted state: it alone hands
  * Rust the pre-registry target to seed from. `boot.ts` holds the bridge on this
  * (`holdForLaunch`), so it must always settle.
+ *
+ * When the owner publishes a source, `$restoring` stays true until
+ * `useGatewayBoot` opens the socket (or fails). Clearing it here used to flash
+ * ConnectScreen between identity publish and dial. Non-owner windows only
+ * mirror identity and never dial here — they always clear restoring.
  */
 export async function restoreLaunchConnection(owner: boolean): Promise<void> {
   if (restoreAttempted || !IS_TAURI) {
@@ -712,6 +718,12 @@ export async function restoreLaunchConnection(owner: boolean): Promise<void> {
   }
 
   restoreAttempted = true
+
+  // Sync before the first await so MobileController's first paint can show the
+  // connecting screen for a registry launch (not only a legacy saved target).
+  if (owner) {
+    beginGatewayRestore()
+  }
 
   try {
     // Listening BEFORE the read: a commit between the two would be in neither.
@@ -733,7 +745,10 @@ export async function restoreLaunchConnection(owner: boolean): Promise<void> {
     // still resolving its row: the bridge is released onto THAT identity, not
     // onto the null before it.
     await appliesSettled()
-    $restoring.set(false)
+
+    if (!owner || $activeConnection.get() == null) {
+      finishGatewayRestore()
+    }
   }
 }
 

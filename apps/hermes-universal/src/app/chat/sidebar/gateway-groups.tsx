@@ -16,7 +16,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { ActionsMenu, type MenuKit } from '@/components/ui/actions-menu'
 import { Input } from '@/components/ui/input'
 import { ProfileGlyph } from '@/components/ui/profile-glyph'
 import { useContributions } from '@/contrib'
@@ -184,7 +184,7 @@ function GatewayProfileGroup({
 
   return (
     <SidebarRowStack
-      className={cn(sortable.dragging && 'relative z-10')}
+      className={cn('gap-0.5', sortable.dragging && 'relative z-10')}
       data-gateway-group={group.profile ? group.id : undefined}
       data-gateway-section={!group.profile ? group.id : undefined}
       ref={sortable.ref}
@@ -226,32 +226,34 @@ function GatewayProfileGroup({
                 }
               />
             )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button aria-label={`${copy.actions}: ${label}`} size="icon-xs" variant="ghost">
-                  <Codicon name="ellipsis" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onSelect={() => {
-                    setDraft(aliases[group.id] || '')
-                    setRenaming(true)
-                  }}
-                >
-                  {copy.rename}
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={!aliases[group.id]} onSelect={() => renameGatewayGroup(group.id, '')}>
-                  {copy.resetName}
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={first} onSelect={() => onMove(-1)}>
-                  {copy.moveUp}
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={last} onSelect={() => onMove(1)}>
-                  {copy.moveDown}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ActionsMenu
+              ariaLabel={`${copy.actions}: ${label}`}
+              items={(kit: MenuKit) => (
+                <>
+                  <kit.Item
+                    onSelect={() => {
+                      setDraft(aliases[group.id] || '')
+                      setRenaming(true)
+                    }}
+                  >
+                    {copy.rename}
+                  </kit.Item>
+                  <kit.Item disabled={!aliases[group.id]} onSelect={() => renameGatewayGroup(group.id, '')}>
+                    {copy.resetName}
+                  </kit.Item>
+                  <kit.Item disabled={first} onSelect={() => onMove(-1)}>
+                    {copy.moveUp}
+                  </kit.Item>
+                  <kit.Item disabled={last} onSelect={() => onMove(1)}>
+                    {copy.moveDown}
+                  </kit.Item>
+                </>
+              )}
+            >
+              <Button aria-label={`${copy.actions}: ${label}`} size="icon-xs" variant="ghost">
+                <Codicon name="ellipsis" />
+              </Button>
+            </ActionsMenu>
           </div>
         }
         className={cn(sortable.dragging && 'cursor-grabbing bg-(--ui-sidebar-surface-background)')}

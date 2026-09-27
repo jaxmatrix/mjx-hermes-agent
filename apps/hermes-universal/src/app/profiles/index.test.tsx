@@ -178,4 +178,16 @@ describe('ProfilesView', () => {
     expect(selectProfile).not.toHaveBeenCalled()
     expect(setActiveProfile).not.toHaveBeenCalled()
   })
+
+  it('embedded mode skips the overlay close affordance', async () => {
+    vi.mocked(refreshProfiles).mockResolvedValue([makeProfile('default', true)])
+
+    await act(async () => {
+      render(<ProfilesView embedded onClose={vi.fn()} />)
+    })
+
+    expect(document.querySelector('[data-slot="profiles-embedded"]')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Close profiles' })).toBeNull()
+    expect(await screen.findByText('Profiles')).toBeTruthy()
+  })
 })

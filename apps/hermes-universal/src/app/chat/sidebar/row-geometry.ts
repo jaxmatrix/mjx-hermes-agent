@@ -21,8 +21,12 @@ import { cn } from '@/lib/utils'
 // Owned anywhere else, the age / chips / kebab sit flush on the border box,
 // which is exactly where a working row paints its arc (`.arc-row` has zero
 // standoff) — the ring ran through the text.
+//
+// Title / meta / min-height read CSS vars (`--sidebar-row-*`) so phone can
+// bump readability under `html.is-mobile` without scattering literals. Desktop
+// defaults live on `:root` in styles.css.
 
-export const SIDEBAR_ROW_MIN_H = 'min-h-[1.625rem]' as const
+export const SIDEBAR_ROW_MIN_H = 'min-h-[var(--sidebar-row-min-h,1.625rem)]' as const
 export const SIDEBAR_ROW_PAD_X = 'pl-2 pr-2' as const
 export const SIDEBAR_ROW_PAD_TRAIL = 'pr-2' as const
 export const SIDEBAR_ROW_GAP = 'gap-1.5' as const
@@ -44,7 +48,13 @@ export const SIDEBAR_ROW_INSET = cn(
 export const SIDEBAR_TRUNCATED_LEADING = 'leading-[1.35]' as const
 
 export const SIDEBAR_ROW_LABEL = cn(
-  'min-w-0 truncate text-[0.8125rem] text-(--ui-text-secondary)',
+  'min-w-0 truncate text-[length:var(--sidebar-row-title-size,0.8125rem)] text-(--ui-text-secondary)',
+  SIDEBAR_TRUNCATED_LEADING
+)
+
+/** Secondary row type — age, preview, model · size, group totals. */
+export const SIDEBAR_ROW_META = cn(
+  'text-[length:var(--sidebar-row-meta-size,0.6875rem)]',
   SIDEBAR_TRUNCATED_LEADING
 )
 

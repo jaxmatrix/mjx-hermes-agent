@@ -132,8 +132,7 @@ class ProfileWorkerSession(Result):
 
 
 class ProfileCanonicalSession(Result):
-    """The profile's "Bot Chat" registry row; ``resolved_id`` is the live compression tip. Also the shape of
-    ``preferred_session`` (``methods_profiles._preferred_session_row``), where ``id`` is the caller's pin."""
+    """The profile's "Bot Chat" registry row; ``resolved_id`` is the live compression tip."""
 
     id: str
     resolved_id: str
@@ -161,7 +160,6 @@ class ProfileRow(Result):
     last_session: ProfileSessionPreview | None = None
     worker_session: ProfileWorkerSession | None = None
     canonical_session: ProfileCanonicalSession | None = None  # omitted = lookup failed; null = no Bot Chat
-    preferred_session: ProfileCanonicalSession | None = None  # only for a row named in ``preferred_session_ids``
     ui_meta_revisions: dict[str, int] = Field(default_factory=dict)
     ui_meta: dict[str, JsonValue] | None = None
     has_avatar: bool = False
@@ -169,7 +167,6 @@ class ProfileRow(Result):
 
 class ProfilesListParams(ProfileParams):
     include_sessions: bool | str | None = None
-    preferred_session_ids: dict[str, str] | None = None  # {profile: session_id} → per-row ``preferred_session``
 
 
 class ProfilesListResult(Result):

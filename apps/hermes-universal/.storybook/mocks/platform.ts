@@ -69,3 +69,8 @@ export function __setPlatform(kind: PlatformKind): void {
   SSH_LOCAL_FILES_SUPPORTED = !IS_MOBILE
   PLATFORM = kind === 'desktop' ? 'macos' : kind
 }
+
+/** Host-OS helpers — mirror real `lib/platform.ts`, reading the mutable flags. */
+export const isMacPlatform = (): boolean => IS_MAC
+export const isWindowsPlatform = (): boolean => PLATFORM === 'windows'
+export const isLinuxPlatform = (): boolean => PLATFORM === 'linux'

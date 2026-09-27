@@ -5,13 +5,7 @@ import { type CSSProperties, type ReactNode, type RefObject, useEffect, useMemo,
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger
-} from '@/components/ui/context-menu'
+import { ActionsContextMenu, type MenuKit } from '@/components/ui/actions-menu'
 import { DiffCount } from '@/components/ui/diff-count'
 import { Tip } from '@/components/ui/tooltip'
 import type { HermesReviewFile } from '@/global'
@@ -19,6 +13,7 @@ import { useI18n } from '@/i18n'
 import { isDesktopFsRemoteMode } from '@/lib/desktop-fs'
 import { displayPath } from '@/lib/display-path'
 import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
+import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import {
   $renamingPath,
@@ -99,10 +94,12 @@ const ROW_INSTANT = { duration: 0 } as const
 // hundreds of thousands of DOM nodes.
 const HEAVY_LIST_CAP = 60
 
-// Uniform row height (h-6 = 1.5rem). Every review row is this exact height, so
-// the virtualizer's size estimate is exact and per-row measurement just keeps
-// it honest under app zoom.
-const ROW_HEIGHT = 24
+// Must match --file-tree-row-height (desktop keeps a slightly taller review row
+// than the workspace tree; phone shares the 40px touch target).
+const ROW_HEIGHT = IS_MOBILE ? 40 : 24
+
+const REVIEW_ROW =
+  'group/review-row row-hover flex h-[var(--file-tree-row-height)] select-none items-center gap-1.5 rounded-md pe-1.5 text-[length:var(--file-tree-font-size,0.75rem)] text-(--ui-text-secondary) hover:text-foreground'
 
 // Rows mounted above and below the viewport while scrolling.
 const OVERSCAN_ROWS = 12
@@ -290,7 +287,7 @@ function ReviewDirRow({
   return (
     <>
       <div
-        className="group/review-row row-hover flex h-6 select-none items-center gap-1.5 rounded-md pe-1.5 text-xs text-(--ui-text-secondary) hover:text-foreground"
+        className={REVIEW_ROW}
         onClick={toggle}
         style={rowStyle(depth)}
       >
@@ -302,7 +299,13 @@ function ReviewDirRow({
         <span className="min-w-0 flex-1 truncate" title={node.name}>
           {node.name}
         </span>
-        {!open && <DiffCount added={node.added} className="text-[0.64rem] leading-4" removed={node.removed} />}
+        {!open && (
+          <DiffCount
+            added={node.added}
+            className="text-[length:var(--conversation-tool-font-size)] leading-4"
+            removed={node.removed}
+          />
+        )}
       </div>
       {!leaf && open && node.children && <ReviewNodeList animate={animate} depth={depth + 1} nodes={node.children} />}
     </>
@@ -388,10 +391,7 @@ function ReviewFileRow({ node, depth }: { node: ReviewTreeNode; depth: number })
     >
       <div
         aria-selected={selected}
-        className={cn(
-          'group/review-row row-hover flex h-6 select-none items-center gap-1.5 rounded-md pe-1.5 text-xs text-(--ui-text-secondary) hover:text-foreground',
-          selected && 'bg-(--ui-row-active-background) text-foreground'
-        )}
+        className={cn(REVIEW_ROW, selected && 'bg-(--ui-row-active-background) text-foreground')}
         draggable
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
@@ -414,7 +414,10 @@ function ReviewFileRow({ node, depth }: { node: ReviewTreeNode; depth: number })
             {node.name}
           </span>
           {node.dir && (
-            <span className="min-w-0 shrink-[9999] truncate text-[0.68rem] text-(--ui-text-tertiary)" title={node.dir}>
+            <span
+              className="min-w-0 shrink-[9999] truncate text-[length:var(--conversation-tool-font-size)] text-(--ui-text-tertiary)"
+              title={node.dir}
+            >
               {node.dir}
             </span>
           )}
@@ -488,46 +491,45 @@ function ReviewFileContextMenu({
   const m = t.fileMenu
   const localFs = !isDesktopFsRemoteMode()
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onSelect={onOpenChanges}>{c.openChanges}</ContextMenuItem>
-        <ContextMenuItem onSelect={onOpenFile}>{c.openFile}</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onSelect={() =>
-            void (file.staged ? unstageReviewFile(file.path) : stageReviewFile(file.path)).catch(err =>
-              notifyError(err, file.staged ? c.unstage : c.stage)
-            )
-          }
-        >
-          {file.staged ? c.unstage : c.stage}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => requestRevert(file.path)} variant="destructive">
-          {c.revert}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => revealFileInTree(dragPath)}>{m.revealInSidebar}</ContextMenuItem>
-        {localFs && (
-          <ContextMenuItem onSelect={() => void revealFile(dragPath)}>
-            {pickRevealLabel(m.revealFinder, m.revealExplorer, m.revealFileManager)}
-          </ContextMenuItem>
-        )}
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => void copyFilePath(dragPath)}>{m.copyPath}</ContextMenuItem>
-        {cwd && (
-          <ContextMenuItem onSelect={() => void copyFilePath(toRelativePath(dragPath, cwd))}>
-            {m.copyRelativePath}
-          </ContextMenuItem>
-        )}
-        {shouldOfferRemoteFileDownload(false) && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => void downloadRemoteFile(dragPath)}>{m.download}</ContextMenuItem>
-          </>
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
+  const items = (kit: MenuKit) => (
+    <>
+      <kit.Item onSelect={onOpenChanges}>{c.openChanges}</kit.Item>
+      <kit.Item onSelect={onOpenFile}>{c.openFile}</kit.Item>
+      <kit.Separator />
+      <kit.Item
+        onSelect={() =>
+          void (file.staged ? unstageReviewFile(file.path) : stageReviewFile(file.path)).catch(err =>
+            notifyError(err, file.staged ? c.unstage : c.stage)
+          )
+        }
+      >
+        {file.staged ? c.unstage : c.stage}
+      </kit.Item>
+      <kit.Item onSelect={() => requestRevert(file.path)} variant="destructive">
+        {c.revert}
+      </kit.Item>
+      <kit.Separator />
+      <kit.Item onSelect={() => revealFileInTree(dragPath)}>{m.revealInSidebar}</kit.Item>
+      {localFs && (
+        <kit.Item onSelect={() => void revealFile(dragPath)}>
+          {pickRevealLabel(m.revealFinder, m.revealExplorer, m.revealFileManager)}
+        </kit.Item>
+      )}
+      <kit.Separator />
+      <kit.Item onSelect={() => void copyFilePath(dragPath)}>{m.copyPath}</kit.Item>
+      {cwd && (
+        <kit.Item onSelect={() => void copyFilePath(toRelativePath(dragPath, cwd))}>
+          {m.copyRelativePath}
+        </kit.Item>
+      )}
+      {shouldOfferRemoteFileDownload(false) && (
+        <>
+          <kit.Separator />
+          <kit.Item onSelect={() => void downloadRemoteFile(dragPath)}>{m.download}</kit.Item>
+        </>
+      )}
+    </>
   )
+
+  return <ActionsContextMenu items={items}>{children}</ActionsContextMenu>
 }

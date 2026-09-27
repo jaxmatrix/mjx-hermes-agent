@@ -7,7 +7,7 @@
  * hold a hardcoded collector URL or make an unsolicited outbound request. The
  * split is the whole reason they are two modules.
  *
- * The collector lives at ~/Documents/dev-instances/jaeger — Jaeger UI on 8200,
+ * The collector lives at ~/Projects/dev_instances/jaeger — Jaeger UI on 16686,
  * OTLP on 4318. Point elsewhere with VITE_OTLP_ENDPOINT.
  *
  * Everything a caller can do lives on `tracer` below; `__hermesTrace` and the
@@ -36,7 +36,7 @@ import {
   takeCompleted
 } from './span'
 
-export const JAEGER_UI = 'http://localhost:8200'
+export const JAEGER_UI = 'http://localhost:16686'
 const OTLP_ENDPOINT = (import.meta.env.VITE_OTLP_ENDPOINT as string | undefined) ?? 'http://127.0.0.1:4318/v1/traces'
 const EXPORT_INTERVAL_MS = 2_000
 const RECORDING_KEY = 'hermes.observability.recording'

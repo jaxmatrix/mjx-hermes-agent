@@ -36,10 +36,10 @@ Hence the rule the code follows:
 1. Start the collector (once per boot; nothing auto-starts on reboot):
 
    ```sh
-   cd ~/Documents/dev-instances/jaeger && docker compose up -d
+   cd ~/Projects/dev_instances && ./dev up jaeger
    ```
 
-   Jaeger UI: <http://localhost:8200>
+   Jaeger UI: <http://localhost:16686>
 
 2. Run the app as normal (`npm run tauri dev`). The frontend tracing layer is
    already present — it ships, and is off by default.
@@ -379,10 +379,10 @@ compiles no exporter at all.
 
 ## Infrastructure
 
-The stack lives at `~/Documents/dev-instances/jaeger`, following the house
+The stack lives at `~/Projects/dev_instances/jaeger`, following the house
 convention (127.0.0.1-only, restart policy `no`, copied from `_template/`).
 
-- **8200** — Jaeger UI
+- **16686** — Jaeger UI
 - **4317** — OTLP/gRPC (the Rust backend)
 - **4318** — OTLP/HTTP (the webview)
 
@@ -391,8 +391,8 @@ to them, so a host-side app needs zero configuration.
 
 **Gotcha:** the collector must allow CORS or the webview's POSTs die at the
 preflight with a `405` and nothing useful in the console. That lives in
-`otel-collector.yaml`. After editing it use `docker compose restart
-otel-collector` — `up -d` will not pick up the change.
+`jaeger/config.yaml`. After editing it, recreate the service with
+`./dev up jaeger` so the mounted configuration is loaded.
 
 ## Capture recipes — the two layout reproductions
 

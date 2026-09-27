@@ -12,6 +12,7 @@ import { DesktopOnboardingOverlay } from '@/components/onboarding'
 import { ResourcePressureBanner } from '@/components/resource-pressure-banner'
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
 import { useStore } from '@/store/atom'
+import { $activeConnection } from '@/store/active-connection'
 import { $connectionPhase, $hasConnected } from '@/store/connection'
 import { requestGateway } from '@/store/gateway-client'
 import { $restoring } from '@/store/gateway-restore'
@@ -21,6 +22,7 @@ import { startLiveSessionSync } from '@/store/live-session-status'
 import { startNewSession, startNewSessionTab } from '@/store/new-session'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
+  $gatewayState,
   $selectedStoredSessionId,
   $sessions,
   sessionMatchesStoredId,
@@ -32,9 +34,12 @@ import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom-universal'
 
 import { CommandPalette } from './command-palette'
 import { useKeybinds } from './hooks/use-keybinds'
-import { COMMAND_CENTER_ROUTE, GATEWAY_SETTINGS_ROUTE, sessionRoute } from './routes'
+import { COMMAND_CENTER_ROUTE, GATEWAY_SETTINGS_ROUTE } from './routes'
+import { resumeSessionIntoMain } from './resume-session-into-main'
 import { SessionSwitcher } from './session-switcher'
 import { useOverlayRouting } from './shell/hooks/use-overlay-routing'
+import { MobileGatewayHost } from './shell/mobile-gateway-host'
+import { isMobileShellLive } from './shell/mobile-live-gate'
 import { MobileShell } from './shell/mobile-shell'
 import { MobileSurfaceShell } from './shell/mobile-surface-shell'
 import { SidebarProvider } from './shell/sidebar'
@@ -50,6 +55,8 @@ export function MobileController() {
   const restoring = useStore($restoring)
   const hasConnected = useStore($hasConnected)
   const switching = useStore($gatewaySwitching)
+  const activeConnection = useStore($activeConnection)
+  const gatewayState = useStore($gatewayState)
   const activeProfile = useStore($activeGatewayProfile)
 
   // Publishes --visual-viewport-{height,top} / --keyboard-inset /
@@ -99,12 +106,16 @@ export function MobileController() {
   // whole life rather than per connection phase.
   useEffect(() => startLiveSessionSync(), [])
 
-  // A soft gateway switch (store/gateway-switch.ts) drops the socket for a moment
-  // while it re-dials. Treat that window as live so the shell — and the surface
-  // driving the switch (Settings, the statusbar gateway popover) — stays mounted
-  // instead of bouncing to the connecting screen. Only once we've been connected:
-  // on a first run the connect screen owns the dial and must keep it.
-  const live = phase === 'ready' || (switching && hasConnected)
+  // SoftSwitch (applyConnection) opens the socket + publishes activeConnection
+  // without legacy connect* setting phase=ready. Gate on those facts; keep the
+  // in-session soft-switch window live so Settings doesn't bounce to Connect.
+  const live = isMobileShellLive({
+    activeConnection,
+    gatewayState,
+    hasConnected,
+    restoring,
+    switching
+  })
   const connected = live
 
   // Which windowable surface (settings / command-center / agents / cron / …) the
@@ -218,12 +229,13 @@ export function MobileController() {
     )
   }
 
-  // SidebarProvider wraps every branch so the shell's drawers have context on
-  // all screens. No frameless-window chrome here: a phone keeps the native top
-  // inset and per-screen headers.
+  // SidebarProvider wraps every branch so Sessions / Workspace window toggles
+  // (openMobile / openMobileRight) have context on all screens. No frameless-
+  // window chrome here: a phone keeps the native top inset and per-screen headers.
   return (
-    <SidebarProvider>
-      <div className="relative flex h-full min-h-0 flex-col">
+    <MobileGatewayHost>
+      <SidebarProvider>
+        <div className="relative flex h-full min-h-0 flex-col">
         {/* Resource-pressure bar (NS-656): disk exhaustion, memory pressure and
             suspected-OOM restarts, read off the `/api/status` snapshot the
             statusbar already polls (store/system-status.ts) — no second poller.
@@ -234,11 +246,11 @@ export function MobileController() {
         {connected && <ResourcePressureBanner />}
         <div className="min-h-0 flex-1">{content}</div>
         {/* Mobile: Settings / Command Center / Profiles present as ONE full-screen
-            in-app surface with the shared mobile chrome (top bar + two drawers),
+            in-app surface with the shared mobile chrome (top bar + section menu),
             derived live from the route — parity with the Android native activity
-            screen (MJX-203). Its OWN SidebarProvider isolates these drawers from the
-            home MobileShell's drawers (both mount Sheets keyed to the same useSidebar
-            booleans). Home/back navigates to the stashed route (NOT returnHome, whose
+            screen (MJX-203). Its OWN SidebarProvider isolates openMobile /
+            openMobileRight from the home MobileShell (Sessions / Workspace
+            windows). Home/back navigates to the stashed route (NOT returnHome, whose
             iOS fallback would try to close the primary window). */}
         {mobileSurfaceOpen && (
           // `absolute`, not `fixed`: the parent above is `relative h-full` inside
@@ -252,7 +264,9 @@ export function MobileController() {
               <MobileSurfaceShell
                 onHome={closeOverlayToPreviousRoute}
                 onNavigateRoute={path => navigate(path)}
-                onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
+                onOpenSession={sessionId => {
+                  resumeSessionIntoMain(sessionId, path => navigate(path))
+                }}
               />
             </SidebarProvider>
           </div>
@@ -291,7 +305,8 @@ export function MobileController() {
             }
           />
         )}
-      </div>
-    </SidebarProvider>
+        </div>
+      </SidebarProvider>
+    </MobileGatewayHost>
   )
 }

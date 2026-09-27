@@ -4,13 +4,13 @@ import 'katex/dist/katex.min.css'
 
 import type { Decorator, Preview } from '@storybook/react-vite'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { HashRouter } from 'react-router-dom'
+import { HashRouter } from 'react-router'
 
 import { ChatRuntimeProvider } from '../src/app/chat/runtime'
 import { RootTooltipProvider } from '../src/components/ui/tooltip'
 import { I18nProvider } from '../src/i18n'
 import { queryClient } from '../src/lib/query-client'
-import { $gatewayState } from '../src/store/gateway'
+import { $gatewayState } from '../src/store/session'
 import { ThemeProvider } from '../src/themes'
 
 /**
@@ -30,7 +30,7 @@ const withProviders: Decorator = Story => (
   <I18nProvider>
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <HashRouter>
+        <HashRouter useTransitions={false}>
           <RootTooltipProvider>
             <ChatRuntimeProvider>
               <Story />

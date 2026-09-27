@@ -30,6 +30,8 @@ import {
   resumeDesktopBootForRetry,
   setDesktopBootStep
 } from '@/store/boot'
+import { $connectionError, $connectionPhase } from '@/store/connection-atoms'
+import { finishGatewayRestore } from '@/store/gateway-restore'
 import { resetBackgroundPollingGuard } from '@/store/composer-status'
 import {
   $gateway,
@@ -242,6 +244,9 @@ export function useGatewayBoot({
 
     if (!desktop) {
       failDesktopBoot('Desktop IPC bridge is unavailable.')
+      $connectionError.set('Desktop IPC bridge is unavailable.')
+      $connectionPhase.set('error')
+      finishGatewayRestore()
       setSessionsLoading(false)
 
       return () => void (cancelled = true)
@@ -273,6 +278,21 @@ export function useGatewayBoot({
     // wait (#112899). Cleared wherever a FRESH boot lifecycle starts: a soft
     // switch and the renderer's own bounded retry (#82679).
     let bootFailed = false
+
+    const markLaunchReady = () => {
+      $connectionError.set(null)
+      $connectionPhase.set('ready')
+      finishGatewayRestore()
+    }
+
+    const markLaunchFailed = (message: string) => {
+      bootFailed = true
+      failDesktopBoot(message)
+      $connectionError.set(message)
+      $connectionPhase.set('error')
+      finishGatewayRestore()
+    }
+
     let reconnecting = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let reconnectAttempt = 0
@@ -802,6 +822,11 @@ export function useGatewayBoot({
 
         completeDesktopBoot()
         bootCompleted = true
+        // selectConnection / applyConnection never set `$connectionPhase` —
+        // only the legacy connect* paths did. Soft switch is the socket owner
+        // for that flow; mark ready here so phone MobileController (and
+        // `$connectionReady` / `$hasConnected`) leave the Connect screen.
+        markLaunchReady()
         // Rediscover local-runtime jobs (model downloads, runtime installs)
         // that were running before a reload — the backend registry is the
         // authority; this just resumes following it.
@@ -815,8 +840,7 @@ export function useGatewayBoot({
 
         if (mayPublishFailure) {
           const message = err instanceof Error ? err.message : String(err)
-          bootFailed = true
-          failDesktopBoot(message)
+          markLaunchFailed(message)
 
           // Only the current owner may lower loading. A failed begin returns no
           // token and cleans its own barrier internally; lower loading only when
@@ -1273,8 +1297,7 @@ export function useGatewayBoot({
       if ($desktopBoot.get().running || $desktopBoot.get().visible) {
         // Concludes the in-flight boot on its behalf, so it latches like the
         // catch blocks that conclude one.
-        bootFailed = true
-        failDesktopBoot(translateNow('boot.errors.backgroundExitedDuringStartup'))
+        markLaunchFailed(translateNow('boot.errors.backgroundExitedDuringStartup'))
 
         return
       }
@@ -1408,6 +1431,7 @@ export function useGatewayBoot({
         completeDesktopBoot()
         bootCompleted = true
         bootRetryAttempt = 0
+        markLaunchReady()
         // A Docker/SSH terminal backend that fails its probe means shell
         // commands silently cannot run — say so once, with a way out. Cold
         // launch is the common path, so it must warn too, not only softSwitch.
@@ -1439,8 +1463,7 @@ export function useGatewayBoot({
             return
           }
 
-          bootFailed = true
-          failDesktopBoot(message)
+          markLaunchFailed(message)
           notifyError(err, translateNow('boot.errors.desktopBootFailed'))
           setSessionsLoading(false)
         }
@@ -1456,6 +1479,7 @@ export function useGatewayBoot({
     async function adoptBoot() {
       bootCompleted = true
       completeDesktopBoot()
+      markLaunchReady()
 
       if (survivor?.connection) {
         publish(survivor.connection)

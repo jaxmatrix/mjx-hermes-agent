@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { openWorktreeDialog } from '@/store/coding-status'
 import { copyPath, revealPath } from '@/store/projects'
 
-import { SidebarRowLead } from '../chrome'
+import { SidebarRowLead, SIDEBAR_ROW_META } from '../chrome'
 
 // Branch/worktree labels routinely share a long prefix (`bb/coding-context-…`),
 // so plain end-truncation (`truncate`) hides exactly the suffix that tells two
@@ -221,7 +221,8 @@ export function WorkspaceHeader({
   return (
     <div
       className={cn(
-        'group/workspace flex min-h-6 items-center gap-1 px-2 pt-1 text-[0.6875rem]',
+        'group/workspace flex min-h-6 items-center gap-1 px-2 pt-1',
+        SIDEBAR_ROW_META,
         emphasis ? 'font-semibold text-(--ui-text-secondary)' : 'font-medium text-(--ui-text-tertiary)'
       )}
       ref={ref}

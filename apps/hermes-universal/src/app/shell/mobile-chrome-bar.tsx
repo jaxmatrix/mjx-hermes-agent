@@ -4,12 +4,13 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 import { shellChromeSurface } from './cva/tokens'
+import type { MobileConnectionChromeStatus } from './mobile-connection-chrome'
 
 /**
  * MobileChromeBar CVA (MJXHRM-311).
  * One phone top bar — chat, Workspace, windowable surfaces share height/gutter/safe-area.
  */
-export const mobileChromeBarVariants = cva(cn('shrink-0 border-b', shellChromeSurface), {
+export const mobileChromeBarVariants = cva(cn('shrink-0', shellChromeSurface), {
   variants: {
     density: {
       /** Default phone chrome — 48px control row below notch. */
@@ -59,19 +60,26 @@ export type MobileChromeBarVariantProps = VariantProps<typeof mobileChromeBarVar
 // and the controls sit below it. Callers own the bottom and side insets.
 export function MobileChromeBar({
   center,
+  connectionStatus = 'idle',
   left,
   right,
   density = 'mobile',
+  topBorder = true,
   className
 }: {
   center?: ReactNode
+  /** Mid-session reconnect indicator on the bottom edge (chat home). */
+  connectionStatus?: MobileConnectionChromeStatus
   left?: ReactNode
   right?: ReactNode
+  /** When false, omit the static bottom hairline (chat home). Default true. */
+  topBorder?: boolean
   className?: string
 } & MobileChromeBarVariantProps) {
   return (
     <div
-      className={cn(mobileChromeBarVariants({ density }), className)}
+      className={cn(mobileChromeBarVariants({ density }), topBorder && 'border-b', className)}
+      data-connection-chrome={connectionStatus}
       data-density={density}
       data-slot="mobile-chrome-bar"
       style={{ paddingTop: 'var(--safe-area-inset-top)' }}

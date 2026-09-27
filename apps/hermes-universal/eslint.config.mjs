@@ -1,3 +1,6 @@
+// For more info, see https://github.com/storybookjs/eslint-plugin-storybook#configuration-flat-config-format
+import storybook from "eslint-plugin-storybook";
+
 import betterTailwind from 'eslint-plugin-better-tailwindcss'
 import globals from 'globals'
 
@@ -75,157 +78,149 @@ const PHYSICAL_DIRECTION_CLASSES = [
   pattern: `(^|.*:)${physical}${boundary}`
 }))
 
-export default [
-  ...shared,
-  {
-    // Two rules, not the plugin's `recommended` set. Tailwind class names are
-    // just strings: `cn()` is clsx + twMerge, and twMerge forwards anything it
-    // does not recognise, so an invented utility compiles, ships and silently
-    // does nothing — `align-left` (there is no such utility; `align-*` is
-    // vertical-align) sat in the title trigger looking like it left-aligned the
-    // text. Nothing in tsc, vite or the rest of eslint can see it. This rule
-    // resolves every class against the real stylesheet, so a typo is an error.
-    //
-    // The plugin's stylistic rules (class order, line wrapping) are deliberately
-    // left off: they rewrite every className in the app and none of them can
-    // catch a bug.
-    files: ['**/*.{ts,tsx}'],
-    ignores: ['**/*.test.{ts,tsx}'],
-    plugins: { 'better-tailwindcss': betterTailwind },
-    rules: {
-      'better-tailwindcss/no-restricted-classes': ['error', { restrict: PHYSICAL_DIRECTION_CLASSES }],
-      'better-tailwindcss/no-unknown-classes': 'error'
-    },
-    // Tailwind v4 has no config file — the utilities are whatever this CSS
-    // entry point and its `@utility` blocks define.
-    settings: {
-      'better-tailwindcss': {
-        detectComponentClasses: true,
-        entryPoint: 'src/styles.css',
-        ignore: [HAND_WRITTEN_CSS_CLASSES, KNOWN_DEAD_CLASSES]
-      }
-    }
+export default [...shared, {
+  // Two rules, not the plugin's `recommended` set. Tailwind class names are
+  // just strings: `cn()` is clsx + twMerge, and twMerge forwards anything it
+  // does not recognise, so an invented utility compiles, ships and silently
+  // does nothing — `align-left` (there is no such utility; `align-*` is
+  // vertical-align) sat in the title trigger looking like it left-aligned the
+  // text. Nothing in tsc, vite or the rest of eslint can see it. This rule
+  // resolves every class against the real stylesheet, so a typo is an error.
+  //
+  // The plugin's stylistic rules (class order, line wrapping) are deliberately
+  // left off: they rewrite every className in the app and none of them can
+  // catch a bug.
+  files: ['**/*.{ts,tsx}'],
+  ignores: ['**/*.test.{ts,tsx}'],
+  plugins: { 'better-tailwindcss': betterTailwind },
+  rules: {
+    'better-tailwindcss/no-restricted-classes': ['error', { restrict: PHYSICAL_DIRECTION_CLASSES }],
+    'better-tailwindcss/no-unknown-classes': 'error'
   },
-  {
-    // Universal is a Tauri webview (desktop + Android + iOS), so it uses browser
-    // globals throughout. The shared config only supplies globals.node, so that
-    // terminal-only workspaces (ui-tui) don't silently get DOM types — same
-    // re-addition apps/desktop makes for the Electron renderer.
-    files: ['**/*.{ts,tsx}'],
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.node
-      }
+  // Tailwind v4 has no config file — the utilities are whatever this CSS
+  // entry point and its `@utility` blocks define.
+  settings: {
+    'better-tailwindcss': {
+      detectComponentClasses: true,
+      entryPoint: 'src/styles.css',
+      ignore: [HAND_WRITTEN_CSS_CLASSES, KNOWN_DEAD_CLASSES]
     }
-  },
-  {
-    // `@tauri-apps/plugin-opener`'s JS commands are ACL-scoped, and this app
-    // declares NO opener scope (see `src-tauri/capabilities/default.json`, which
-    // grants `opener:allow-open-url` — "without any pre-configured scope").
-    // `open_url` then answers `Err(ForbiddenUrl)` for every url, on every
-    // platform, because nothing is on the allow-list. The failure is silent: the
-    // call rejects, callers treat that as "this platform can't open urls", and
-    // nothing looks broken. It has already cost this repo twice — once for OAuth
-    // sign-in and docs links, once for `ctx.os.openExternal`.
-    //
-    // The app's own native `open_external` / `reveal_in_file_manager` commands
-    // call the plugin's RUST api, which is not scope-checked. Use those, via
-    // `lib/external-link` and `lib/reveal-path`.
-    files: ['**/*.{ts,tsx}'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          paths: [
-            {
-              message:
-                'ACL-scoped and always forbidden here (no opener scope is declared). Use tryOpenExternalLink/openExternalLink from @/lib/external-link, or tryRevealPathInFileManager from @/lib/reveal-path — both go through the native Rust commands.',
-              name: '@tauri-apps/plugin-opener'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    // THE PLUGIN FENCE: a plugin speaks `@hermes/plugin-sdk` (+ react), never
-    // `@/…` internals — the same isolation a runtime-fetched published plugin
-    // gets, enforced on the BUNDLED ones so the SDK surface stays honest.
-    //
-    // An in-tree plugin is compiled with the app, so nothing STRUCTURALLY stops
-    // it importing `@/store/…`. That is exactly the hazard: the first time one
-    // does, the app's most demanding plugin stops being a test of the SDK and
-    // every door it should have needed goes unbuilt — which is what makes Bot
-    // Mode's "still missing" list true or a fiction. Ported from
-    // `apps/desktop/eslint.config.mjs`, which has carried this rule since its
-    // own plugin tree existed.
-    //
-    // A test file beside a plugin is exempt: it is not shipped to a plugin host
-    // and needs the app's test doubles.
-    files: ['src/plugins/**/*.{ts,tsx}'],
-    ignores: ['src/plugins/**/*.test.{ts,tsx}'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              // `@/*` is the app; `../../*` is an escape from the plugin's own
-              // tree (its sibling plugins, and `src/` beyond them). A plain
-              // `../*` is NOT banned — a plugin is a module tree, and forbidding
-              // `../ids` would force every plugin into one file.
-              group: ['@/*', '../../*', '@hermes/shared'],
-              message:
-                'Plugins import only @hermes/plugin-sdk (and react). Missing something? Add it to the SDK — that is the point.'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    // The browser's own modal dialogs are banned in this app (MJXHRM-479). Two
-    // separate traps, hence two rules:
-    //
-    //  - `window.confirm` BLOCKS the webview's event loop, cannot be styled,
-    //    themed, translated or given an Enter/Esc contract, and on Android it
-    //    renders as a bare system dialog over a themed app. Six of them had
-    //    quietly survived here. Use `confirm()` from `@/store/confirm` (backed
-    //    by the one `<ConfirmHost />` in `app.tsx`) or mount `<ConfirmDialog>`.
-    //
-    //  - the BARE global is the nastier one: forget the import and `confirm({…})`
-    //    still resolves — to `window.confirm` — so lint stays green and the app
-    //    ships a native popup reading "[object Object]". Only `tsc` catches that
-    //    today, by argument type, which is one refactor away from not catching
-    //    it. This rule names it directly.
-    files: ['**/*.{ts,tsx}'],
-    rules: {
-      'no-restricted-globals': [
-        'error',
-        {
-          message: "Import { confirm } from '@/store/confirm' — the bare global silently resolves to window.confirm.",
-          name: 'confirm'
-        },
-        { message: 'Use notify() from @/store/notifications.', name: 'alert' },
-        { message: 'Use a ConfirmDialog or a real input surface.', name: 'prompt' }
-      ],
-      'no-restricted-properties': [
-        'error',
-        {
-          message: "Blocks the event loop and cannot be themed or translated. Use confirm() from '@/store/confirm'.",
-          object: 'window',
-          property: 'confirm'
-        },
-        { message: 'Use notify() from @/store/notifications.', object: 'window', property: 'alert' },
-        { message: 'Use a ConfirmDialog or a real input surface.', object: 'window', property: 'prompt' }
-      ]
-    }
-  },
-  {
-    // The perf bench is a plain script served straight to the browser, not part
-    // of the app's module graph — it has no TS build step and legitimately uses
-    // script-scope globals.
-    ignores: ['bench/**']
   }
-]
+}, {
+  // Universal is a Tauri webview (desktop + Android + iOS), so it uses browser
+  // globals throughout. The shared config only supplies globals.node, so that
+  // terminal-only workspaces (ui-tui) don't silently get DOM types — same
+  // re-addition apps/desktop makes for the Electron renderer.
+  files: ['**/*.{ts,tsx}'],
+  languageOptions: {
+    globals: {
+      ...globals.browser,
+      ...globals.node
+    }
+  }
+}, {
+  // `@tauri-apps/plugin-opener`'s JS commands are ACL-scoped, and this app
+  // declares NO opener scope (see `src-tauri/capabilities/default.json`, which
+  // grants `opener:allow-open-url` — "without any pre-configured scope").
+  // `open_url` then answers `Err(ForbiddenUrl)` for every url, on every
+  // platform, because nothing is on the allow-list. The failure is silent: the
+  // call rejects, callers treat that as "this platform can't open urls", and
+  // nothing looks broken. It has already cost this repo twice — once for OAuth
+  // sign-in and docs links, once for `ctx.os.openExternal`.
+  //
+  // The app's own native `open_external` / `reveal_in_file_manager` commands
+  // call the plugin's RUST api, which is not scope-checked. Use those, via
+  // `lib/external-link` and `lib/reveal-path`.
+  files: ['**/*.{ts,tsx}'],
+  rules: {
+    'no-restricted-imports': [
+      'error',
+      {
+        paths: [
+          {
+            message:
+              'ACL-scoped and always forbidden here (no opener scope is declared). Use tryOpenExternalLink/openExternalLink from @/lib/external-link, or tryRevealPathInFileManager from @/lib/reveal-path — both go through the native Rust commands.',
+            name: '@tauri-apps/plugin-opener'
+          }
+        ]
+      }
+    ]
+  }
+}, {
+  // THE PLUGIN FENCE: a plugin speaks `@hermes/plugin-sdk` (+ react), never
+  // `@/…` internals — the same isolation a runtime-fetched published plugin
+  // gets, enforced on the BUNDLED ones so the SDK surface stays honest.
+  //
+  // An in-tree plugin is compiled with the app, so nothing STRUCTURALLY stops
+  // it importing `@/store/…`. That is exactly the hazard: the first time one
+  // does, the app's most demanding plugin stops being a test of the SDK and
+  // every door it should have needed goes unbuilt — which is what makes Bot
+  // Mode's "still missing" list true or a fiction. Ported from
+  // `apps/desktop/eslint.config.mjs`, which has carried this rule since its
+  // own plugin tree existed.
+  //
+  // A test file beside a plugin is exempt: it is not shipped to a plugin host
+  // and needs the app's test doubles.
+  files: ['src/plugins/**/*.{ts,tsx}'],
+  ignores: ['src/plugins/**/*.test.{ts,tsx}'],
+  rules: {
+    'no-restricted-imports': [
+      'error',
+      {
+        patterns: [
+          {
+            // `@/*` is the app; `../../*` is an escape from the plugin's own
+            // tree (its sibling plugins, and `src/` beyond them). A plain
+            // `../*` is NOT banned — a plugin is a module tree, and forbidding
+            // `../ids` would force every plugin into one file.
+            group: ['@/*', '../../*', '@hermes/shared'],
+            message:
+              'Plugins import only @hermes/plugin-sdk (and react). Missing something? Add it to the SDK — that is the point.'
+          }
+        ]
+      }
+    ]
+  }
+}, {
+  // The browser's own modal dialogs are banned in this app (MJXHRM-479). Two
+  // separate traps, hence two rules:
+  //
+  //  - `window.confirm` BLOCKS the webview's event loop, cannot be styled,
+  //    themed, translated or given an Enter/Esc contract, and on Android it
+  //    renders as a bare system dialog over a themed app. Six of them had
+  //    quietly survived here. Use `confirm()` from `@/store/confirm` (backed
+  //    by the one `<ConfirmHost />` in `app.tsx`) or mount `<ConfirmDialog>`.
+  //
+  //  - the BARE global is the nastier one: forget the import and `confirm({…})`
+  //    still resolves — to `window.confirm` — so lint stays green and the app
+  //    ships a native popup reading "[object Object]". Only `tsc` catches that
+  //    today, by argument type, which is one refactor away from not catching
+  //    it. This rule names it directly.
+  files: ['**/*.{ts,tsx}'],
+  rules: {
+    'no-restricted-globals': [
+      'error',
+      {
+        message: "Import { confirm } from '@/store/confirm' — the bare global silently resolves to window.confirm.",
+        name: 'confirm'
+      },
+      { message: 'Use notify() from @/store/notifications.', name: 'alert' },
+      { message: 'Use a ConfirmDialog or a real input surface.', name: 'prompt' }
+    ],
+    'no-restricted-properties': [
+      'error',
+      {
+        message: "Blocks the event loop and cannot be themed or translated. Use confirm() from '@/store/confirm'.",
+        object: 'window',
+        property: 'confirm'
+      },
+      { message: 'Use notify() from @/store/notifications.', object: 'window', property: 'alert' },
+      { message: 'Use a ConfirmDialog or a real input surface.', object: 'window', property: 'prompt' }
+    ]
+  }
+}, {
+  // The perf bench is a plain script served straight to the browser, not part
+  // of the app's module graph — it has no TS build step and legitimately uses
+  // script-scope globals.
+  ignores: ['bench/**']
+}, ...storybook.configs["flat/recommended"]];

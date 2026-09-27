@@ -1191,7 +1191,7 @@ export const zhHant = defineLocale({
         '遠端主機上未安裝 Hermes。請在遠端安裝（curl -fsSL https://hermes-agent.nousresearch.com/install.sh | sh）或設定 Hermes 路徑。',
       sshErrPlatform: '不支援的遠端平台。Hermes Desktop 的 SSH 模式支援 Linux、macOS 和 Windows 遠端主機。',
       sshErrTimeout: 'SSH 連線逾時。主機可能無法存取或處於睡眠狀態。',
-      sshErrUpdateRequired: '使用 Desktop SSH 連線前，請更新遠端主機上的 Hermes。',
+      sshErrUpdateRequired: '使用 SSH 連線前，請更新遠端主機上的 Hermes。',
       sshErrUnknown: 'SSH 連線失敗。'
     },
     keys: {
@@ -3741,6 +3741,22 @@ export const zhHant = defineLocale({
         text: '檔案、終端機、審閱與內建瀏覽器都在側邊面板裡。'
       }
     }
+  },
+
+  mobileWorkspace: {
+    backToChat: '聊天',
+    menu: '選單',
+    tabsAria: '工作區分區',
+    review: '審閱',
+    files: '檔案',
+    editor: '編輯器',
+    terminal: '終端機',
+    status: '狀態',
+    control: '控制',
+    workspace: '工作區',
+    settings: '設定',
+    profiles: '設定檔',
+    agents: '代理'
   },
 
   ui: {

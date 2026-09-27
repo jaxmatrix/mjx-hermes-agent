@@ -27,10 +27,19 @@ vi.mock('@/hermes', async importOriginal => ({
   getApiRequestConnection: () => null,
   setApiRequestProfile: vi.fn(),
   getApiRequestProfile: () => 'default',
-  listAllProfileSessions: vi.fn().mockResolvedValue({ sessions: [], total: 0 })
+  listAllProfileSessions: vi.fn().mockResolvedValue({ sessions: [], total: 0 }),
+  listSidebarSessions: vi.fn().mockResolvedValue({
+    recents: { sessions: [], profiles_truncated: {} },
+    cron: { sessions: [] },
+    messaging: { sessions: [] }
+  })
 }))
 
-import { listAllProfileSessions } from '@/hermes'
+vi.mock('@/app/cron/cron-actions', () => ({
+  refreshCronJobs: vi.fn(async () => ({ jobs: [], refreshError: null, stale: false }))
+}))
+
+import { listAllProfileSessions, listSidebarSessions } from '@/hermes'
 import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import {
   type LiveSessionStatusItem,
@@ -310,6 +319,7 @@ describe('startLiveSessionSync', () => {
     $gatewayState.set('closed')
     vi.mocked(requestGateway).mockClear()
     vi.mocked(listAllProfileSessions).mockClear()
+    vi.mocked(listSidebarSessions).mockClear()
     stop = startLiveSessionSync()
   })
 
@@ -326,7 +336,7 @@ describe('startLiveSessionSync', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(vi.mocked(requestGateway).mock.calls.map(call => call[0])).toContain('session.active_list')
-    expect(listAllProfileSessions).toHaveBeenCalled()
+    expect(listSidebarSessions).toHaveBeenCalled()
   })
 
   it('coalesces a burst of sessions.changed into ONE stored-list refresh', async () => {
@@ -334,7 +344,7 @@ describe('startLiveSessionSync', () => {
     $gatewayState.set('open')
     await vi.advanceTimersByTimeAsync(0)
 
-    const afterConnect = vi.mocked(listAllProfileSessions).mock.calls.length
+    const afterConnect = vi.mocked(listSidebarSessions).mock.calls.length
 
     // A streaming turn writes state.db continuously; the watcher floors the
     // broadcast to 2s, which is still far faster than a 100-row list fetch.
@@ -344,24 +354,25 @@ describe('startLiveSessionSync', () => {
 
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(vi.mocked(listAllProfileSessions).mock.calls.length).toBe(afterConnect)
+    expect(vi.mocked(listSidebarSessions).mock.calls.length).toBe(afterConnect)
 
     await vi.advanceTimersByTimeAsync(SESSIONS_LIST_TICK_GAP_MS)
 
-    // Trailing edge: exactly one refresh, carrying the burst's LAST write.
-    expect(vi.mocked(listAllProfileSessions).mock.calls.length).toBe(afterConnect + 2)
+    // Trailing edge: exactly one sidebar refresh (+ messaging still uses the
+    // legacy list endpoint separately).
+    expect(vi.mocked(listSidebarSessions).mock.calls.length).toBe(afterConnect + 1)
   })
 
   it('leaves the stored-list refresh to the surfaces own polls on a gateway that never broadcasts', async () => {
     $gatewayState.set('open')
     await vi.advanceTimersByTimeAsync(0)
 
-    const afterConnect = vi.mocked(listAllProfileSessions).mock.calls.length
+    const afterConnect = vi.mocked(listSidebarSessions).mock.calls.length
 
     $sessionsChangeTick.set($sessionsChangeTick.get() + 1)
     await vi.advanceTimersByTimeAsync(SESSIONS_LIST_TICK_GAP_MS * 2)
 
-    expect(vi.mocked(listAllProfileSessions).mock.calls.length).toBe(afterConnect)
+    expect(vi.mocked(listSidebarSessions).mock.calls.length).toBe(afterConnect)
   })
 
   it('is idempotent, so a shell remount cannot leave two pollers running', () => {

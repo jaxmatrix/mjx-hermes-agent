@@ -323,7 +323,9 @@ export function GatewayConfigurator({
   const trimmedUrl = remoteUrl.trim()
 
   useEffect(() => {
-    if (pendingMode !== 'remote' || !trimmedUrl || !/^https?:\/\//i.test(trimmedUrl)) {
+    // `normalizeBaseUrl` prepends http:// for host:port — do not require a typed
+    // scheme here or Sign in never appears for a LAN gateway pasted without one.
+    if (pendingMode !== 'remote' || !trimmedUrl) {
       setProbeState('idle')
       setAuthRequired(false)
       setProviders([])
@@ -609,7 +611,11 @@ export function GatewayConfigurator({
       // Through runConnect like every other mode. The tunnel is held before
       // anything moves, so a dial that fails leaves the current gateway on screen.
       await runSsh(attemptId => runConnect(sshConnectionTarget(), attemptId), false)
-      notify({ kind: 'success', title: g.savedTitle, message: g.savedMessage })
+      // Live Connect is not "save for next restart" — shell appearance (or the
+      // settings restart toast) is the signal. Leave savedMessage to doSave only.
+      if (isSettings) {
+        notify({ kind: 'success', title: g.restartingTitle, message: g.restartingMessage })
+      }
     } catch (err) {
       // What the tunnel said, under the copy `selectConnection` threw.
       const cause = (err as { cause?: { kind?: string; sshKind?: string } } | null)?.cause

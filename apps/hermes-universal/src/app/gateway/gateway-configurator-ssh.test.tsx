@@ -99,6 +99,36 @@ describe('GatewayConfigurator — SSH connect', () => {
 
     expect(attachSshPrompts).not.toHaveBeenCalled()
   })
+
+  it('toasts the live reconnect copy after Connect, not "Saved for the next restart"', async () => {
+    renderConfigurator()
+    connectOverSsh()
+
+    await waitFor(() => expect(applyConnection).toHaveBeenCalledOnce())
+    await waitFor(() => expect($notifications.get()).toHaveLength(1))
+
+    expect($notifications.get()[0]).toMatchObject({
+      kind: 'success',
+      title: gatewayCopy.restartingTitle,
+      message: gatewayCopy.restartingMessage
+    })
+    expect($notifications.get()[0]?.message).not.toBe(gatewayCopy.savedMessage)
+  })
+
+  it('stays quiet on onboarding Connect — shell appearance is the success signal', async () => {
+    render(
+      <I18nProvider>
+        <QueryClientProvider client={queryClient}>
+          <GatewayConfigurator variant="onboarding" />
+        </QueryClientProvider>
+      </I18nProvider>
+    )
+    connectOverSsh()
+
+    await waitFor(() => expect(applyConnection).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save and reconnect' })).toBeEnabled())
+    expect($notifications.get()).toEqual([])
+  })
 })
 
 describe('GatewayConfigurator — SSH test', () => {

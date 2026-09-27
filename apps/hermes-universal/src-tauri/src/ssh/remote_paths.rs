@@ -140,6 +140,14 @@ pub fn spawn_log_path(ownership_id: &str, spawn_nonce: &str) -> Result<String, S
     ))
 }
 
+pub fn spawn_token_path(ownership_id: &str, spawn_nonce: &str) -> Result<String, SshError> {
+    Ok(format!(
+        "{}/{}.token",
+        ownership_directory(ownership_id)?,
+        validate_spawn_nonce(spawn_nonce)?
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +294,10 @@ mod tests {
         assert_eq!(
             spawn_log_path(OWNER, NONCE).unwrap(),
             format!("~/.hermes/desktop-ssh/{OWNER}/{NONCE}.log")
+        );
+        assert_eq!(
+            spawn_token_path(OWNER, NONCE).unwrap(),
+            format!("~/.hermes/desktop-ssh/{OWNER}/{NONCE}.token")
         );
     }
 

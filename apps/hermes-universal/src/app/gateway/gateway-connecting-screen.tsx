@@ -11,6 +11,7 @@ import { Loader2 } from '@/lib/icons'
 import type { ChatMessage } from '@/lib/session-key-messages'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { $activeConnection } from '@/store/active-connection'
 import { $connectionError, $connectionPhase } from '@/store/connection'
 import { cancelRestore, loadGatewayTarget } from '@/store/gateway-restore'
 import { $restorePaintEnabled } from '@/store/restore-paint'
@@ -28,6 +29,12 @@ import { ownsPersistedAppState } from '@/store/windows'
 
 /** Human label for the gateway being (re)connected to, for the status line. */
 function targetLabel(): string {
+  const active = $activeConnection.get()
+
+  if (active?.label?.trim()) {
+    return active.label.trim()
+  }
+
   const target = loadGatewayTarget()
 
   if (!target) {

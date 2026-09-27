@@ -170,12 +170,13 @@ describe('flushing the composer before a window is built', () => {
     expect(calls.slice(0, 2)).toEqual(['sync:flush', 'invoke:open_satellite_window'])
   })
 
-  it('writes the draft down before an Android screen activity', async () => {
+  it('opens Settings as an in-app route (SPA) without a second WebView', async () => {
     platform.android = true
 
     await openSettingsScreen()
 
-    expect(calls.slice(0, 2)).toEqual(['sync:flush', 'invoke:open_screen_window'])
+    // Same WebView: no composer flush for a peer window, no open_screen_window.
+    expect(calls).toEqual(['navigate'])
   })
 
   it('leaves no trace when the platform cannot open the window at all', async () => {

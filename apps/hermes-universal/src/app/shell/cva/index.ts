@@ -4,6 +4,7 @@ export {
   shellChromeControlActive,
   shellChromeControlIdle,
   shellChromeSurface,
+  shellSidebarSurface,
   shellTabActive,
   shellTabIdle
 } from './tokens'

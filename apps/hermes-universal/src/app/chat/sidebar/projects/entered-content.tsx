@@ -242,7 +242,7 @@ function RepoFlatSection({
   }
 
   return (
-    <SidebarRowStack>
+    <SidebarRowStack className="gap-0.5">
       <WorkspaceHeader
         action={
           onNewSession && (
@@ -282,7 +282,7 @@ function RepoFlatSection({
         open={open}
         title={repo.path ? displayPath(repo.path) : undefined}
       />
-      {open && <SidebarRowStack className="ps-2.5">{body}</SidebarRowStack>}
+      {open && <SidebarRowStack className="gap-0.5 ps-2.5">{body}</SidebarRowStack>}
       {removeDialog}
     </SidebarRowStack>
   )

@@ -37,9 +37,14 @@ import { RenameProfileDialog } from './rename-profile-dialog'
 
 interface ProfilesViewProps {
   onClose: () => void
+  /**
+   * Workspace sidebar embed: skip OverlayView chrome (Workspace ✕ closes).
+   * Default false preserves the standalone Profiles overlay.
+   */
+  embedded?: boolean
 }
 
-export function ProfilesView({ onClose }: ProfilesViewProps) {
+export function ProfilesView({ embedded = false, onClose }: ProfilesViewProps) {
   const { t } = useI18n()
   const p = t.profiles
   const [profiles, setProfiles] = useState<null | ProfileInfo[]>(null)
@@ -102,66 +107,66 @@ export function ProfilesView({ onClose }: ProfilesViewProps) {
     [refresh]
   )
 
-  return (
-    <Panel closeLabel={p.close} onClose={onClose}>
-      {!profiles ? (
-        <PageLoader label={p.loading} />
-      ) : profiles.length === 0 ? (
-        <PanelEmpty
-          action={
-            <Button onClick={() => setCreateOpen(true)} size="sm">
-              {p.newProfile}
-            </Button>
-          }
-          description={p.createDesc}
-          icon="organization"
-          title={p.noProfiles}
-        />
-      ) : (
-        <>
-          <PanelHeader subtitle={p.count(profiles.length)} title={p.title} />
-          <PanelBody>
-            <PanelList
-              onSearchChange={setQuery}
-              searchLabel={p.search}
-              searchPlaceholder={p.search}
-              searchValue={query}
-            >
-              {visibleProfiles.map(profile => (
-                <ProfileRow
-                  active={selected?.name === profile.name}
-                  key={profile.name}
-                  menuItems={
-                    profile.is_default
-                      ? // Renaming the default profile sets a presentation-only
-                        // display name (the canonical id stays "default").
-                        [{ icon: 'edit', label: p.renameMenu, onSelect: () => setPendingRename(profile) }]
-                      : [
-                          { icon: 'edit', label: p.renameMenu, onSelect: () => setPendingRename(profile) },
-                          {
-                            icon: 'trash',
-                            label: t.common.delete,
-                            onSelect: () => setPendingDelete(profile),
-                            tone: 'danger'
-                          }
-                        ]
-                  }
-                  onSelect={() => setSelectedName(profile.name)}
-                  profile={profile}
-                />
-              ))}
-              <PanelAddButton label={p.newProfile} onClick={() => setCreateOpen(true)} />
-            </PanelList>
+  const body = !profiles ? (
+    <PageLoader label={p.loading} />
+  ) : profiles.length === 0 ? (
+    <PanelEmpty
+      action={
+        <Button onClick={() => setCreateOpen(true)} size="sm">
+          {p.newProfile}
+        </Button>
+      }
+      description={p.createDesc}
+      icon="organization"
+      title={p.noProfiles}
+    />
+  ) : (
+    <>
+      <PanelHeader subtitle={p.count(profiles.length)} title={p.title} />
+      <PanelBody>
+        <PanelList
+          onSearchChange={setQuery}
+          searchLabel={p.search}
+          searchPlaceholder={p.search}
+          searchValue={query}
+        >
+          {visibleProfiles.map(profile => (
+            <ProfileRow
+              active={selected?.name === profile.name}
+              key={profile.name}
+              menuItems={
+                profile.is_default
+                  ? // Renaming the default profile sets a presentation-only
+                    // display name (the canonical id stays "default").
+                    [{ icon: 'edit', label: p.renameMenu, onSelect: () => setPendingRename(profile) }]
+                  : [
+                      { icon: 'edit', label: p.renameMenu, onSelect: () => setPendingRename(profile) },
+                      {
+                        icon: 'trash',
+                        label: t.common.delete,
+                        onSelect: () => setPendingDelete(profile),
+                        tone: 'danger'
+                      }
+                    ]
+              }
+              onSelect={() => setSelectedName(profile.name)}
+              profile={profile}
+            />
+          ))}
+          <PanelAddButton label={p.newProfile} onClick={() => setCreateOpen(true)} />
+        </PanelList>
 
-            {selected ? (
-              <ProfileDetail key={selected.name} profile={selected} />
-            ) : (
-              <PanelEmpty description={p.selectPrompt} icon="account" />
-            )}
-          </PanelBody>
-        </>
-      )}
+        {selected ? (
+          <ProfileDetail key={selected.name} profile={selected} />
+        ) : (
+          <PanelEmpty description={p.selectPrompt} icon="account" />
+        )}
+      </PanelBody>
+    </>
+  )
 
+  const dialogs = (
+    <>
       <RenameProfileDialog
         currentName={pendingRename?.name ?? ''}
         isDefault={pendingRename?.is_default ?? false}
@@ -186,6 +191,22 @@ export function ProfilesView({ onClose }: ProfilesViewProps) {
         open={pendingDelete !== null}
         profile={pendingDelete}
       />
+    </>
+  )
+
+  if (embedded) {
+    return (
+      <div className="flex h-full min-h-0 flex-col px-3 pb-3 pt-2" data-slot="profiles-embedded">
+        {body}
+        {dialogs}
+      </div>
+    )
+  }
+
+  return (
+    <Panel closeLabel={p.close} onClose={onClose}>
+      {body}
+      {dialogs}
     </Panel>
   )
 }

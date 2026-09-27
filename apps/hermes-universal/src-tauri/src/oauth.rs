@@ -370,6 +370,63 @@ pub mod native {
             .is_some_and(|flows| flows.iter().any(|f| f.as_str() == Some(NATIVE_FLOW_ID)))
     }
 
+    /// May native PKCE hard-fail for this provider list? Mirrors JS
+    /// `oauthGuardMayHardFail` / desktop `resolveLoginStrategy`.
+    ///
+    /// Password-only gateways still advertise `native_pkce` (the authorize route
+    /// 302s to `/login`, then to loopback). On mobile that round-trip sets
+    /// `navigated: true`, so a loopback miss cannot fall back to the cookie
+    /// cascade — Sign in dead-ends. Desktop forces embedded for that shape;
+    /// return `false` here so we do the same.
+    ///
+    /// Empty / unknown list → `true` (keep native when the status flow says so),
+    /// so pre-`/api/auth/providers` gateways are unchanged.
+    pub fn providers_allow_native_hard_fail(providers: &serde_json::Value) -> bool {
+        let Some(arr) = providers
+            .get("providers")
+            .and_then(|v| v.as_array())
+            .or_else(|| providers.as_array())
+        else {
+            return true;
+        };
+
+        if arr.is_empty() {
+            return true;
+        }
+
+        let named: Vec<&serde_json::Value> = arr
+            .iter()
+            .filter(|p| p.get("name").and_then(|n| n.as_str()).is_some())
+            .collect();
+
+        if named.is_empty() {
+            return true;
+        }
+
+        !named.iter().all(|p| {
+            p.get("supports_password")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+    }
+
+    /// Prefer native only when the gateway advertises it AND providers are not
+    /// all password-based. `providers == None` means the providers probe failed —
+    /// keep the status-only answer (same as an empty list).
+    pub fn should_use_native_flow(
+        status: &serde_json::Value,
+        providers: Option<&serde_json::Value>,
+    ) -> bool {
+        if !supports_native_flow(status) {
+            return false;
+        }
+
+        match providers {
+            None => true,
+            Some(body) => providers_allow_native_hard_fail(body),
+        }
+    }
+
     /// The loopback `redirect_uri` for a bound port. Deliberately the IP literal,
     /// never `localhost`: the gateway rejects the name (RFC 8252 §8.3 — it can
     /// resolve off-loopback via hosts file or a hostile resolver) and treats this
@@ -628,6 +685,40 @@ pub mod native {
             assert!(!supports_native_flow(&older));
             assert!(!supports_native_flow(
                 &serde_json::json!({ "auth_flows": "native_pkce" })
+            ));
+        }
+
+        #[test]
+        fn password_only_providers_force_embedded_even_when_native_is_advertised() {
+            let status = serde_json::json!({ "auth_flows": ["cookie", "native_pkce"] });
+            let password_only = serde_json::json!({
+                "providers": [{ "name": "basic", "supports_password": true }]
+            });
+            let mixed = serde_json::json!({
+                "providers": [
+                    { "name": "basic", "supports_password": true },
+                    { "name": "nous", "supports_password": false }
+                ]
+            });
+            let oauth_only = serde_json::json!({
+                "providers": [{ "name": "nous" }]
+            });
+
+            assert!(!providers_allow_native_hard_fail(&password_only));
+            assert!(providers_allow_native_hard_fail(&mixed));
+            assert!(providers_allow_native_hard_fail(&oauth_only));
+            assert!(providers_allow_native_hard_fail(
+                &serde_json::json!({ "providers": [] })
+            ));
+
+            assert!(!should_use_native_flow(&status, Some(&password_only)));
+            assert!(should_use_native_flow(&status, Some(&mixed)));
+            assert!(should_use_native_flow(&status, Some(&oauth_only)));
+            // Providers probe failed — keep status-only native.
+            assert!(should_use_native_flow(&status, None));
+            assert!(!should_use_native_flow(
+                &serde_json::json!({ "auth_flows": ["cookie"] }),
+                Some(&oauth_only)
             ));
         }
 
@@ -906,10 +997,12 @@ fn clear_native_tokens(_app: &AppHandle, state: &TransportState, base: &str) {
     let _ = crate::secrets::remove_owned(crate::secrets::OwnedKey::NativeAuth, base);
 }
 
-/// Does this gateway advertise the native flow? A probe failure answers "no" —
-/// falling back to the webview flow is always safe, whereas guessing "yes" on a
-/// gateway that cannot broker would strand the user in a browser tab.
-async fn advertises_native_flow(state: &TransportState, base: &str) -> bool {
+/// Should this sign-in attempt take RFC 8252 native PKCE?
+///
+/// Probe failure → `false` (webview cascade is always safe). Password-only
+/// provider lists → `false` even when `auth_flows` lists `native_pkce` (desktop
+/// `resolveLoginStrategy` parity — see `native::should_use_native_flow`).
+async fn should_attempt_native_login(state: &TransportState, base: &str) -> bool {
     let Ok(resp) = state
         .client()
         .get(format!("{base}/api/status"))
@@ -923,10 +1016,35 @@ async fn advertises_native_flow(state: &TransportState, base: &str) -> bool {
         return false;
     }
 
-    resp.json::<serde_json::Value>()
+    let Ok(status) = resp.json::<serde_json::Value>().await else {
+        return false;
+    };
+
+    if !native::supports_native_flow(&status) {
+        return false;
+    }
+
+    let providers = match state
+        .client()
+        .get(format!("{base}/api/auth/providers"))
+        .send()
         .await
-        .map(|body| native::supports_native_flow(&body))
-        .unwrap_or(false)
+    {
+        Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
+        _ => None,
+    };
+
+    let use_native = native::should_use_native_flow(&status, providers.as_ref());
+
+    if !use_native {
+        log::info!(
+            "[oauth] gateway advertises {} but providers are password-only; \
+             using the cookie cascade (desktop parity)",
+            native::NATIVE_FLOW_ID
+        );
+    }
+
+    use_native
 }
 
 /// Answer one loopback socket: read its request line, reply, and report whether it
@@ -1940,11 +2058,12 @@ async fn run_oauth_login(
     let provider = provider.unwrap_or_else(|| "nous".to_string());
     let base_url = Url::parse(&base).map_err(|e| format!("invalid gateway URL {base:?}: {e}"))?;
 
-    // RFC 8252 first when the gateway can broker it. This is the whole point of
-    // the capability probe: a gateway that never says `native_pkce` (older build,
-    // or password-only) drops through to the webview cascade with no version check
-    // and no behaviour change.
-    if advertises_native_flow(state.inner(), &base).await {
+    // RFC 8252 first when the gateway can broker it AND providers are not all
+    // password-based. Password-only gateways still advertise `native_pkce`, but
+    // authorize only 302s to `/login` then loopback — on mobile a miss after
+    // navigate cannot fall back to cookies. Desktop forces embedded for that
+    // shape (`resolveLoginStrategy`); match it here.
+    if should_attempt_native_login(state.inner(), &base).await {
         log::info!(
             "[oauth] gateway advertises {}; taking the native flow",
             native::NATIVE_FLOW_ID

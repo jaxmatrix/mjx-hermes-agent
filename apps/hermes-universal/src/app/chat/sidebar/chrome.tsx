@@ -16,6 +16,7 @@ import {
   SIDEBAR_ROW_INSET,
   SIDEBAR_ROW_LABEL,
   SIDEBAR_ROW_LEAD,
+  SIDEBAR_ROW_META,
   SIDEBAR_ROW_MIN_H,
   SIDEBAR_ROW_PAD_TRAIL
 } from './row-geometry'
@@ -26,12 +27,12 @@ import {
 
 /** The muted slot beside a section label (loading glyph, status hint). */
 export function SidebarSectionMeta({ children }: { children: React.ReactNode }) {
-  return <span className="shrink-0 text-[0.6875rem] font-medium text-(--ui-text-quaternary)">{children}</span>
+  return <span className={cn('shrink-0 font-medium text-(--ui-text-quaternary)', SIDEBAR_ROW_META)}>{children}</span>
 }
 
 export function SidebarCount({ children }: { children: React.ReactNode }) {
   return (
-    <span className="ms-auto shrink-0 tabular-nums text-[0.6875rem] font-medium text-(--ui-text-quaternary)">
+    <span className={cn('ms-auto shrink-0 tabular-nums font-medium text-(--ui-text-quaternary)', SIDEBAR_ROW_META)}>
       {typeof children === 'number' ? compactNumber(children) : children}
     </span>
   )
@@ -40,13 +41,13 @@ export function SidebarCount({ children }: { children: React.ReactNode }) {
 // Row geometry lives in `row-geometry.ts` — see that file for why each class
 // belongs to the box it belongs to. Re-exported here because this module is
 // where callers already look for row chrome.
-export { SIDEBAR_LEAD_ICON_SIZE, SIDEBAR_ROW_CARD_MIN_H, SIDEBAR_TRUNCATED_LEADING } from './row-geometry'
+export { SIDEBAR_LEAD_ICON_SIZE, SIDEBAR_ROW_CARD_MIN_H, SIDEBAR_ROW_META, SIDEBAR_TRUNCATED_LEADING } from './row-geometry'
 
 // The section header's "+" button, hover-revealed (group/section lives on
 // SidebarSectionHeader), mirroring the artifacts/file browser header
 // affordances. focus-visible keeps them keyboard-reachable.
 const HEADER_ACTION_BTN =
-  'text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/section:opacity-100 focus-visible:opacity-100'
+  'text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground group-hover/section:opacity-100 focus-visible:opacity-100 coarse:opacity-100'
 
 // The sessions section header's "+" — the flat list's top-level new-session
 // control. Also a drag source, the same gesture as the nav's "New session"
@@ -290,7 +291,7 @@ export function SidebarGroupRow({
         // group, never both at once.
         facts.length ? (
           <div className="relative flex items-center">
-            <span className="min-w-9 whitespace-nowrap text-end text-[0.625rem] leading-none text-(--ui-text-tertiary) transition-opacity group-hover/workspace:opacity-0">
+            <span className={cn('min-w-9 whitespace-nowrap text-end leading-none text-(--ui-text-tertiary) transition-opacity group-hover/workspace:opacity-0', SIDEBAR_ROW_META)}>
               {facts.join(' · ')}
             </span>
             {actions ? <div className="absolute end-0 flex items-center">{actions}</div> : null}

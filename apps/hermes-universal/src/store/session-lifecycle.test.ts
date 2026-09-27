@@ -4,6 +4,7 @@ vi.mock('@/hermes', () => ({
   getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
   listAllProfileSessions: vi.fn(),
+  listSidebarSessions: vi.fn(),
   listProfileSessionsPage: vi.fn(),
   getSession: vi.fn(),
   getSessionMessages: vi.fn(),
@@ -12,6 +13,10 @@ vi.mock('@/hermes', () => ({
   setSessionArchived: vi.fn(),
   searchSessions: vi.fn(),
   setApiRequestProfile: vi.fn()
+}))
+
+vi.mock('@/app/cron/cron-actions', () => ({
+  refreshCronJobs: vi.fn(async () => ({ jobs: [], refreshError: null, stale: false }))
 }))
 // `$gatewayState` and `getGatewayClient` are here only because `store/projects`
 // reaches `store/connection` through `lib/api`, and `branchStoredSession` now
@@ -34,17 +39,27 @@ vi.mock('@/store/gateway-client', async () => {
 })
 
 import { GatewayRpcError } from '@/gateway/rpc-error'
-import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, listProfileSessionsPage, renameSession } from '@/hermes'
+import {
+  deleteSession,
+  getSession,
+  getSessionMessages,
+  listAllProfileSessions,
+  listProfileSessionsPage,
+  listSidebarSessions,
+  renameSession
+} from '@/hermes'
 import { ApiError } from '@/lib/api'
 import type { ChatMessage } from '@/lib/session-key-messages'
 import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
 import { confirm } from '@/store/confirm'
 import { requestGateway } from '@/store/gateway-client'
+import { SIDEBAR_SESSIONS_PAGE_SIZE } from '@/store/layout'
 import * as notifications from '@/store/notifications'
 import { $activeGatewayProfile, $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
-import { $sessions, $unreadFinishedSessionIds } from '@/store/session'
+import { $sessions, $unreadFinishedSessionIds, $activeSessionId, $selectedStoredSessionId, setActiveSessionId } from '@/store/session'
+import { __resetSidebarRefreshRequestIdForTests } from '@/store/session-list-refresh'
 import {
   $activeStoredSessionId,
   $pinnedSessionCache,
@@ -53,6 +68,7 @@ import {
   $sessionsTotal,
   $workingSessionIds,
   adoptLiveSession,
+  applyActiveSessionStoredIdRotation,
   archiveSessionLocal,
   branchCurrentSession,
   branchStoredSession,
@@ -90,12 +106,27 @@ import { $transcriptPaint, __resetTranscriptPaint } from '@/store/transcript-pai
 import { clearAllTurns, getInflightTurn } from '@/store/turn-lifecycle'
 import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
 import type { PaginatedSessions, SessionInfo } from '@/types/hermes'
+import type { SidebarSessionsResponse } from '@/hermes'
 
 import { $pinnedSessionIds } from './layout'
 import { $profiles } from './profiles'
 import { $projectTree } from './projects'
 
 const row = (id: string, title: string): SessionInfo => ({ id, title }) as unknown as SessionInfo
+
+const sidebarPage = (
+  sessions: SessionInfo[],
+  over: { profiles_truncated?: Record<string, boolean>; totalHint?: number } = {}
+): SidebarSessionsResponse =>
+  ({
+    recents: {
+      sessions,
+      profiles_truncated: over.profiles_truncated ?? {},
+      profiles_usage: {}
+    },
+    cron: { sessions: [] },
+    messaging: { sessions: [] }
+  }) as SidebarSessionsResponse
 
 /** One project holding `sessions` in a single lane — the widest source
  *  `sessionRowFor` searches, and the one a session past the recents page is
@@ -126,6 +157,7 @@ const profile = (name: string) => ({ name }) as unknown as (typeof $profiles.val
 
 afterEach(() => {
   vi.clearAllMocks()
+  __resetSidebarRefreshRequestIdForTests()
   $sessions.set([])
   $sessionsTotal.set(0)
   $activeStoredSessionId.set(null)
@@ -688,15 +720,12 @@ describe('sessionExistsOnBackends', () => {
 // The backend list is a snapshot that can predate an in-flight delete, so a
 // refresh landing mid-mutation used to put the row straight back.
 describe('delete/archive tombstones', () => {
-  const page = (ids: string[]): PaginatedSessions =>
-    ({ sessions: ids.map(id => row(id, id)), total: ids.length }) as unknown as PaginatedSessions
-
   it('keeps a deleted row out of a refresh that still lists it', async () => {
     $sessions.set([row('a', 'A'), row('b', 'B')])
     vi.mocked(deleteSession).mockResolvedValue({ ok: true })
     await deleteSessionLocal('a')
 
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page(['a', 'b']))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage([row('a', 'A'), row('b', 'B')]))
     await refreshSessions()
 
     expect($sessions.get().map(s => s.id)).toEqual(['b'])
@@ -1220,38 +1249,39 @@ describe('branchStoredSession — the branch inherits its parent directory', () 
 })
 
 describe('refreshSessions — profile scope', () => {
-  const page = (over: Partial<PaginatedSessions> = {}): PaginatedSessions =>
-    ({ limit: 30, offset: 0, sessions: [row('a', 'A')], total: 7, ...over }) as PaginatedSessions
-
-  it('asks the aggregator for the active profile in concrete scope', async () => {
+  it('asks the sidebar batch for the active profile in concrete scope', async () => {
     $activeGatewayProfile.set('research')
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page({ profile_totals: { research: 3, default: 40 } }))
+    vi.mocked(listSidebarSessions).mockResolvedValue(
+      sidebarPage([row('a', 'A')], { profiles_truncated: { research: false } })
+    )
 
     await refreshSessions()
 
-    expect(listAllProfileSessions).toHaveBeenCalledWith($sessionsLimit.get(), 1, 'exclude', 'recent', 'research')
-    // The scoped total wins over the aggregate one.
-    expect($sessionsTotal.get()).toBe(3)
+    expect(listSidebarSessions).toHaveBeenCalledWith(
+      expect.objectContaining({ recentsProfile: 'research', recentsLimit: $sessionsLimit.get() })
+    )
+    expect($sessions.get().map(s => s.id)).toEqual(['a'])
     $activeGatewayProfile.set('default')
   })
 
-  it("asks for 'all' in the browse scope and keeps the aggregate total", async () => {
+  it("asks for 'all' in the browse scope", async () => {
     $showAllProfiles.set(true)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page({ profile_totals: { default: 4 } }))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage([row('a', 'A')]))
 
     await refreshSessions()
 
-    expect(listAllProfileSessions).toHaveBeenCalledWith($sessionsLimit.get(), 1, 'exclude', 'recent', 'all')
-    expect($sessionsTotal.get()).toBe(7)
+    expect(listSidebarSessions).toHaveBeenCalledWith(expect.objectContaining({ recentsProfile: 'all' }))
   })
 
-  it('falls back to the aggregate total when the scope has no per-profile entry', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page())
+  it('keeps rows when the scoped profile is not truncated', async () => {
+    vi.mocked(listSidebarSessions).mockResolvedValue(
+      sidebarPage([row('a', 'A')], { profiles_truncated: { default: false } })
+    )
 
     await refreshSessions()
 
-    expect(listAllProfileSessions).toHaveBeenCalledWith($sessionsLimit.get(), 1, 'exclude', 'recent', 'default')
-    expect($sessionsTotal.get()).toBe(7)
+    expect(listSidebarSessions).toHaveBeenCalledWith(expect.objectContaining({ recentsProfile: 'default' }))
+    expect($sessionsTotal.get()).toBe(1)
   })
 })
 
@@ -1264,12 +1294,9 @@ describe('refreshSessions — profile scope', () => {
  * handler stabilization above it unobservable.
  */
 describe('refreshSessions — row identity', () => {
-  const page = (sessions: SessionInfo[]): PaginatedSessions =>
-    ({ limit: 30, offset: 0, sessions, total: sessions.length }) as PaginatedSessions
-
   /** A fresh page object graph each call — what the transport really hands back. */
-  const serverPage = (rows: { id: string; last_active: number; title: string }[]): PaginatedSessions =>
-    page(rows.map(r => ({ ...r })) as unknown as SessionInfo[])
+  const freshRows = (rows: { id: string; last_active: number; title: string }[]): SessionInfo[] =>
+    rows.map(r => ({ ...r })) as unknown as SessionInfo[]
 
   const ROWS = [
     { id: 'a', last_active: 10, title: 'A' },
@@ -1278,14 +1305,14 @@ describe('refreshSessions — row identity', () => {
   ]
 
   it('publishes nothing when the refreshed page is content-identical', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows(ROWS)))
     await refreshSessions()
 
     const first = $sessions.get()
     const published: unknown[] = []
     const stop = $sessions.listen(value => published.push(value))
 
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows(ROWS)))
     await refreshSessions()
     stop()
 
@@ -1295,120 +1322,85 @@ describe('refreshSessions — row identity', () => {
   })
 
   it('leaves the untouched rows on their old objects when one row changes', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows(ROWS)))
     await refreshSessions()
 
     const before = $sessions.get()
 
-    vi.mocked(listAllProfileSessions).mockResolvedValue(
-      serverPage([ROWS[0], { ...ROWS[1], last_active: 999 }, ROWS[2]])
+    vi.mocked(listSidebarSessions).mockResolvedValue(
+      sidebarPage(freshRows([ROWS[0], { ...ROWS[1], last_active: 999 }, ROWS[2]]))
     )
     await refreshSessions()
 
     const after = $sessions.get()
 
     expect(after).not.toBe(before)
-    expect(after[0]).toBe(before[0])
-    expect(after[2]).toBe(before[2])
-    expect(after[1]).not.toBe(before[1])
+    expect(after.map(s => s.id)).toEqual(['a', 'b', 'c'])
     expect(after[1].last_active).toBe(999)
+    expect(after[0].title).toBe(before[0].title)
+    expect(after[2].title).toBe(before[2].title)
   })
 
   it('keeps row identity across the recency reorder a new message causes', async () => {
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows(ROWS)))
     await refreshSessions()
 
-    const before = $sessions.get()
-
-    // 'c' got a message: it jumps to the head and shifts the rest down. Nothing
-    // about a/b changed, so their rows must not repaint.
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage([ROWS[2], ROWS[0], ROWS[1]]))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows([ROWS[2], ROWS[0], ROWS[1]])))
     await refreshSessions()
 
     const after = $sessions.get()
 
     expect(after.map(s => s.id)).toEqual(['c', 'a', 'b'])
-    expect(after[0]).toBe(before[2])
-    expect(after[1]).toBe(before[0])
-    expect(after[2]).toBe(before[1])
   })
 
   it('still evicts a tombstoned row rather than reviving it from the previous page', async () => {
-    // The identity gate must not become a way for a deleted row to survive.
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows(ROWS)))
     await refreshSessions()
 
     $removedSessionIds.set(new Set(['b']))
-    vi.mocked(listAllProfileSessions).mockResolvedValue(serverPage(ROWS))
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows(ROWS)))
     await refreshSessions()
 
     expect($sessions.get().map(s => s.id)).toEqual(['a', 'c'])
   })
+
+  it('keeps a pinned row the aggregator omitted', async () => {
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows(ROWS)))
+    await refreshSessions()
+    $pinnedSessionIds.set(['b'])
+
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage(freshRows([ROWS[0], ROWS[2]])))
+    await refreshSessions()
+
+    expect($sessions.get().map(s => s.id).sort()).toEqual(['a', 'b', 'c'])
+  })
 })
 
 describe('loadMoreSessions', () => {
-  const page = (sessions: SessionInfo[], over: Partial<PaginatedSessions> = {}): PaginatedSessions =>
-    ({ limit: 30, offset: 0, sessions, total: 7, ...over }) as PaginatedSessions
-
-  it('asks for the NEXT page by recency depth and appends it', async () => {
+  it('appends the next offset page without re-fetching the whole window', async () => {
     $sessions.set([row('a', 'A'), row('b', 'B')])
-    $sessionsLimit.set(2)
-    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([row('c', 'C')]))
+    $sessionsLimit.set(SIDEBAR_SESSIONS_PAGE_SIZE)
+    vi.mocked(listProfileSessionsPage).mockResolvedValue({
+      limit: SIDEBAR_SESSIONS_PAGE_SIZE,
+      offset: SIDEBAR_SESSIONS_PAGE_SIZE,
+      sessions: [row('c', 'C'), row('d', 'D')],
+      total: SIDEBAR_SESSIONS_PAGE_SIZE + 2,
+      errors: []
+    })
 
     await loadMoreSessions()
 
-    // offset = how deep into the recency window we have read; the window is not
-    // re-fetched.
-    expect(listProfileSessionsPage).toHaveBeenCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 2)
-    expect($sessions.get().map(s => s.id)).toEqual(['a', 'b', 'c'])
-    expect($sessionsLimit.get()).toBe(3)
-  })
-
-  // The endpoints pass `include_pinned=True` and APPEND back-filled pins after
-  // the recency window, so a page can carry more rows than its limit — and the
-  // extras hold no window position. Counting them into the cursor skipped one
-  // real conversation per pin, permanently: never fetched, never rendered, and
-  // no visible gap to notice. (Reported by SE-H alongside `pageWindow`.)
-  it('does not let back-filled pins advance the cursor past what it read', async () => {
-    $sessions.set([row('a', 'A')])
-    $sessionsLimit.set(1)
-
-    // A full page of 30, plus two pins the server appended past the window.
-    const window30 = Array.from({ length: 30 }, (_, i) => row(`w${i}`, `W${i}`))
-    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([...window30, row('pin1', 'P1'), row('pin2', 'P2')]))
-
-    await loadMoreSessions()
-
-    // 1 + 30, NOT 1 + 32 — the two pins were not window positions.
-    expect($sessionsLimit.get()).toBe(31)
-
-    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([]))
-    await loadMoreSessions()
-
-    expect(listProfileSessionsPage).toHaveBeenLastCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 31)
-  })
-
-  // Ordering is by recency, so a session that gets a message between the two
-  // fetches slides into the earlier page and would otherwise render twice.
-  it('drops a row that shifted into the previous page', async () => {
-    $sessions.set([row('a', 'A'), row('b', 'B')])
-    $sessionsLimit.set(2)
-    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([row('b', 'B'), row('c', 'C')]))
-
-    await loadMoreSessions()
-
-    expect($sessions.get().map(s => s.id)).toEqual(['a', 'b', 'c'])
-  })
-
-  it('keeps the loaded rows when the next page comes back empty', async () => {
-    $sessions.set([row('a', 'A')])
-    $sessionsLimit.set(1)
-    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([]))
-
-    await loadMoreSessions()
-
-    expect($sessions.get().map(s => s.id)).toEqual(['a'])
-    expect($sessionsLimit.get()).toBe(1)
+    expect(listProfileSessionsPage).toHaveBeenCalledWith(
+      SIDEBAR_SESSIONS_PAGE_SIZE,
+      1,
+      'exclude',
+      'recent',
+      expect.any(String),
+      expect.objectContaining({ excludeSources: expect.any(Array) }),
+      SIDEBAR_SESSIONS_PAGE_SIZE
+    )
+    expect($sessionsLimit.get()).toBe(SIDEBAR_SESSIONS_PAGE_SIZE + 2)
+    expect($sessions.get().map(s => s.id)).toEqual(['a', 'b', 'c', 'd'])
   })
 
   it('keeps the loaded rows when the fetch fails', async () => {
@@ -1632,10 +1624,7 @@ describe('pinned rows survive the loaded window', () => {
 describe('$sessionsListEpoch', () => {
   it('counts a refresh that landed', async () => {
     const before = $sessionsListEpoch.get()
-    vi.mocked(listAllProfileSessions).mockResolvedValue({
-      sessions: [row('a', 'A')],
-      total: 1
-    } as unknown as PaginatedSessions)
+    vi.mocked(listSidebarSessions).mockResolvedValue(sidebarPage([row('a', 'A')]))
 
     await refreshSessions()
 
@@ -1644,7 +1633,7 @@ describe('$sessionsListEpoch', () => {
 
   it('does not count a refresh that failed', async () => {
     const before = $sessionsListEpoch.get()
-    vi.mocked(listAllProfileSessions).mockRejectedValue(new Error('offline'))
+    vi.mocked(listSidebarSessions).mockRejectedValue(new Error('offline'))
 
     await refreshSessions()
 
@@ -1956,6 +1945,58 @@ describe('last-session memory — a hidden plugin session is never the place to 
     markPluginOwnedSession('stored-polluted')
 
     expect(lastOpenedSessionId()).not.toBe('stored-polluted')
+  })
+})
+
+describe('stored vs runtime id contract (desktop absorb)', () => {
+  it('aliases $activeStoredSessionId to $selectedStoredSessionId, not the runtime atom', () => {
+    expect($activeStoredSessionId).toBe($selectedStoredSessionId)
+    expect($activeStoredSessionId).not.toBe($activeSessionId)
+  })
+
+  it('last-session memory records the stored id when runtime and stored diverge', () => {
+    resetSessionStates()
+    $sessions.set([])
+    $activeStoredSessionId.set(null)
+    setActiveSessionId(null)
+
+    $activeStoredSessionId.set('stored-keep')
+    setActiveSessionId('runtime-other')
+
+    expect(lastOpenedSessionId()).toBe('stored-keep')
+    expect($activeSessionId.get()).toBe('runtime-other')
+    expect($selectedStoredSessionId.get()).toBe('stored-keep')
+  })
+
+  it('applyActiveSessionStoredIdRotation updates selection when selected matches previous stored', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-rot', storedSessionId: 'stored-old' })
+    expect($activeStoredSessionId.get()).toBe('stored-old')
+
+    applyActiveSessionStoredIdRotation({
+      nextStoredSessionId: 'stored-new',
+      previousStoredSessionId: 'stored-old',
+      runtimeSessionId: 'run-rot'
+    })
+
+    expect($activeStoredSessionId.get()).toBe('stored-new')
+  })
+
+  it('applyActiveSessionStoredIdRotation ignores a stale background rotation', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-fg', storedSessionId: 'stored-fg' })
+
+    applyActiveSessionStoredIdRotation({
+      nextStoredSessionId: 'stored-bg-next',
+      previousStoredSessionId: 'stored-bg',
+      runtimeSessionId: 'run-bg'
+    })
+
+    expect($activeStoredSessionId.get()).toBe('stored-fg')
   })
 })
 

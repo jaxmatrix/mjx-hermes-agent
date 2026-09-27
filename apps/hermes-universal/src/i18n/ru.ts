@@ -4010,6 +4010,22 @@ export const ru = defineLocale({
     openLogs: 'Открыть журналы'
   },
 
+  mobileWorkspace: {
+    backToChat: 'Чат',
+    menu: 'Меню',
+    tabsAria: 'Разделы рабочей области',
+    review: 'Обзор',
+    files: 'Файлы',
+    editor: 'Редактор',
+    terminal: 'Терминал',
+    status: 'Статус',
+    control: 'Управление',
+    workspace: 'Рабочая область',
+    settings: 'Настройки',
+    profiles: 'Профили',
+    agents: 'Агенты'
+  },
+
   ui: {
     search: {
       clear: 'Очистить поиск'

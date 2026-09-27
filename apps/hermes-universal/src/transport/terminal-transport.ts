@@ -101,8 +101,9 @@ export interface TerminalTransportHandlers {
   /** The shell is live. `host` is what the pane shows the user ("this device" vs
    *  the gateway's host), so they always know which machine they're typing into.
    *  `replayed` marks a reattach whose scrollback the server just replayed, so the
-   *  burst of buffered output reads as "reconnected", not a glitch. */
-  onReady: (info: { host: string; replayed?: boolean }) => void
+   *  burst of buffered output reads as "reconnected", not a glitch.
+   *  `shell` is the launched binary when known (local PTY); remote may omit it. */
+  onReady: (info: { host: string; replayed?: boolean; shell?: string }) => void
   /** A reattachable remote shell dropped and is retrying. One-shot per drop. */
   onStatus?: (status: TerminalStatus) => void
 }
@@ -144,7 +145,7 @@ function createLocalTransport(
       // capability gap, not a crash, so say so.
       end(message.includes('unsupported_platform') ? { kind: 'unsupported' } : { detail: message, kind: 'error' }),
     onExit: () => end({ kind: 'exited' }),
-    onSpawn: () => handlers.onReady({ host: 'device' })
+    onSpawn: shell => handlers.onReady({ host: 'device', shell })
   })
 
   return {

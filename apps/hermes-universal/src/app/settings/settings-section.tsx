@@ -1,10 +1,7 @@
-import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { PetSection } from '@/app/pet/pet-section'
-import { QuickEntryRow } from '@/app/quick-entry/quick-entry-row'
 import { settingRowElementId } from '@/app/settings/setting-row-id'
-import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
@@ -13,40 +10,28 @@ import { ChevronLeft } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useStore } from '@/store/atom'
 import { $backgroundMode, setBackgroundMode } from '@/store/background-mode'
-import {
-  $dataUrlReadMaxMb,
-  clampDataUrlReadMaxMb,
-  DATA_URL_READ_DEFAULT_MAX_MB,
-  DATA_URL_READ_MAX_MAX_MB,
-  DATA_URL_READ_MIN_MAX_MB,
-  setDataUrlReadMaxMb
-} from '@/store/data-url-read-max'
-import { $keepAwake, setKeepAwake } from '@/store/keep-awake'
 import { $terminalHostPreference, setTerminalHostPreference } from '@/store/terminals'
 import type { TerminalHostPreference } from '@/transport/terminal-transport'
 
-import { AboutSection } from './about-section'
-import { AppearanceSection } from './appearance-section'
-import { ArchivedSection } from './archived-section'
+import { AboutSettings } from './about-settings'
+import { AppearanceSettings } from './appearance-settings'
 import { BillingSettings } from './billing'
 import { BrowserRows } from './browser-rows'
-import { ConfigSection } from './config-section'
-import { ConnectionsSection } from './connections'
+import { ConfigSettings } from './config-settings'
+import { GatewaySettings } from './gateway-settings'
 import { KeybindSettings } from './keybind-settings'
 import { KeysSection } from './keys-section'
-import { MemorySection } from './memory-section'
-import { ModelSettings } from './model-settings'
-import { NotificationsSection } from './notifications-section'
+import { NotificationsSettings } from './notifications-settings'
 import { PluginsSettings } from './plugins-settings'
 import { EmptyState, ListRow, SettingsContent } from './primitives'
 import { ProvidersSettings } from './providers-settings'
+import { SessionsSettings } from './sessions-settings'
 import { useSettingsNav } from './settings-nav'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
-import { VoiceSection } from './voice-section'
 
 // "Shell runs on" override for `resolveTerminalTransportKind` (transport/terminal-
-// transport.ts) — a device-local preference, not a schema config field, so it's a
-// headerSlot above the Workspace page's schema fields rather than a `SECTIONS` key.
+// transport.ts) — a device-local preference, not a schema config field, so it
+// sits above ConfigSettings on the Workspace shell subpage.
 function TerminalHostRow() {
   const preference = useStore($terminalHostPreference)
 
@@ -79,46 +64,8 @@ function TerminalHostRow() {
   )
 }
 
-// Keep-awake, like the terminal-host override, is a device-local machine
-// preference with nothing to send to the gateway — so it rides above the Advanced
-// page's schema fields rather than living in `SECTIONS`. Desktop-only: the
-// inhibitor has no mobile equivalent (store/keep-awake.ts).
-function KeepAwakeRow() {
-  const { t } = useI18n()
-  const copy = t.settings.config
-  const keepAwake = useStore($keepAwake)
-
-  return (
-    <ListRow
-      action={
-        <Switch
-          aria-label={copy.keepAwakeTitle}
-          checked={keepAwake}
-          onCheckedChange={on => {
-            triggerHaptic('selection')
-            setKeepAwake(on)
-          }}
-        />
-      }
-      description={copy.keepAwakeDesc}
-      id={settingRowElementId('advanced.keep-awake')}
-      title={copy.keepAwakeTitle}
-    />
-  )
-}
-
-// Background mode sits beside keep-awake because it is the same KIND of setting:
-// a device-local switch over a native lever, with nothing to send to the gateway.
-// It is also the same SHAPE — the atom follows what Rust reports, so a machine
-// with no system tray flips this back off rather than promising a resident app
-// the user would have no way to reach (store/background-mode.ts). Desktop-only:
-// there is nothing to hide behind on a phone, so `IS_DESKTOP` below keeps the row
-// off mobile entirely.
-//
-// The atom is TRI-state — `null` means the user has not been asked yet, which
-// the first window close does — and a switch has two positions, so unanswered
-// renders as off. That is the honest reading: until it is answered, closing the
-// window does not keep Hermes running.
+// Background mode — Workspace-only device row (absent from ConfigSettings).
+// Desktop-only: nothing to hide behind on a phone.
 function BackgroundModeRow() {
   const backgroundMode = useStore($backgroundMode)
 
@@ -141,83 +88,51 @@ function BackgroundModeRow() {
   )
 }
 
-// Max size for a local file read into memory as a data URL — composer attach and
-// image preview. Desktop's counterpart is `AttachmentSizeSetting` in
-// `app/settings/config-settings.tsx`, and the shape is deliberately the same:
-// a free-form MB number, committed on blur/Enter, clamped optimistically.
-//
-// Like keep-awake it is a device-local preference with nothing to send to the
-// gateway (two devices on one gateway want different answers — a phone's
-// ceiling is not a workstation's), so it rides above the Chat page's schema
-// fields rather than living in `SECTIONS`. NOT desktop-only: the mobile half is
-// the reason it exists, since over the cap an Android attach is a process kill
-// rather than a slow paint.
-function AttachmentSizeRow() {
-  const { t } = useI18n()
-  const copy = t.settings.config
-  const stored = useStore($dataUrlReadMaxMb)
-  const [draft, setDraft] = useState(String(stored))
+/** Schema config sections that share ConfigSettings + settingsSubpages filtering. */
+const CONFIG_SETTINGS_SECTIONS = new Set([
+  'advanced',
+  'browser',
+  'chat',
+  'memory',
+  'model',
+  'safety',
+  'voice',
+  'workspace'
+])
 
-  // Rust is the one that enforces this, and it can answer with a different
-  // number than was asked for (it re-clamps). Follow the atom rather than the
-  // keystrokes so the field shows what is actually in force.
-  useEffect(() => {
-    setDraft(String(stored))
-  }, [stored])
-
-  const commit = () => {
-    // An empty draft means "back to the default", not the 1 MB floor
-    // (`Number('')` is 0, which would otherwise clamp all the way down).
-    const applied = draft.trim() === '' ? DATA_URL_READ_DEFAULT_MAX_MB : clampDataUrlReadMaxMb(draft)
-
-    if (applied === stored) {
-      setDraft(String(stored))
-
-      return
-    }
-
-    triggerHaptic('selection')
-    setDraft(String(setDataUrlReadMaxMb(applied)))
-  }
+function ConfigSettingsBody({ sectionId, subpage }: { sectionId: string; subpage?: string }) {
+  const showTerminalHost = sectionId === 'workspace' && (subpage === undefined || subpage === 'shell')
+  const showBackgroundMode = IS_DESKTOP && sectionId === 'advanced' && (subpage === undefined || subpage === 'desktop')
+  // In-app browser host rows — advanced device chrome, not mixed into other tabs.
+  const showBrowserRows = sectionId === 'advanced' && (subpage === undefined || subpage === 'desktop')
 
   return (
-    <ListRow
-      action={
-        <div className="flex items-center gap-2">
-          <Input
-            aria-label={copy.attachmentSizeLabel}
-            className="w-20"
-            inputMode="numeric"
-            max={DATA_URL_READ_MAX_MAX_MB}
-            min={DATA_URL_READ_MIN_MAX_MB}
-            onBlur={commit}
-            onChange={event => setDraft(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') {
-                event.currentTarget.blur()
-              }
-            }}
-            type="number"
-            value={draft}
-          />
-          <span className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-            {copy.attachmentSizeUnit}
-          </span>
-        </div>
-      }
-      description={copy.attachmentSizeDesc}
-      id={settingRowElementId('chat.attachment-size')}
-      title={copy.attachmentSizeTitle}
-    />
+    <>
+      {(showTerminalHost || showBackgroundMode || showBrowserRows) && (
+        <SettingsContent>
+          {showTerminalHost ? <TerminalHostRow /> : null}
+          {showBackgroundMode ? <BackgroundModeRow /> : null}
+          {showBrowserRows ? <BrowserRows /> : null}
+        </SettingsContent>
+      )}
+      <ConfigSettings activeSectionId={sectionId} subpage={subpage} />
+    </>
   )
 }
 
-// The per-section body. Each Track-J chunk replaces its placeholder case with a
-// real renderer (Jc8 appearance, Jc9 notifications, Jc10 keys, …). Exported so
-// the desktop-style SettingsView overlay renders the active section here too.
+// The per-section body. Mirrors desktop Settings overlay (`settings/index.tsx`)
+// so Workspace drawer options isolate the same subpage content.
 const alwaysReady = () => true
 
-export function SectionBody({ section }: { section: string }) {
+export function SectionBody({
+  onSectionChange,
+  section
+}: {
+  /** Workspace (and other hosts without URL routing) use this so Providers
+   *  in-page jumps update the active section id. */
+  onSectionChange?: (section: string) => void
+  section: string
+}) {
   const { t } = useI18n()
 
   // `?setting=<id>` — the ⌘K deep link for the device-local rows, which have no
@@ -226,85 +141,52 @@ export function SectionBody({ section }: { section: string }) {
   // hook polls for the DOM id, so it resolves whichever section renders it.
   useDeepLinkHighlight({ elementId: settingRowElementId, param: 'setting', ready: alwaysReady })
 
-  // `section` may carry a sub-tab (`providers/keys`); split so the switch keys off
-  // the top-level group and sub-views read the second segment.
-  const [group, sub] = section.split('/')
+  // `section` may carry a sub-tab (`providers/keys` or `model/auxiliary`); split
+  // so the switch keys off the top-level group and sub-views read the rest.
+  const slash = section.indexOf('/')
+  const group = slash === -1 ? section : section.slice(0, slash)
+  const sub = slash === -1 ? undefined : section.slice(slash + 1)
+
+  if (CONFIG_SETTINGS_SECTIONS.has(group)) {
+    return <ConfigSettingsBody sectionId={group} subpage={sub} />
+  }
 
   switch (group) {
-    // Chat: schema fields plus the device-local attachment-size cap, which is
-    // not a schema key (nothing to send to the gateway) — desktop parity, where
-    // the same row sits among Advanced's this-computer-only knobs.
-    case 'chat':
-      return <ConfigSection headerSlot={<AttachmentSizeRow />} sectionId={group} />
-
-    // Schema-driven config sections (Jc4).
-    case 'safety':
-      return <ConfigSection sectionId={group} />
-
-    // Advanced: schema fields plus the device-local keep-awake and Quick Entry
-    // toggles, neither of which has a config key (desktop parity — `ac9a1014a6`
-    // homes keep-awake here and desktop's config-settings.tsx puts Quick Entry
-    // in the same block, for the same reason: this-computer-only power knobs).
-    case 'advanced':
-      return (
-        <ConfigSection
-          headerSlot={
-            <>
-              {IS_DESKTOP ? (
-                <>
-                  <KeepAwakeRow />
-                  <BackgroundModeRow />
-                  <QuickEntryRow />
-                </>
-              ) : null}
-              {/* Not desktop-gated: a phone with the native WebView plugin has
-                  a real in-app browser, and the rows hide themselves when the
-                  platform reports no host at all. */}
-              <BrowserRows />
-            </>
-          }
-          sectionId={group}
-        />
-      )
-
-    // Workspace: schema fields plus the "Shell runs on" device-local override,
-    // which isn't a schema key (nothing to send to the gateway).
-    case 'workspace':
-      return <ConfigSection headerSlot={<TerminalHostRow />} sectionId={group} />
-
     // Providers: Accounts (OAuth sign-in) + API keys + custom-endpoints sub-tabs.
     case 'providers':
       return (
         <ProvidersSettings
           onClose={() => undefined}
-          onViewChange={() => undefined}
-          view={sub === 'keys' ? 'keys' : sub === 'custom-endpoints' ? 'custom-endpoints' : 'accounts'}
+          onViewChange={view => {
+            if (!onSectionChange) {
+              return
+            }
+
+            if (view === 'accounts') {
+              onSectionChange('providers')
+            } else {
+              onSectionChange(`providers/${view}`)
+            }
+          }}
+          view={
+            sub === 'keys'
+              ? 'keys'
+              : sub === 'custom-endpoints'
+                ? 'custom-endpoints'
+                : sub === 'local'
+                  ? 'local'
+                  : 'accounts'
+          }
         />
       )
 
-    // Voice (Jc5): schema fields filtered to the active TTS/STT provider, plus a
-    // live ElevenLabs voice dropdown (tts.elevenlabs.voice_id).
-    case 'voice':
-      return <VoiceSection />
-
-    // Memory (Jc6): schema fields plus the memory-provider OAuth connect
-    // affordance + per-provider config panel on the memory.provider row.
-    case 'memory':
-      return <MemorySection />
-
-    // Model (Jc7): default-model picker, the model schema fields, MoA and
-    // auxiliary. "Set up <provider>" routes per provider kind (custom endpoint /
-    // OAuth / picker) — see `resolveProviderSetup` in store/onboarding.ts.
-    case 'model':
-      return <ModelSettings />
-
-    // Appearance (Jc8): theme mode + skin + language.
+    // Appearance — desktop AppearanceSettings subpages (theme / typography / …).
     case 'appearance':
-      return <AppearanceSection />
+      return <AppearanceSettings subpage={sub} />
 
-    // Notifications (Jc9): native-notification prefs + haptics.
+    // Notifications — alerts / sounds via NotificationsSettings subpages.
     case 'notifications':
-      return <NotificationsSection />
+      return <NotificationsSettings subpage={sub === 'sounds' ? 'sounds' : sub === 'alerts' ? 'alerts' : undefined} />
 
     // Tools & Keys (Jc10): env-var credentials, split into Tools + Settings
     // sub-tabs surfaced as nav children (desktop parity). Provider OAuth is D2.
@@ -317,12 +199,9 @@ export function SectionBody({ section }: { section: string }) {
     case 'billing':
       return <BillingSettings />
 
-    // Gateways (MJXHRM-446): the connection registry. The nav id stays
-    // `gateway` so every existing deep link, palette row and plugin
-    // contribution keeps resolving — and with a single source the page renders
-    // exactly today's configurator.
+    // Gateways — same GatewaySettings subpages as the desktop Settings overlay.
     case 'gateway':
-      return <ConnectionsSection />
+      return <GatewaySettings subpage={sub || 'connection'} />
 
     // Keyboard shortcuts — the full rebindable panel, ported from desktop.
     // Desktop's nav id for this page is `keybinds`; universal spells it
@@ -331,7 +210,11 @@ export function SectionBody({ section }: { section: string }) {
     case 'keybinds':
 
     case 'shortcuts':
-      return <KeybindSettings />
+      return (
+        <KeybindSettings
+          subpage={sub === 'hud-gesture' || sub === 'screen-capture' || sub === 'shortcuts' ? sub : undefined}
+        />
+      )
 
     // Pet gallery.
     case 'pet':
@@ -341,16 +224,19 @@ export function SectionBody({ section }: { section: string }) {
     case 'plugins':
       return <PluginsSettings />
 
-    // Archived chats (Jc11). `sessions` is the desktop nav id; until the full
-    // Sessions page lands it renders the archived list (its current subset).
+    // Archived chats / default directory (OTHER_SUBPAGES.sessions).
     case 'archived':
 
     case 'sessions':
-      return <ArchivedSection />
+      return (
+        <SessionsSettings
+          subpage={sub === 'default-directory' ? 'default-directory' : sub === 'archived' ? 'archived' : undefined}
+        />
+      )
 
-    // About (Jc12): version + release notes. self-update/uninstall omitted.
+    // About — updates / uninstall via AboutSettings subpages.
     case 'about':
-      return <AboutSection />
+      return <AboutSettings subpage={sub === 'uninstall' ? 'uninstall' : sub === 'updates' ? 'updates' : undefined} />
 
     default:
       // Genuinely unknown ids land here (a stale deep link, a typo'd route).

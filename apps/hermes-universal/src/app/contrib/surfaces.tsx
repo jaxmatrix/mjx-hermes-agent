@@ -24,6 +24,7 @@ import { TerminalPaneChrome } from '../right-pane/terminal/chrome'
 import { contributedRoutes, NEW_CHAT_ROUTE, ROUTES_AREA, sessionRoute } from '../routes'
 import { useStatusSnapshot } from '../shell/hooks/use-status-snapshot'
 import { useStatusbarItems } from '../shell/hooks/use-statusbar-items'
+import { ModelMenuHostProvider } from '../shell/model-menu-host-context'
 import { ModelMenuPanel } from '../shell/model-menu-panel'
 import { ReasoningMenuPanel } from '../shell/reasoning-menu-panel'
 import { StatusbarControls } from '../shell/statusbar-controls'
@@ -126,47 +127,45 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
   const routeSnapshot = useContributions(ROUTES_AREA)
   const routeContributions = contributedRoutes(routeSnapshot)
 
-  const modelMenuContent = useMemo(
+  const modelMenuHost = useMemo(
     () =>
-      gatewayState === 'open' ? (
-        <ModelMenuPanel
-          gateway={gateway || undefined}
-          onSelectModel={actions.selectModel}
-          ownerConnectionId={activeConnectionId || undefined}
-          profile={activeGatewayProfile}
-          requestGateway={actions.requestGateway}
-        />
-      ) : null,
+      gatewayState === 'open'
+        ? {
+            gateway: gateway || undefined,
+            onSelectModel: actions.selectModel,
+            ownerConnectionId: activeConnectionId || undefined,
+            profile: activeGatewayProfile,
+            requestGateway: actions.requestGateway
+          }
+        : null,
     [actions, activeConnectionId, activeGatewayProfile, gateway, gatewayState]
   )
 
+  const modelMenuContent = useMemo(
+    () => (modelMenuHost ? <ModelMenuPanel {...modelMenuHost} /> : null),
+    [modelMenuHost]
+  )
+
   const reasoningMenuContent = useMemo(
-    () =>
-      gatewayState === 'open' ? (
-        <ReasoningMenuPanel
-          gateway={gateway || undefined}
-          onSelectModel={actions.selectModel}
-          ownerConnectionId={activeConnectionId || undefined}
-          profile={activeGatewayProfile}
-          requestGateway={actions.requestGateway}
-        />
-      ) : null,
-    [actions, activeConnectionId, activeGatewayProfile, gateway, gatewayState]
+    () => (modelMenuHost ? <ReasoningMenuPanel {...modelMenuHost} /> : null),
+    [modelMenuHost]
   )
 
   const chatActions = useMemo(() => latestChatActions(actions), [actions])
 
   const chatView = (
-    <ChatView
-      gateway={gateway}
-      maxVoiceRecordingSeconds={maxVoiceRecordingSeconds}
-      modelMenuContent={modelMenuContent}
-      modelOptionsOwnerConnectionId={activeConnectionId || undefined}
-      modelOptionsProfile={activeGatewayProfile}
-      reasoningMenuContent={reasoningMenuContent}
-      requestModelOptionsForOwner={actions.requestGateway}
-      {...chatActions}
-    />
+    <ModelMenuHostProvider value={modelMenuHost}>
+      <ChatView
+        gateway={gateway}
+        maxVoiceRecordingSeconds={maxVoiceRecordingSeconds}
+        modelMenuContent={modelMenuContent}
+        modelOptionsOwnerConnectionId={activeConnectionId || undefined}
+        modelOptionsProfile={activeGatewayProfile}
+        reasoningMenuContent={reasoningMenuContent}
+        requestModelOptionsForOwner={actions.requestGateway}
+        {...chatActions}
+      />
+    </ModelMenuHostProvider>
   )
 
   // FULL-PAGE views (not chat): a page is not a tab-able surface, so the zone's

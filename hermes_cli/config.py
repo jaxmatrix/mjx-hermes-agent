@@ -4051,7 +4051,7 @@ def _platform_plugin_manifests():
             if manifest_path is None:
                 continue
             try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
+                with open(manifest_path, "r", encoding="utf-8-sig") as f:
                     manifest = fast_safe_load(f) or {}
             except Exception:
                 continue
@@ -4065,32 +4065,33 @@ def _inject_platform_plugin_env_vars() -> None:
     Teams / IRC / Google Chat and third-party platforms are configurable in the ``hermes config`` /
     Desktop Gateway form without the core knowing they exist.
 
-    Fork (ecc7415d3f): every ``plugins/<category>/<name>/plugin.yaml`` is walked, not only
-    ``plugins/platforms/*`` — platform plugins default to category ``messaging``, the rest to
-    ``tool``. ``requires_env`` / ``optional_env`` entries are a bare name or a dict with ``name``
-    plus optional ``description``/``url``/``password``/``prompt``/``category``. Failures are
-    swallowed so a malformed plugin.yaml can't break CLI import.
+    ``requires_env`` / ``optional_env`` entries are a bare name or a dict with ``name`` plus
+    optional ``description``/``url``/``password``/``prompt``/``category``. Failures are swallowed
+    so a malformed plugin.yaml can't break CLI import.
     """
     try:
-        for category_dir, dir_name, manifest in _bundled_plugin_manifests():
+        for dir_name, manifest in _platform_plugin_manifests():
             label = manifest.get("label") or manifest.get("name") or dir_name
-            default_category = "messaging" if category_dir == "platforms" else "tool"
             for entry in [*(manifest.get("requires_env") or []), *(manifest.get("optional_env") or [])]:
                 meta = {"name": entry} if isinstance(entry, str) else entry if isinstance(entry, dict) else {}
                 name = meta.get("name")
                 if not name or name in OPTIONAL_ENV_VARS:
                     continue  # hardcoded entry wins (back-compat)
+                # *TOKEN / *SECRET / *KEY / *PASSWORD / *JSON are password fields unless overridden.
+                is_secret = bool(meta.get("password") or meta.get("secret"))
+                if not is_secret and not meta.get("password") is False:
+                    is_secret = name.upper().endswith(("_TOKEN", "_SECRET", "_KEY", "_PASSWORD", "_JSON"))
                 OPTIONAL_ENV_VARS[name] = {
                     "description": meta.get("description") or f"{label} configuration",
                     "prompt": meta.get("prompt") or name,
                     "url": meta.get("url") or None,
-                    "password": manifest_env_is_secret(name, meta),
-                    "category": meta.get("category") or default_category}
+                    "password": is_secret,
+                    "category": meta.get("category") or "messaging"}
     except Exception:
         pass
 
 
-_inject_plugin_env_vars()
+_inject_platform_plugin_env_vars()
 
 
 # ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----

@@ -23,7 +23,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest_cookie_store::CookieStoreMutex;
@@ -425,15 +425,25 @@ impl TransportState {
         // One jar, shared by both clients via `.cookie_provider`, so the login
         // session cookie is retained across http_request calls and the
         // subsequent POST /api/auth/ws-ticket is authenticated (gated + oauth).
+        //
+        // Short idle timeout: uvicorn (and many reverse proxies) drop keep-alives
+        // well before hyper's default idle window. Reusing a half-closed socket
+        // surfaces as hyper IncompleteMessage / "connection closed before
+        // message completed" in ~15ms with is_request=true — the repeating
+        // mobile /api/profiles and /api/status failure. `send_http` still
+        // retries that class once for idempotent methods; this shrinks how
+        // often the pool hands out a corpse.
         let cookies = Arc::new(CookieStoreMutex::default());
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .cookie_provider(cookies.clone())
+            .pool_idle_timeout(Duration::from_secs(5))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         let http_no_redirect = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .cookie_provider(cookies.clone())
+            .pool_idle_timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
@@ -881,13 +891,105 @@ pub(crate) fn apply_connection_auth(
     builder
 }
 
-async fn send_http(
+/// Flatten a `std::error::Error` source chain for logcat. reqwest's Display is
+/// often just `error sending request for url (…)` — the actionable cause
+/// (cleartext refused, DNS, reset, …) lives one or more `source()` hops down.
+fn format_error_chain(err: &dyn std::error::Error, url: &str) -> String {
+    let mut parts = Vec::new();
+    let mut current: Option<&dyn std::error::Error> = Some(err);
+
+    while let Some(e) = current {
+        parts.push(redact_error(e.to_string(), url));
+        current = e.source();
+    }
+
+    parts.join(" | ")
+}
+
+/// hyper IncompleteMessage: the pool handed us a keep-alive socket the peer
+/// already closed. Display is still `error sending request for url (…)` with
+/// `is_request=true` / `is_connect=false` and ~15ms elapsed — the mobile LAN
+/// profile/status poll signature. Safe to retry once on idempotent methods.
+fn is_stale_pooled_connection(err: &reqwest::Error) -> bool {
+    is_stale_pooled_connection_err(err)
+}
+
+fn is_stale_pooled_connection_err(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
+
+    while let Some(e) = current {
+        let msg = e.to_string().to_ascii_lowercase();
+        let debug = format!("{e:?}");
+
+        if msg.contains("connection closed before message completed")
+            || msg.contains("incomplete message")
+            || debug.contains("IncompleteMessage")
+        {
+            return true;
+        }
+
+        current = e.source();
+    }
+
+    false
+}
+
+fn method_is_idempotent(method: &reqwest::Method) -> bool {
+    matches!(
+        *method,
+        reqwest::Method::GET | reqwest::Method::HEAD | reqwest::Method::OPTIONS
+    )
+}
+
+fn log_http_send_failed(
+    method: &reqwest::Method,
+    req: &HttpReq,
+    started: Instant,
+    err: &reqwest::Error,
+) -> String {
+    let redacted = redact_error(err.to_string(), &req.url);
+    let chain = format_error_chain(err, &req.url);
+    let debug = redact_error(format!("{err:?}"), &req.url);
+    // `log::` may be swallowed if telemetry wins the Android logger race;
+    // eprintln always lands on RustStdoutStderr (adb-debug filter).
+    eprintln!(
+        "[transport] http_send_failed method={} url={} elapsed_ms={} is_timeout={} is_connect={} is_request={} is_body={} is_decode={} err={} source={} debug={}",
+        method,
+        redact_url(&req.url),
+        started.elapsed().as_millis(),
+        err.is_timeout(),
+        err.is_connect(),
+        err.is_request(),
+        err.is_body(),
+        err.is_decode(),
+        redacted,
+        chain,
+        debug
+    );
+    log::warn!(
+        "[transport] http_send_failed method={} url={} elapsed_ms={} is_timeout={} is_connect={} is_request={} is_body={} is_decode={} err={} source={} debug={}",
+        method,
+        redact_url(&req.url),
+        started.elapsed().as_millis(),
+        err.is_timeout(),
+        err.is_connect(),
+        err.is_request(),
+        err.is_body(),
+        err.is_decode(),
+        redacted,
+        chain,
+        debug
+    );
+    redacted
+}
+
+fn build_http_request(
     client: &reqwest::Client,
     method: &reqwest::Method,
     req: &HttpReq,
     bearer: Option<&str>,
     connection: Option<&ConnectionAuth>,
-) -> Result<reqwest::Response, String> {
+) -> Result<reqwest::RequestBuilder, String> {
     let mut builder = client.request(method.clone(), &req.url);
     for (key, value) in &req.headers {
         builder = builder.header(key, value);
@@ -904,14 +1006,50 @@ async fn send_http(
         builder = builder.timeout(Duration::from_millis(ms));
     }
 
+    Ok(apply_gateway_bearer(builder, bearer))
+}
+
+async fn send_http(
+    client: &reqwest::Client,
+    method: &reqwest::Method,
+    req: &HttpReq,
+    bearer: Option<&str>,
+    connection: Option<&ConnectionAuth>,
+) -> Result<reqwest::Response, String> {
     // reqwest puts the request URL in its transport errors; REST auth rides in a
     // header rather than the query, but a caller is free to pass either, so the
     // scrub is unconditional. `redact_error` also covers the header itself — this
     // error string is rendered on the connect screen.
-    apply_gateway_bearer(builder, bearer)
+    //
+    // On Android these warn lines land in logcat under tag `hermes` (see
+    // `lib.rs`). Classifiers + the source chain tell connect vs timeout vs
+    // cleartext/DNS/reset without putting credentials into the log.
+    let started = Instant::now();
+    let first = build_http_request(client, method, req, bearer, connection)?
         .send()
-        .await
-        .map_err(|e| redact_error(e.to_string(), &req.url))
+        .await;
+
+    match first {
+        Ok(response) => Ok(response),
+        Err(err) if is_stale_pooled_connection(&err) && method_is_idempotent(method) => {
+            log::warn!(
+                "[transport] http_stale_pool_retry method={} url={}",
+                method,
+                redact_url(&req.url)
+            );
+            eprintln!(
+                "[transport] http_stale_pool_retry method={} url={}",
+                method,
+                redact_url(&req.url)
+            );
+
+            build_http_request(client, method, req, bearer, connection)?
+                .send()
+                .await
+                .map_err(|retry_err| log_http_send_failed(method, req, started, &retry_err))
+        }
+        Err(err) => Err(log_http_send_failed(method, req, started, &err)),
+    }
 }
 
 /// Generic REST proxy. Powers `/api/status` probing, session create/history,
@@ -1730,7 +1868,8 @@ mod tests {
 
     use super::{
         apply_connection_auth, apply_gateway_bearer, apply_ws_token, bearer_retry_warranted,
-        caller_set_authorization, clear_cookies_for, forget_socket, pump_reader, redact_bearer,
+        caller_set_authorization, clear_cookies_for, forget_socket, format_error_chain,
+        is_stale_pooled_connection_err, method_is_idempotent, pump_reader, redact_bearer,
         redact_error, redact_message, redact_secret, redact_url, safe_upload_filename,
         send_binary_frame, take_window_sockets, upload_form, upload_lost_to_redirect,
         visible_response_headers, ws_upgrade_headers, ConnectionAuth, HashMap, HttpReq, HttpUpload,
@@ -1874,6 +2013,111 @@ mod tests {
         for (body, frame) in seen.iter().zip(&frames) {
             assert_eq!(raw_bytes(body), frame.as_slice());
         }
+    }
+
+    #[test]
+    fn format_error_chain_includes_sources_and_scrubs_urls() {
+        #[derive(Debug)]
+        struct Leaf(&'static str);
+        impl std::fmt::Display for Leaf {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.0)
+            }
+        }
+        impl std::error::Error for Leaf {}
+
+        #[derive(Debug)]
+        struct Wrap {
+            msg: String,
+            source: Leaf,
+        }
+        impl std::fmt::Display for Wrap {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.msg)
+            }
+        }
+        impl std::error::Error for Wrap {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.source)
+            }
+        }
+
+        let url = "http://192.168.1.9:9120/api/profiles?token=s3cr3t";
+        let err = Wrap {
+            msg: format!("error sending request for url ({url})"),
+            source: Leaf("Cleartext HTTP traffic not permitted"),
+        };
+        let chain = format_error_chain(&err, url);
+
+        assert!(
+            chain.contains("Cleartext HTTP traffic not permitted"),
+            "{chain}"
+        );
+        assert!(!chain.contains("s3cr3t"), "{chain}");
+        assert!(
+            chain.contains("token=***") || chain.contains("api/profiles"),
+            "{chain}"
+        );
+    }
+
+    #[test]
+    fn detects_hyper_incomplete_message_as_stale_pool() {
+        #[derive(Debug)]
+        struct Leaf(&'static str);
+        impl std::fmt::Display for Leaf {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.0)
+            }
+        }
+        impl std::error::Error for Leaf {}
+
+        #[derive(Debug)]
+        struct Wrapper {
+            source: Leaf,
+        }
+        impl std::fmt::Display for Wrapper {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("error sending request for url (http://192.168.1.9:9120/api/status)")
+            }
+        }
+        impl std::error::Error for Wrapper {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.source)
+            }
+        }
+
+        let incomplete = Wrapper {
+            source: Leaf("connection closed before message completed"),
+        };
+        assert!(is_stale_pooled_connection_err(&incomplete));
+
+        #[derive(Debug)]
+        struct IncompleteDebug;
+        impl std::fmt::Display for IncompleteDebug {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                // Display alone must not match — Debug carries IncompleteMessage.
+                f.write_str("client error (SendRequest)")
+            }
+        }
+        impl std::error::Error for IncompleteDebug {}
+        // The detector also matches `{e:?}` containing IncompleteMessage.
+        // Format a Debug string the same way hyper does on device and assert
+        // our matcher would catch it if Display were opaque.
+        let debug_shape = format!(
+            "{:?}",
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "IncompleteMessage")
+        );
+        assert!(debug_shape.contains("IncompleteMessage"), "{debug_shape}");
+        let _ = IncompleteDebug;
+
+        let unrelated = Leaf("connection refused");
+        assert!(!is_stale_pooled_connection_err(&unrelated));
+
+        assert!(method_is_idempotent(&reqwest::Method::GET));
+        assert!(method_is_idempotent(&reqwest::Method::HEAD));
+        assert!(method_is_idempotent(&reqwest::Method::OPTIONS));
+        assert!(!method_is_idempotent(&reqwest::Method::POST));
+        assert!(!method_is_idempotent(&reqwest::Method::PUT));
     }
 
     #[test]

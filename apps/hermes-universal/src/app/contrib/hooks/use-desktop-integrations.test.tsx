@@ -19,7 +19,10 @@ import { useDesktopIntegrations } from './use-desktop-integrations'
 // Mutable HUD-window flag so the restore tests can flip the window kind the
 // hook believes it runs in. Default false keeps the pre-existing restore
 // coverage exercising the real main-window path.
-const { hudWindowMock } = vi.hoisted(() => ({ hudWindowMock: vi.fn(() => false) }))
+const { hudWindowMock, isMobileMock } = vi.hoisted(() => ({
+  hudWindowMock: vi.fn(() => false),
+  isMobileMock: vi.fn(() => false)
+}))
 
 vi.mock('@/store/mcp-deeplink-install', () => ({
   requestMcpInstallFromDeepLink: vi.fn()
@@ -32,6 +35,17 @@ vi.mock('@/store/plugin-catalog-install', () => ({
 vi.mock('@/store/plugin-install-request', () => ({
   openPluginInstallRequest: vi.fn()
 }))
+
+vi.mock('@/lib/platform', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/platform')>()
+
+  return {
+    ...actual,
+    get IS_MOBILE() {
+      return isMobileMock()
+    }
+  }
+})
 
 vi.mock('@/store/windows', async importOriginal => {
   const actual = await importOriginal<typeof WindowsStore>()
@@ -64,6 +78,7 @@ describe('useDesktopIntegrations', () => {
     navigate = vi.fn()
     // Every test starts as a main window; only the HUD describe flips this.
     hudWindowMock.mockReturnValue(false)
+    isMobileMock.mockReturnValue(false)
 
     // Stub the desktop bridge so the hook's useEffect callbacks don't try to
     // reach real Electron IPC. The established desktop-test pattern assigns a
@@ -176,6 +191,17 @@ describe('useDesktopIntegrations', () => {
 
       // sessionRoute('remembered-session') = '/remembered-session'
       expect(navigate).toHaveBeenCalledWith('/remembered-session', { replace: true })
+    })
+
+    it('does not restore on phone — useRestoreLastSession owns cold start', () => {
+      isMobileMock.mockReturnValue(true)
+      window.localStorage.setItem('hermes.desktop.lastSessionId.profile.default', 'remembered-session')
+
+      const sessions = [session({ id: 'remembered-session', profile: 'default' })]
+
+      render({ profileReady: true, sessions })
+
+      expect(navigate).not.toHaveBeenCalled()
     })
 
     it('announces the restored session so the pre-session draft follows the cold-start navigation', () => {

@@ -6,7 +6,8 @@
  * and the row decides only how it reads.
  */
 
-import { cn, coarseElapsed, Codicon, ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger, haptic, universalHost as host, queryClient, RowButton, SessionStatusDot, SidebarRowLead, Tip, useI18n, useValue } from '@hermes/plugin-sdk'
+import { ActionsContextMenu, ActionsMenu, type MenuKit } from '@/components/ui/actions-menu'
+import { cn, coarseElapsed, Codicon, haptic, universalHost as host, queryClient, RowButton, SessionStatusDot, SidebarRowLead, Tip, useI18n, useValue } from '@hermes/plugin-sdk'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'
 import { isBackfilledFacePng } from './avatar-image'
@@ -263,28 +264,30 @@ export function BotRow({ bot, onDelete, onEdit, onGroup, onNewSection, showHandl
               </Tip>
             ) : null}
             <Tip label={rowTooltip}>
-              <span className="min-w-0 truncate text-[0.8125rem] font-medium">{displayName(bot, meta)}</span>
+              <span className="min-w-0 truncate text-[length:var(--sidebar-row-title-size,0.8125rem)] font-medium">
+                {displayName(bot, meta)}
+              </span>
             </Tip>
           </div>
           {attention ? (
             <Tip label={botAttentionHint(attention.reason)}>
               <Codicon
                 aria-label={b.roster.needsAttention}
-                className="shrink-0 text-[0.6875rem] text-amber-600 dark:text-amber-300"
+                className="shrink-0 text-[length:var(--sidebar-row-meta-size,0.6875rem)] text-amber-600 dark:text-amber-300"
                 name="warning"
               />
             </Tip>
           ) : null}
           {rowAgeTs ? (
-            <span className="shrink-0 text-[0.6875rem] text-(--ui-text-quaternary)">
+            <span className="shrink-0 text-[length:var(--sidebar-row-meta-size,0.6875rem)] text-(--ui-text-quaternary)">
               {rowAge(rowAgeTs * 1000, t.sidebar.row)}
             </span>
           ) : null}
         </div>
         {showDetailsRow ? (
-          <div className="flex min-w-0 items-center gap-1.5 text-xs text-(--ui-text-tertiary)">
+          <div className="flex min-w-0 items-center gap-1.5 text-[length:var(--sidebar-row-meta-size,0.6875rem)] text-(--ui-text-tertiary)">
             {showHandle ? (
-              <span className="shrink-0 font-mono text-[0.6875rem] text-(--ui-text-quaternary)">{`@${handle}`}</span>
+              <span className="shrink-0 font-mono text-(--ui-text-quaternary)">{`@${handle}`}</span>
             ) : null}
             {showHandle && displayPreview ? <span className="shrink-0 text-(--ui-text-quaternary)">·</span> : null}
             {displayPreview ? (
@@ -296,169 +299,275 @@ export function BotRow({ bot, onDelete, onEdit, onGroup, onNewSection, showHandl
     </RowButton>
   )
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onSelect={() => void openRosterBot(bot)}>{b.bot.openBotChat}</ContextMenuItem>
-        <ContextMenuItem onSelect={() => openBotScreen(bot, meta)}>{b.screen.menu}</ContextMenuItem>
-        <ContextMenuCheckboxItem
-          checked={Boolean(meta?.screenAutoOpen)}
-          onSelect={() => {
-            void ensureBotMetadata(bot)
-              .then(current => {
-                const next = !current.screenAutoOpen
-                void saveBotMeta(bot, { screenAutoOpen: next })
-                host.notify({
-                  kind: 'info',
-                  message: next ? b.screen.autoOpenOnToast(displayName(bot, current)) : b.screen.autoOpenOffToast(displayName(bot, current))
-                })
+  const botMenuItems = (kit: MenuKit) => (
+    <>
+      <kit.Item onSelect={() => void openRosterBot(bot)}>{b.bot.openBotChat}</kit.Item>
+      <kit.Item onSelect={() => openBotScreen(bot, meta)}>{b.screen.menu}</kit.Item>
+      <kit.Item
+        onSelect={event => {
+          event.preventDefault()
+          void ensureBotMetadata(bot)
+            .then(current => {
+              const next = !current.screenAutoOpen
+              void saveBotMeta(bot, { screenAutoOpen: next })
+              host.notify({
+                kind: 'info',
+                message: next
+                  ? b.screen.autoOpenOnToast(displayName(bot, current))
+                  : b.screen.autoOpenOffToast(displayName(bot, current))
               })
-              .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
-          }}
-        >
-          {b.screen.autoOpenMenu}
-        </ContextMenuCheckboxItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onSelect={() => {
-            void ensureBotMetadata(bot)
-              .then(current => {
-                const pinned = Boolean(current.pinned)
-                void saveBotMeta(bot, {
-                  pinned: !pinned
-                })
-                host.notify({
-                  kind: 'info',
-                  message: pinned
-                    ? b.bot.unpinnedToast(displayName(bot, current))
-                    : b.bot.pinnedToast(displayName(bot, current))
-                })
-              })
-              .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
-          }}
-        >
-          {pinned ? b.bot.unpin : b.bot.pinToTop}
-        </ContextMenuItem>
-        <ContextMenuItem
-          onSelect={() => {
-            void ensureBotMetadata(bot)
-              .then(current => {
-                const hidden = Boolean(current.hidden)
-                void saveBotMeta(bot, {
-                  hidden: !hidden
-                })
-
-                if (!hidden) {
-                  fallbackSelectionAfterHide(botSelectionKey(bot))
-                }
-
-                host.notify({
-                  kind: 'info',
-                  message: hidden
-                    ? b.bot.unhiddenToast(displayName(bot, current))
-                    : b.bot.hiddenToast(displayName(bot, current))
-                })
-              })
-              .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
-          }}
-        >
-          {hidden ? b.bot.unhide : b.bot.hide}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onSelect={() =>
-            void ensureBotMetadata(bot)
-              .then(() => onEdit(bot))
-              .catch(error => host.notifyError?.(error, b.bot.loadFailed))
-          }
-        >
-          {b.bot.editMenu}
-        </ContextMenuItem>
-        <ContextMenuItem
-          onSelect={() =>
-            void ensureBotMetadata(bot)
-              .then(() => onGroup(bot))
-              .catch(error => host.notifyError?.(error, b.bot.groupsLoadFailed))
-          }
-        >
-          {groups.length ? b.bot.groupsMenu(groups.join(', ')) : b.bot.manageGroups}
-        </ContextMenuItem>
-        <ContextMenuItem
-          onSelect={() => {
-            host.notify({
-              kind: 'info',
-              message: `Duplicating ${displayName(bot, meta)}…`
             })
-            duplicateBot(bot, $lastRoster.get())
-              .then(name => {
-                queryClient.invalidateQueries({
-                  queryKey: ROSTER_KEY
-                })
-                host.notify({
-                  kind: 'success',
-                  message: `Created ${name} — full copy of ${bot.name}`
-                })
+            .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
+        }}
+      >
+        <span className="min-w-0 flex-1">{b.screen.autoOpenMenu}</span>
+        {meta?.screenAutoOpen ? (
+          <Codicon className="ms-auto shrink-0 opacity-70" name="check" size="0.875rem" />
+        ) : null}
+      </kit.Item>
+      <kit.Separator />
+      <kit.Item
+        onSelect={() => {
+          void ensureBotMetadata(bot)
+            .then(current => {
+              const pinnedNow = Boolean(current.pinned)
+              void saveBotMeta(bot, {
+                pinned: !pinnedNow
               })
-              .catch(err => host.notifyError(err, b.bot.duplicateFailed))
-          }}
-        >
-          {b.bot.duplicate}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onSelect={() => {
-            saveSelectedRosterBot(bot)
-            setBotsWorkspaceOwner(botWorkspaceOwnerKey(bot), bot)
-            newBotChat(bot)
-          }}
-        >
-          {b.bot.newChatWith}
-        </ContextMenuItem>
-        {/* Click-to-latest (#93054): the freshest listed session — a cron run,
-            a delegated job, a side thread — without moving the row click off
-            the canonical Bot Chat. */}
-        <ContextMenuItem disabled={!botRecentSession(bot)} onSelect={() => void openBotRecentSession(bot)}>
-          Open recent session
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        {/* Filing. Membership is one field on the bot's meta (`sectionId`), so
-            this is a one-field write and no list anywhere has to be kept in
-            sync with it. */}
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>{b.sections.moveTo}</ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            {sections.map(section => (
-              <ContextMenuItem
-                disabled={section.id === currentSectionId}
-                key={section.id}
-                onSelect={() => void moveBotsToSection([bot], section.id)}
-              >
-                <Codicon className="me-1.5" name="folder" />
-                {section.name}
-              </ContextMenuItem>
-            ))}
-            {sections.length ? <ContextMenuSeparator /> : null}
-            <ContextMenuItem onSelect={() => onNewSection(bot)}>
-              <Codicon className="me-1.5" name="new-folder" />
-              {b.sections.newSectionEllipsis}
-            </ContextMenuItem>
-            {currentSectionId ? (
-              <ContextMenuItem onSelect={() => void moveBotsToSection([bot], null)}>
-                <Codicon className="me-1.5" name="inbox" />
-                {b.sections.removeFromSection}
-              </ContextMenuItem>
-            ) : null}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        {isDefaultBot(bot) ? null : <ContextMenuSeparator />}
-        {isDefaultBot(bot) ? null : (
-          <ContextMenuItem onSelect={() => onDelete(bot)} variant="destructive">
+              host.notify({
+                kind: 'info',
+                message: pinnedNow
+                  ? b.bot.unpinnedToast(displayName(bot, current))
+                  : b.bot.pinnedToast(displayName(bot, current))
+              })
+            })
+            .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
+        }}
+      >
+        {pinned ? b.bot.unpin : b.bot.pinToTop}
+      </kit.Item>
+      <kit.Item
+        onSelect={() => {
+          void ensureBotMetadata(bot)
+            .then(current => {
+              const hiddenNow = Boolean(current.hidden)
+              void saveBotMeta(bot, {
+                hidden: !hiddenNow
+              })
+
+              if (!hiddenNow) {
+                fallbackSelectionAfterHide(botSelectionKey(bot))
+              }
+
+              host.notify({
+                kind: 'info',
+                message: hiddenNow
+                  ? b.bot.unhiddenToast(displayName(bot, current))
+                  : b.bot.hiddenToast(displayName(bot, current))
+              })
+            })
+            .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
+        }}
+      >
+        {hidden ? b.bot.unhide : b.bot.hide}
+      </kit.Item>
+      <kit.Separator />
+      <kit.Item
+        onSelect={() =>
+          void ensureBotMetadata(bot)
+            .then(() => onEdit(bot))
+            .catch(error => host.notifyError?.(error, b.bot.loadFailed))
+        }
+      >
+        {b.bot.editMenu}
+      </kit.Item>
+      <kit.Item
+        onSelect={() =>
+          void ensureBotMetadata(bot)
+            .then(() => onGroup(bot))
+            .catch(error => host.notifyError?.(error, b.bot.groupsLoadFailed))
+        }
+      >
+        {groups.length ? b.bot.groupsMenu(groups.join(', ')) : b.bot.manageGroups}
+      </kit.Item>
+      <kit.Item
+        onSelect={() => {
+          host.notify({
+            kind: 'info',
+            message: `Duplicating ${displayName(bot, meta)}…`
+          })
+          duplicateBot(bot, $lastRoster.get())
+            .then(name => {
+              queryClient.invalidateQueries({
+                queryKey: ROSTER_KEY
+              })
+              host.notify({
+                kind: 'success',
+                message: `Created ${name} — full copy of ${bot.name}`
+              })
+            })
+            .catch(err => host.notifyError(err, b.bot.duplicateFailed))
+        }}
+      >
+        {b.bot.duplicate}
+      </kit.Item>
+      <kit.Separator />
+      <kit.Item
+        onSelect={() => {
+          saveSelectedRosterBot(bot)
+          setBotsWorkspaceOwner(botWorkspaceOwnerKey(bot), bot)
+          newBotChat(bot)
+        }}
+      >
+        {b.bot.newChatWith}
+      </kit.Item>
+      {/* Click-to-latest (#93054): the freshest listed session — a cron run,
+          a delegated job, a side thread — without moving the row click off
+          the canonical Bot Chat. */}
+      <kit.Item disabled={!botRecentSession(bot)} onSelect={() => void openBotRecentSession(bot)}>
+        Open recent session
+      </kit.Item>
+      <kit.Separator />
+      {/* Filing. Membership is one field on the bot's meta (`sectionId`), so
+          this is a one-field write and no list anywhere has to be kept in
+          sync with it. */}
+      <kit.Sub>
+        <kit.SubTrigger>{b.sections.moveTo}</kit.SubTrigger>
+        <kit.SubContent>
+          {sections.map(section => (
+            <kit.Item
+              disabled={section.id === currentSectionId}
+              key={section.id}
+              onSelect={() => void moveBotsToSection([bot], section.id)}
+            >
+              <Codicon className="me-1.5" name="folder" />
+              {section.name}
+            </kit.Item>
+          ))}
+          {sections.length ? <kit.Separator /> : null}
+          <kit.Item onSelect={() => onNewSection(bot)}>
+            <Codicon className="me-1.5" name="new-folder" />
+            {b.sections.newSectionEllipsis}
+          </kit.Item>
+          {currentSectionId ? (
+            <kit.Item onSelect={() => void moveBotsToSection([bot], null)}>
+              <Codicon className="me-1.5" name="inbox" />
+              {b.sections.removeFromSection}
+            </kit.Item>
+          ) : null}
+        </kit.SubContent>
+      </kit.Sub>
+      {isDefaultBot(bot) ? null : <kit.Separator />}
+      {isDefaultBot(bot) ? null : (
+        <kit.Item onSelect={() => onDelete(bot)} variant="destructive">
+          {t.common.delete}
+        </kit.Item>
+      )}
+    </>
+  )
+
+  // Kebab stays a short subset of the context menu — the full list is for
+  // long-press / right-click. Both surfaces share MenuKit so mobile lands in
+  // MenuDrawer via ActionsMenu / ActionsContextMenu.
+  const botKebabItems = (kit: MenuKit) => (
+    <>
+      <kit.Item onSelect={() => void openRosterBot(bot)}>{b.bot.openBotChat}</kit.Item>
+      <kit.Item onSelect={() => openBotScreen(bot, meta)}>{b.screen.menu}</kit.Item>
+      <kit.Separator />
+      <kit.Item
+        onSelect={() => {
+          void ensureBotMetadata(bot)
+            .then(current => {
+              const nextPinned = Boolean(current.pinned)
+              void saveBotMeta(bot, { pinned: !nextPinned })
+              host.notify({
+                kind: 'info',
+                message: nextPinned
+                  ? b.bot.unpinnedToast(displayName(bot, current))
+                  : b.bot.pinnedToast(displayName(bot, current))
+              })
+            })
+            .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
+        }}
+      >
+        {pinned ? b.bot.unpin : b.bot.pinToTop}
+      </kit.Item>
+      <kit.Item
+        onSelect={() => {
+          void ensureBotMetadata(bot)
+            .then(current => {
+              const nextHidden = Boolean(current.hidden)
+              void saveBotMeta(bot, { hidden: !nextHidden })
+
+              if (!nextHidden) {
+                fallbackSelectionAfterHide(botSelectionKey(bot))
+              }
+
+              host.notify({
+                kind: 'info',
+                message: nextHidden
+                  ? b.bot.unhiddenToast(displayName(bot, current))
+                  : b.bot.hiddenToast(displayName(bot, current))
+              })
+            })
+            .catch(error => host.notifyError?.(error, b.bot.metadataLoadFailed))
+        }}
+      >
+        {hidden ? b.bot.unhide : b.bot.hide}
+      </kit.Item>
+      <kit.Separator />
+      <kit.Item
+        onSelect={() =>
+          void ensureBotMetadata(bot)
+            .then(() => onEdit(bot))
+            .catch(error => host.notifyError?.(error, b.bot.loadFailed))
+        }
+      >
+        {b.bot.editMenu}
+      </kit.Item>
+      <kit.Item
+        onSelect={() => {
+          saveSelectedRosterBot(bot)
+          setBotsWorkspaceOwner(botWorkspaceOwnerKey(bot), bot)
+          newBotChat(bot)
+        }}
+      >
+        {b.bot.newChatWith}
+      </kit.Item>
+      {!isDefaultBot(bot) ? (
+        <>
+          <kit.Separator />
+          <kit.Item onSelect={() => onDelete(bot)} variant="destructive">
             {t.common.delete}
-          </ContextMenuItem>
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
+          </kit.Item>
+        </>
+      ) : null}
+    </>
+  )
+
+  return (
+    <div className="group/bot-row flex min-w-0 items-center gap-0.5">
+      <ActionsContextMenu items={botMenuItems}>{row}</ActionsContextMenu>
+      {/* Sibling of the row button — nested <button> inside RowButton is invalid
+          and blocked the menu. Always visible so phone verbs are not long-press-only. */}
+      <ActionsMenu
+        ariaLabel={`${displayName(bot, meta)} actions`}
+        items={botKebabItems}
+        onCloseAutoFocus={event => event.preventDefault()}
+      >
+        <button
+          aria-label={`${displayName(bot, meta)} actions`}
+          className={cn(
+            'grid size-5 shrink-0 place-items-center rounded-[4px] bg-transparent text-(--ui-text-tertiary) transition-colors',
+            'hover:bg-(--ui-control-active-background) hover:text-foreground',
+            'data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground'
+          )}
+          type="button"
+        >
+          <Codicon name="kebab-vertical" size="0.875rem" />
+        </button>
+      </ActionsMenu>
+    </div>
   )
 }
 
@@ -565,10 +674,12 @@ export function GroupRow({ active, group, members, needsYou, onOpen, onDisband, 
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{group}</span>
+          <span className="min-w-0 flex-1 truncate text-[length:var(--sidebar-row-title-size,0.8125rem)] font-medium">
+            {group}
+          </span>
           {room.pinned ? (
             <Tip label={b.roster.pinned}>
-              <Codicon className="shrink-0 text-[0.6875rem] text-(--ui-text-quaternary)" name="pinned" />
+              <Codicon className="shrink-0 text-[length:var(--sidebar-row-meta-size,0.6875rem)] text-(--ui-text-quaternary)" name="pinned" />
             </Tip>
           ) : null}
           {needsYou ? (
@@ -577,76 +688,82 @@ export function GroupRow({ active, group, members, needsYou, onOpen, onDisband, 
             </Tip>
           ) : null}
           {lastAt ? (
-            <span className="shrink-0 text-[0.6875rem] text-(--ui-text-quaternary)">
+            <span className="shrink-0 text-[length:var(--sidebar-row-meta-size,0.6875rem)] text-(--ui-text-quaternary)">
               {rowAge(lastAt, t.sidebar.row)}
             </span>
           ) : null}
         </div>
-        <div className="min-w-0 truncate text-xs text-(--ui-text-tertiary)">{preview}</div>
+        <div className="min-w-0 truncate text-[length:var(--sidebar-row-meta-size,0.6875rem)] text-(--ui-text-tertiary)">
+          {preview}
+        </div>
       </div>
     </RowButton>
   )
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onSelect={() => onOpen(group)}>Open Group Chat</ContextMenuItem>
-        <ContextMenuSeparator />
-        {/* Same affordance as a bot row's pin; pinned rooms lead the roster
-            band, and the flag lives on the room record. */}
-        <ContextMenuItem
-          onSelect={() => {
-            const pinned = toggleGroupChatPinned(group)
+    <ActionsContextMenu
+      items={(kit: MenuKit) => (
+        <>
+          <kit.Item onSelect={() => onOpen(group)}>Open Group Chat</kit.Item>
+          <kit.Separator />
+          {/* Same affordance as a bot row's pin; pinned rooms lead the roster
+              band, and the flag lives on the room record. */}
+          <kit.Item
+            onSelect={() => {
+              const pinned = toggleGroupChatPinned(group)
 
-            if (pinned !== null) {
-              host.notify({ kind: 'info', message: `${group} ${pinned ? 'pinned to top' : 'unpinned'}` })
+              if (pinned !== null) {
+                host.notify({ kind: 'info', message: `${group} ${pinned ? 'pinned to top' : 'unpinned'}` })
+              }
+            }}
+          >
+            {room.pinned ? 'Unpin' : 'Pin to top'}
+          </kit.Item>
+          {/* Filing — the same submenu a bot row gets, driving the room-record
+              assignment instead of profile meta. */}
+          <kit.Sub>
+            <kit.SubTrigger>{b.sections.moveTo}</kit.SubTrigger>
+            <kit.SubContent>
+              {sections.map(section => (
+                <kit.Item
+                  disabled={section.id === currentSectionId}
+                  key={section.id}
+                  onSelect={() => moveGroupChatsToSection([group], section.id)}
+                >
+                  <Codicon className="me-1.5" name="folder" />
+                  {section.name}
+                </kit.Item>
+              ))}
+              {sections.length ? <kit.Separator /> : null}
+              <kit.Item onSelect={() => onNewSection(group)}>
+                <Codicon className="me-1.5" name="new-folder" />
+                {b.sections.newSectionEllipsis}
+              </kit.Item>
+              {currentSectionId ? (
+                <kit.Item onSelect={() => moveGroupChatsToSection([group], null)}>
+                  <Codicon className="me-1.5" name="inbox" />
+                  {b.sections.removeFromSection}
+                </kit.Item>
+              ) : null}
+            </kit.SubContent>
+          </kit.Sub>
+          <kit.Separator />
+          <kit.Item
+            className="text-destructive focus:text-destructive"
+            onSelect={() =>
+              onDisband({
+                name: group,
+                members
+              })
             }
-          }}
-        >
-          {room.pinned ? 'Unpin' : 'Pin to top'}
-        </ContextMenuItem>
-        {/* Filing — the same submenu a bot row gets, driving the room-record
-            assignment instead of profile meta. */}
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>{b.sections.moveTo}</ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            {sections.map(section => (
-              <ContextMenuItem
-                disabled={section.id === currentSectionId}
-                key={section.id}
-                onSelect={() => moveGroupChatsToSection([group], section.id)}
-              >
-                <Codicon className="me-1.5" name="folder" />
-                {section.name}
-              </ContextMenuItem>
-            ))}
-            {sections.length ? <ContextMenuSeparator /> : null}
-            <ContextMenuItem onSelect={() => onNewSection(group)}>
-              <Codicon className="me-1.5" name="new-folder" />
-              {b.sections.newSectionEllipsis}
-            </ContextMenuItem>
-            {currentSectionId ? (
-              <ContextMenuItem onSelect={() => moveGroupChatsToSection([group], null)}>
-                <Codicon className="me-1.5" name="inbox" />
-                {b.sections.removeFromSection}
-              </ContextMenuItem>
-            ) : null}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          className="text-destructive focus:text-destructive"
-          onSelect={() =>
-            onDisband({
-              name: group,
-              members
-            })
-          }
-        >
-          {b.group.deleteAction}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+            variant="destructive"
+          >
+            {b.group.deleteAction}
+          </kit.Item>
+        </>
+      )}
+    >
+      {row}
+    </ActionsContextMenu>
   )
 }

@@ -24,8 +24,11 @@
     "android:prune": "node scripts/prune-android-generated.mjs",
     "android:dev": "npm run android:prune && npm run adb:reverse && CARGO_TARGET_DIR=\"$PWD/src-tauri/target-android\" tauri android dev --host ${HERMES_DEV_HOST:-127.0.0.1}",
     "adb:reverse": "adb reverse tcp:5176 tcp:5176 && adb reverse tcp:5177 tcp:5177 && adb reverse tcp:4317 tcp:4317 && adb reverse tcp:4318 tcp:4318",
+    "adb:screenshot": "node scripts/adb-debug.mjs screenshot",
+    "adb:logcat": "node scripts/adb-debug.mjs logcat",
+    "adb:debug-capture": "node scripts/adb-debug.mjs debug-capture",
     "android:build:debug": "npm run android:prune && CARGO_TARGET_DIR=\"$PWD/src-tauri/target-android\" tauri android build --debug",
-    "android:install": "adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk",
+    "android:install:debug": "adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk",
     "absorb-desktop-src": "node scripts/absorb-desktop-src.mjs",
     "repoint-imports": "node scripts/repoint-imports.mjs",
     "gen-port-registry": "node scripts/gen-port-registry.mjs",
@@ -134,7 +137,7 @@
     "@babel/core": "8.0.1",
     "@eslint/js": "^9.39.4",
     "@rolldown/plugin-babel": "0.2.3",
-    "@storybook/react-vite": "10.5.7",
+    "@storybook/react-vite": "10.6.0",
     "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/cli": "^2.0.0",
     "@testing-library/dom": "10.4.1",
@@ -161,11 +164,12 @@
     "globals": "^17.4.0",
     "jsdom": "29.1.1",
     "prettier": "3.9.5",
-    "storybook": "10.5.7",
+    "storybook": "10.6.0",
     "tailwindcss": "4.3.3",
     "tw-animate-css": "^1.4.0",
     "typescript": "6.0.3",
     "vite": "8.2.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "eslint-plugin-storybook": "10.6.0"
   }
 }

@@ -19,7 +19,11 @@ import { installObservability } from './observability/install'
 import { holdForLaunch } from './store/active-connection'
 import { initAppLifecycle, onBackground } from './store/app-lifecycle'
 import { initBackgroundMode } from './store/background-mode'
+import { initTray } from './store/tray'
 import { openTunnelPage } from './store/connection-tunnels'
+// Side effect: installs registryConnectionSource so host.agents() unions every
+// logged-in gateway (Bot Mode multi-connection). Must load before plugins poll.
+import './store/connection-plugin-source'
 import { restoreLaunchConnection, startConnectionsWatcher } from './store/connections'
 import { registerBuiltinDeepLinkRoutes } from './store/deep-link-builtins'
 import { initDownloadSync } from './store/downloads'
@@ -95,7 +99,8 @@ export function bootUniversal(): void {
   // the same answer as the main window (the owner of the app's persisted state
   // only seeds the registry first). A switch made later reaches them all as
   // Rust's announcement. Identity only — the bridge holds its first answer for
-  // this, and the boot hook does the dialling.
+  // this, and the boot hook does the dialling. The owner raise of `$restoring`
+  // lives inside `restoreLaunchConnection` (sync before its first await).
   if (IS_TAURI) {
     lever('launch connection', () => holdForLaunch(restoreLaunchConnection(ownsPersistedAppState())))
   }
@@ -147,6 +152,9 @@ export function bootUniversal(): void {
   if (IS_TAURI && ownsPersistedAppState()) {
     lever('close guard', () => void installWindowCloseGuard())
     lever('background mode', () => initBackgroundMode())
+    // Native tray labels/status — must stay out of background-mode (import cycle
+    // with connection). Same owner window that owns the close guard.
+    lever('tray', () => initTray())
     lever('surface grants', () => void sweepStaleSurfaceGrants())
   }
 

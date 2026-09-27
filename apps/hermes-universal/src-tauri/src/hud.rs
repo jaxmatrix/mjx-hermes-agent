@@ -60,9 +60,11 @@ struct HudInner {
     /// Session the HUD last reported — handed back on close for re-home.
     session_id: Option<String>,
     /// Renderer-drag grab: cursor origin + window origin at begin_move.
+    #[cfg(desktop)]
     drag: Option<DragLatch>,
 }
 
+#[cfg(desktop)]
 #[derive(Clone, Copy)]
 struct DragLatch {
     cursor_x: f64,
@@ -71,6 +73,7 @@ struct DragLatch {
     win_y: f64,
 }
 
+#[cfg(desktop)]
 fn hud_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     app.get_webview_window(WINDOW_LABEL)
 }
@@ -94,7 +97,10 @@ pub async fn hud_broadcast_changed(
     if !open {
         if let Ok(mut g) = state.inner.lock() {
             g.session_id = None;
-            g.drag = None;
+            #[cfg(desktop)]
+            {
+                g.drag = None;
+            }
         }
     }
     emit_changed(&app, open, session_id);
@@ -115,6 +121,7 @@ pub async fn hud_set_session(
     Ok(())
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn hud_set_ignore_mouse(app: AppHandle, ignore: bool) -> Result<(), String> {
     let Some(win) = hud_window(&app) else {
@@ -123,7 +130,7 @@ pub async fn hud_set_ignore_mouse(app: AppHandle, ignore: bool) -> Result<(), St
     // Mirror Electron's X11 veto: when the windowing profile is solid, ignore
     // is a one-way door on that backend. Callers still get a no-op rather than
     // an error so the click-through hook stays quiet.
-    #[cfg(all(desktop, target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     {
         let solid = hud_windowing_view().solid;
         if ignore && solid {
@@ -134,6 +141,13 @@ pub async fn hud_set_ignore_mouse(app: AppHandle, ignore: bool) -> Result<(), St
     Ok(())
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn hud_set_ignore_mouse(_ignore: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn hud_set_bounds(app: AppHandle, bounds: HudBounds) -> Result<(), String> {
     let Some(win) = hud_window(&app) else {
@@ -142,6 +156,13 @@ pub async fn hud_set_bounds(app: AppHandle, bounds: HudBounds) -> Result<(), Str
     apply_bounds(&win, &bounds)
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn hud_set_bounds(_bounds: HudBounds) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(desktop)]
 fn apply_bounds(window: &tauri::WebviewWindow, bounds: &HudBounds) -> Result<(), String> {
     let width = bounds.width.max(80.0).round();
     let height = bounds.height.max(48.0).round();
@@ -183,6 +204,7 @@ fn apply_bounds(window: &tauri::WebviewWindow, bounds: &HudBounds) -> Result<(),
     Ok(())
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn hud_begin_move(app: AppHandle, state: State<'_, HudState>) -> Result<(), String> {
     let Some(win) = hud_window(&app) else {
@@ -210,14 +232,26 @@ pub async fn hud_begin_move(app: AppHandle, state: State<'_, HudState>) -> Resul
     Ok(())
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn hud_begin_move() -> Result<(), String> {
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn hud_end_move(state: State<'_, HudState>) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Ok(mut g) = state.inner.lock() {
         g.drag = None;
+    }
+    #[cfg(mobile)]
+    {
+        let _ = state;
     }
     Ok(())
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn hud_move_by(
     app: AppHandle,
@@ -258,6 +292,12 @@ pub async fn hud_move_by(
     )
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn hud_move_by(_delta: HudBounds) -> Result<(), String> {
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn hud_set_workspace_transfer(transferring: bool) -> Result<(), String> {
     let _ = transferring;
@@ -266,6 +306,7 @@ pub async fn hud_set_workspace_transfer(transferring: bool) -> Result<(), String
     Ok(())
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn hud_reset_layout(app: AppHandle) -> Result<OkResult, String> {
     let Some(win) = hud_window(&app) else {
@@ -300,6 +341,12 @@ pub async fn hud_reset_layout(app: AppHandle) -> Result<OkResult, String> {
         },
     )?;
     Ok(OkResult { ok: true })
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn hud_reset_layout() -> Result<OkResult, String> {
+    Ok(OkResult { ok: false })
 }
 
 #[tauri::command]

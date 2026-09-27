@@ -37,6 +37,7 @@ vi.mock('@/hermes', () => ({
     GATEWAY_PROXY: envVar({ category: 'setting', is_password: false }),
     TAVILY_API_KEY: envVar({ category: 'tool', description: 'Tavily search' })
   })),
+  getElevenLabsVoices: vi.fn(async () => ({ available: false })),
   getHermesConfigRecord: vi.fn(async () => ({})),
   getHermesConfigSchema: vi.fn(async () => ({ fields: {} })),
   getProfiles: vi.fn(async () => ({ profiles: [] })),

@@ -119,8 +119,8 @@ describe('the single-connection source', () => {
 
   it('routes one entry per agent', async () => {
     await expect(pluginConnectionSource().profileRoutes()).resolves.toEqual([
-      { connectionId: 'https://gw.test', profile: 'default' },
-      { connectionId: 'https://gw.test', profile: 'work' }
+      { connectionId: 'https://gw.test', profile: 'default', targetProfile: 'default' },
+      { connectionId: 'https://gw.test', profile: 'work', targetProfile: 'work' }
     ])
   })
 })

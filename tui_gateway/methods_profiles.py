@@ -190,33 +190,6 @@ def _canonical_session_row(db, profile_path):
         return None, False
 
 
-def _preferred_session_row(db, session_id):
-    """Precise summary for ONE caller-pinned session id, or None (fork contract kept for apps/hermes-universal,
-    which still sends ``preferred_session_ids``; upstream removed the pin path in a9860d413d).
-
-    Complements ``canonical_session``: that answers "which row IS the Bot Chat", this answers "what about THIS
-    id I pinned". Exact lookup: hidden rows resolve, compression lineages resolve to the live tip with the
-    resolver ``session.resume`` uses, archived rows and denied internal sources count as absent. ``id`` stays
-    the caller's pin; ``resolved_id`` names the tip. Best-effort: any failure degrades to None."""
-    if db is None:
-        return None
-    try:
-        row = db.get_session(session_id)
-        if not row or _denied_source(row) or row.get("archived"):
-            return None
-        tip = _try(lambda: db.resolve_resume_session_id(session_id), None) or session_id
-        tip_row = db.get_session(tip) or row
-        started = row.get("started_at") or 0
-        return {
-            "id": session_id, "resolved_id": tip, "root_title": row.get("title") or "",
-            "title": tip_row.get("title") or "", "preview": _latest_message_preview(db, tip),
-            "started_at": tip_row.get("started_at") or started,
-            "last_active": tip_row.get("last_activity_at") or tip_row.get("started_at") or started,
-            "message_count": tip_row.get("message_count") or 0}
-    except Exception:
-        return None
-
-
 def _latest_profile_session_rows(db):
     """(newest human-facing session, newest worker session); the worker row lets rosters show a
     profile as working (workers heartbeat ``last_activity_at`` every ≤60s).
@@ -261,8 +234,13 @@ def _profile_session_fields(row, profile_path):
         try:
             last, worker = _latest_profile_session_rows(db)
             # Resolved server-side on every listing so no client carries a session pointer.
-            return {"last_session": last, "worker_session": worker,
-                    "canonical_session": _canonical_session_row(db, profile_path)}
+            # Tri-state (MJXHRM-517): omit ``canonical_session`` when the lookup could not run;
+            # ``None`` means looked and this profile has no Bot Chat.
+            fields = {"last_session": last, "worker_session": worker}
+            canonical, looked = _canonical_session_row(db, profile_path)
+            if looked:
+                fields["canonical_session"] = canonical
+            return fields
         finally:
             if db is not None:
                 _best_effort(db.close)
@@ -302,15 +280,10 @@ def _profile_ui_meta_fields(row: dict, profile_dir) -> None:
 @_profile_handler("profiles.list", 5061)
 def _(rid, params: dict) -> dict:
     """List Hermes profiles. ``include_sessions`` (default true) adds ``last_session`` /
-    ``worker_session`` / ``canonical_session`` so a roster paints previews without N calls.
-    ``preferred_session_ids`` ({profile: session_id}) adds ``preferred_session`` per named row (fork contract,
-    still sent by apps/hermes-universal)."""
+    ``worker_session`` / ``canonical_session`` so a roster paints previews without N calls."""
     from hermes_cli.profiles import list_profiles
     from tools.bot_mode_probe import BOT_CHAT_TITLE
     include_sessions = is_truthy_value(params.get("include_sessions", True))
-    preferred_ids = params.get("preferred_session_ids")
-    if not isinstance(preferred_ids, dict):
-        preferred_ids = {}
     out = []
     # Roster polls this every 5s: ``skill_count`` is the last known value, refreshed off-request.
     for p in list_profiles(lazy_skill_count=True):
@@ -319,8 +292,7 @@ def _(rid, params: dict) -> dict:
                "display_name": p.display_name or "", "skill_count": p.skill_count or 0,
                "previous_names": list(p.previous_names or []), "role": p.role}
         if include_sessions:
-            pin = preferred_ids.get(p.name)
-            _profile_session_fields(row, p.path, pin.strip() if isinstance(pin, str) and pin.strip() else None)
+            _profile_session_fields(row, p.path)
         _profile_ui_meta_fields(row, Path(str(p.path)))
         out.append(row)
     # bot_mode_protocol: this backend injects the Bot Mode teammate-messaging protocol into every

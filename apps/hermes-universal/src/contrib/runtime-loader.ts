@@ -512,6 +512,12 @@ const disk = new Map<string, DiskPlugin>()
 let watching = false
 let scanning = false
 
+export const __testing = {
+  resetWatching(): void {
+    watching = false
+  }
+}
+
 /** Drop a folder-named error record — unless that name is the live plugin id
  *  of ANOTHER disk entry (two roots can carry same-named folders; a broken one
  *  must not clobber its healthy namesake's inventory row). */
@@ -834,26 +840,30 @@ export function watchRuntimePlugins(): void {
   const dirWatchIds = new Set<string>()
   const watchedDirs = new Set<string>()
 
-  desktop.onPreviewFileChanged(({ id }) => {
-    // Directory tick: a plugin folder appeared or vanished — reconcile.
-    if (dirWatchIds.has(id)) {
-      void scanDiskPlugins()
-
-      return
-    }
-
-    for (const record of disk.values()) {
-      if (record.watchId === id) {
-        void loadDiskPlugin(record).then(readable => {
-          if (!readable) {
-            void scanDiskPlugins()
-          }
-        })
+  // Optional channel: watchersBridge is desktop-only on the Tauri shim. Phone
+  // keeps the poll path below (same as a missing watchDirectory).
+  if (typeof desktop.onPreviewFileChanged === 'function') {
+    desktop.onPreviewFileChanged(({ id }) => {
+      // Directory tick: a plugin folder appeared or vanished — reconcile.
+      if (dirWatchIds.has(id)) {
+        void scanDiskPlugins()
 
         return
       }
-    }
-  })
+
+      for (const record of disk.values()) {
+        if (record.watchId === id) {
+          void loadDiskPlugin(record).then(readable => {
+            if (!readable) {
+              void scanDiskPlugins()
+            }
+          })
+
+          return
+        }
+      }
+    })
+  }
 
   // True only when EVERY root is fs-watched — a partially watched set keeps
   // the poll alive so unwatched roots still reconcile new/removed folders.

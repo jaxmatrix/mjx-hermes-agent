@@ -15,6 +15,7 @@ import { DownloadsTray } from './downloads-tray'
 import { MobileChromeBar } from './mobile-chrome-bar'
 import { useSidebar } from './sidebar'
 import { TitlebarButton } from './titlebar-button'
+import { useMobileConnectionChrome } from './use-mobile-connection-chrome'
 
 // The mobile top bar. Styled after the desktop titlebar chrome (same border /
 // --ui-bg-chrome / codicon vocabulary) but as a touch-friendly row that owns the
@@ -28,8 +29,9 @@ import { TitlebarButton } from './titlebar-button'
 // is no header row), and a contributed node there would fight it for width.
 export function MobileTopBar() {
   const { t } = useI18n()
-  const { toggleMobile, toggleMobileRight } = useSidebar()
+  const { openMobile, openMobileRight, toggleMobile, toggleMobileRight } = useSidebar()
   const navigate = useNavigate()
+  const connectionStatus = useMobileConnectionChrome()
   // Derived from the path rather than read off `$workspacePage`: only the
   // desktop controller keeps that atom in sync, and this bar is the phone's.
   const onPage = isWorkspacePageRoute(useLocation().pathname)
@@ -38,6 +40,20 @@ export function MobileTopBar() {
   // connection, which a background chat does not belong to.
   const sessionKey = useStore($activeSessionKey)
   const chatConnectionId = useStoreSelector($sessionKeyStates, states => states[sessionKey]?.connectionId ?? null)
+
+  // Drop composer (or any) focus before the overlay mounts so the keyboard does
+  // not stay owned by chat under Sessions / Workspace.
+  const blurThen = (open: boolean, toggle: () => void) => {
+    if (!open) {
+      const active = document.activeElement
+
+      if (active instanceof HTMLElement) {
+        active.blur()
+      }
+    }
+
+    toggle()
+  }
 
   return (
     <MobileChromeBar
@@ -57,6 +73,8 @@ export function MobileTopBar() {
           <ChatTitle className="h-full w-full justify-start" />
         </span>
       }
+      connectionStatus={connectionStatus}
+      topBorder={false}
       left={
         <>
           {/* On a full page the useful control in this corner is the way out, so
@@ -74,7 +92,12 @@ export function MobileTopBar() {
               <Codicon className="rtl:-scale-x-100" name="chevron-left" size="1.4rem" />
             </TitlebarButton>
           ) : (
-            <TitlebarButton density="mobile" label={t.titlebar.showSidebar} onClick={toggleMobile}>
+            <TitlebarButton
+              active={openMobile}
+              density="mobile"
+              label={t.titlebar.showSidebar}
+              onClick={() => blurThen(openMobile, toggleMobile)}
+            >
               <Codicon name="history" size="1.4rem" />
             </TitlebarButton>
           )}
@@ -90,7 +113,12 @@ export function MobileTopBar() {
               is where a background download matters most: it is the surface
               where the user cannot see a file manager to check on one. */}
           <DownloadsTray density="mobile" />
-          <TitlebarButton density="mobile" label={t.titlebar.showRightSidebar} onClick={toggleMobileRight}>
+          <TitlebarButton
+            active={openMobileRight}
+            density="mobile"
+            label={t.titlebar.showRightSidebar}
+            onClick={() => blurThen(openMobileRight, toggleMobileRight)}
+          >
             <Codicon name="layout-sidebar-right" size="1.4rem" />
           </TitlebarButton>
         </>

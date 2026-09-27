@@ -43,7 +43,9 @@ const OK: TabConnection = { kind: 'ok' }
  * transport error a minute later.
  */
 export function tabIsUnsupportedHere(connectionId: null | string | undefined): boolean {
-  return IS_MOBILE && (connectionId ?? LOCAL_SESSION_SCOPE) === LOCAL_SESSION_SCOPE
+  // Only an explicit local binding is undialable on phone. Null/unset means the
+  // primary draft / ambient chat — it rides the live gateway, not "local spawn".
+  return IS_MOBILE && connectionId === LOCAL_SESSION_SCOPE
 }
 
 /**

@@ -1171,7 +1171,7 @@ export const ja = defineLocale({
       sshErrPlatform:
         'サポートされていないリモートプラットフォームです。Hermes Desktop の SSH モードは Linux、macOS、Windows のリモートホストに対応しています。',
       sshErrTimeout: 'SSH 接続がタイムアウトしました。ホストが到達不能、またはスリープ中の可能性があります。',
-      sshErrUpdateRequired: 'Desktop SSH で接続する前に、リモートホストの Hermes を更新してください。',
+      sshErrUpdateRequired: 'SSH で接続する前に、リモートホストの Hermes を更新してください。',
       sshErrUnknown: 'SSH 接続に失敗しました。'
     },
     keys: {
@@ -3827,6 +3827,22 @@ export const ja = defineLocale({
     boundaryDesc: 'ビューで予期しないエラーが発生しました。チャットと設定は安全です。',
     reloadWindow: 'ウィンドウを再読み込み',
     openLogs: 'ログを開く'
+  },
+
+  mobileWorkspace: {
+    backToChat: 'チャット',
+    menu: 'メニュー',
+    tabsAria: 'ワークスペースのセクション',
+    review: 'レビュー',
+    files: 'ファイル',
+    editor: 'エディター',
+    terminal: 'ターミナル',
+    status: 'ステータス',
+    control: 'コントロール',
+    workspace: 'ワークスペース',
+    settings: '設定',
+    profiles: 'プロファイル',
+    agents: 'エージェント'
   },
 
   ui: {

@@ -9,6 +9,7 @@ import {
   setSurfaceVar
 } from '@/app/chat/surface-vars'
 import { useResizeObserver } from '@/hooks/use-resize-observer'
+import { IS_MOBILE } from '@/lib/platform'
 
 import {
   COMPOSER_COMPACT_PILL_PX,
@@ -223,14 +224,20 @@ export function useComposerMetrics({
   // stack) by 160px. The ResizeObserver knows the real width; the viewport is
   // not a proxy for it.
   //
+  // Phones always stack: a ~375px bar cannot keep model + thinking + send on
+  // one row with the input, so the controls take their own row by default.
+  // That is a platform choice (IS_MOBILE), not a viewport media query — it
+  // does not collapse the desktop/HUD ladder.
+  //
   // The ladder is monotonic: each stage implies the ones above it, so the pill
-  // is always compact by the time the row stacks, and the voice controls are
-  // always folded before minimal drops them.
+  // is always compact by the time the row stacks from width, and the voice
+  // controls are always folded before minimal drops them. Stacked-from-mobile
+  // deliberately keeps the full pill + reasoning on the controls row.
   return {
     compactPill: fit.compactPill || fit.tight,
     foldVoice: fit.foldVoice || fit.minimal,
     minimal: fit.minimal,
-    stacked: expanded || fit.tight,
+    stacked: IS_MOBILE || expanded || fit.tight,
     tight: fit.tight
   }
 }

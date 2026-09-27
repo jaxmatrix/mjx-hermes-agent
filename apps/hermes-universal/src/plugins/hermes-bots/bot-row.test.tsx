@@ -60,9 +60,12 @@ vi.mock('./roster-actions', () => ({ openRosterBot }))
 const noop = () => undefined
 
 function renderRow(bot: RosterRow) {
-  render(<BotRow bot={bot} onDelete={noop} onEdit={noop} onGroup={noop} onNewSection={noop} />)
+  const { container } = render(
+    <BotRow bot={bot} onDelete={noop} onEdit={noop} onGroup={noop} onNewSection={noop} />
+  )
 
-  return screen.getByRole('button')
+  // The roster RowButton carries data-roster-key; the ⋯ kebab is a sibling button.
+  return container.querySelector('[data-roster-key]') as HTMLElement
 }
 
 beforeEach(() => {
@@ -164,6 +167,21 @@ describe('the menu opens the same forever-chat a row click does', () => {
     fireEvent.click(await screen.findByText('Open Bot Chat'))
 
     expect(openRosterBot.mock.calls).toEqual([[bot]])
+  })
+
+  it('exposes an always-visible kebab that opens the same chat verb', async () => {
+    const bot = { name: 'alpha' } as RosterRow
+    renderRow(bot)
+    const kebab = screen.getByRole('button', { name: /alpha actions/i })
+
+    expect(kebab).toBeTruthy()
+    fireEvent.pointerDown(kebab)
+    fireEvent.pointerUp(kebab)
+    fireEvent.click(kebab)
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open Bot Chat' }))
+
+    expect(openRosterBot.mock.calls).toEqual([[bot]])
+    expect(openRosterBot).toHaveBeenCalledTimes(1)
   })
 })
 

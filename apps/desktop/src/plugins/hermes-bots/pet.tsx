@@ -7,7 +7,9 @@ import { Button, cn, GlyphSpinner, host, Input, LruCache, RowButton, useQuery } 
 import { useEffect, useState } from 'react'
 
 import { useBots } from './i18n'
+import { requestForBot } from './routing'
 import { ID } from './shared'
+import type { RosterRow } from './types'
 
 // ── pet tab: attach a petdex companion that lives beside the avatar ─────────
 
@@ -34,17 +36,24 @@ interface PetThumbResult {
   ok: boolean
 }
 
-function petThumbIcon(slug: string, spriteUrl: null | string | undefined): Promise<null | string> {
+function petThumbIcon(
+  slug: string,
+  spriteUrl: null | string | undefined,
+  bot?: RosterRow
+): Promise<null | string> {
   if (!slug) {
     return Promise.resolve(null)
   }
 
   if (!petThumbCache.has(slug)) {
     const deadline = new Promise<null>(resolve => setTimeout(() => resolve(null), PET_THUMB_TIMEOUT_MS))
+    const params = { slug, url: spriteUrl || '' }
 
     const pending = Promise.race([
-      host
-        .request<PetThumbResult>('pet.thumb', { slug, url: spriteUrl || '' })
+      (bot?.sourceScoped
+        ? requestForBot<PetThumbResult>(bot, 'pet.thumb', params)
+        : host.request<PetThumbResult>('pet.thumb', params)
+      )
         .then(result => (result?.ok && result.dataUri ? result.dataUri : null))
         .catch(() => null),
       deadline
@@ -65,17 +74,18 @@ function petThumbIcon(slug: string, spriteUrl: null | string | undefined): Promi
 }
 
 interface PetThumbProps {
+  bot?: RosterRow
   size?: number
   slug: string
   spriteUrl?: null | string
 }
 
 /** One pet tile image: server-cropped frame 0, resolved lazily through the cache. */
-function PetThumb({ slug, spriteUrl, size = 40 }: PetThumbProps) {
+function PetThumb({ bot, slug, spriteUrl, size = 40 }: PetThumbProps) {
   const [icon, setIcon] = useState<null | string>(null)
   useEffect(() => {
     let alive = true
-    petThumbIcon(slug, spriteUrl).then(url => {
+    petThumbIcon(slug, spriteUrl, bot).then(url => {
       if (alive) {
         setIcon(url)
       }
@@ -84,7 +94,7 @@ function PetThumb({ slug, spriteUrl, size = 40 }: PetThumbProps) {
     return () => {
       alive = false
     }
-  }, [slug, spriteUrl])
+  }, [bot, slug, spriteUrl])
 
   if (!icon) {
     return (
@@ -125,11 +135,12 @@ interface PetGalleryEntry {
 }
 
 interface PetTabProps {
+  bot?: RosterRow
   image: null | string
   onImage: (image: null | string) => void
 }
 
-export function PetTab({ image, onImage }: PetTabProps) {
+export function PetTab({ bot, image, onImage }: PetTabProps) {
   const b = useBots()
   // Selection is dialog-local: committed by the dialog's Save like any
   // uploaded/generated image (a direct meta write here gets clobbered by
@@ -137,8 +148,11 @@ export function PetTab({ image, onImage }: PetTabProps) {
   const [selectedSlug, setSelectedSlug] = useState<null | string>(null)
 
   const { data, isLoading } = useQuery({
-    queryKey: [ID, 'pet-gallery'],
-    queryFn: () => host.request<{ pets?: PetGalleryEntry[] }>('pet.gallery', {}),
+    queryKey: [ID, 'pet-gallery', bot?.connectionId || '', bot?.name || ''],
+    queryFn: () =>
+      bot?.sourceScoped
+        ? requestForBot<{ pets?: PetGalleryEntry[] }>(bot, 'pet.gallery', {})
+        : host.request<{ pets?: PetGalleryEntry[] }>('pet.gallery', {}),
     staleTime: 300000
   })
 
@@ -252,7 +266,7 @@ export function PetTab({ image, onImage }: PetTabProps) {
                   })
                 }}
               >
-                <PetThumb size={40} slug={pet.slug} spriteUrl={pet.spritesheetUrl} />
+                <PetThumb bot={bot} size={40} slug={pet.slug} spriteUrl={pet.spritesheetUrl} />
                 <span className="w-full truncate text-center text-[0.6rem] text-(--ui-text-tertiary)">
                   {pet.displayName}
                 </span>

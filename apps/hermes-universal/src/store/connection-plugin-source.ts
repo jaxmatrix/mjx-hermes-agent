@@ -1,7 +1,7 @@
 import { backendScopeKey } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
 import { $registryView, connectionsRoster } from '@/store/connections'
-import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
+import { openGatewayForAgent } from '@/store/gateway'
 import {
   AGENT_ROUTING_UNAVAILABLE,
   type PluginAgentHandle,
@@ -29,6 +29,11 @@ import {
  * `{ok:false, error:'AGENT_ROUTING_UNAVAILABLE'}`, never an empty success —
  * an empty answer reads to the caller as "it worked and there is nothing there",
  * which is the one thing a routing failure must not look like.
+ *
+ * Reachability for a non-active gateway dials the SAME secondary pool chat uses
+ * (`openGatewayForAgent` / `requestGatewayForAgent` in store/gateway.ts) — never
+ * the request-only `leaseSecondary` pool. Probe and chat must share one door or
+ * Bot Mode lists remotes that cannot open (Electron Desktop parity).
  */
 
 const PREWARM_MIN_INTERVAL_MS = 60_000
@@ -52,20 +57,45 @@ function describe(): PluginConnection[] {
 export const registryConnectionSource: PluginConnectionSource = {
   agents: async (): Promise<PluginAgentRoster> => {
     const roster = await connectionsRoster()
-    const labels = new Map($registryView.get().connections.map(row => [row.id, row.label]))
+    const rows = new Map($registryView.get().connections.map(row => [row.id, row]))
 
     return {
-      agents: roster.agents.map(agent => ({
-        connectionId: agent.connectionId,
-        isDefault: agent.isDefault,
-        // The `@name-device` handle, so two boxes serving `default` are
-        // distinguishable in a plugin's own UI.
-        label: agent.handle === agent.profile ? agent.profile : `${agent.profile} · ${labels.get(agent.connectionId) ?? ''}`,
-        profile: agent.profile
-      })),
-      // A source that failed carries its error rather than vanishing: a missing
-      // row and a broken row are different facts.
-      sources: roster.sources
+      agents: roster.agents.map(agent => {
+        const row = rows.get(agent.connectionId)
+
+        return {
+          connectionId: agent.connectionId,
+          isDefault: agent.isDefault,
+          // The `@name-device` handle, so two boxes serving `default` are
+          // distinguishable in a plugin's own UI.
+          label:
+            agent.handle === agent.profile
+              ? agent.profile
+              : `${agent.profile} · ${row?.label ?? ''}`,
+          profile: agent.profile
+        }
+      }),
+      // Match Desktop's getAgentRoster: Bot Mode annotateBotSource reads
+      // `reachable` / kind / label / error — not Rust's `ok` alone.
+      sources: roster.sources.flatMap(source => {
+        const row = rows.get(source.connectionId)
+
+        if (!row) {
+          return []
+        }
+
+        return [
+          {
+            connectionId: row.id,
+            error: source.error,
+            kind: row.kind,
+            label: row.label,
+            observed: source.observed,
+            ok: source.ok,
+            reachable: source.ok
+          }
+        ]
+      })
     }
   },
 
@@ -86,13 +116,14 @@ export const registryConnectionSource: PluginConnectionSource = {
       return { connectionId, ok: true, profile }
     }
 
-    const lease = await leaseSecondary(backendScopeKey(connectionId, profile), connectionId).catch(() => null)
-
-    if (!lease) {
+    // Desktop Bot Mode dials remotes through gateway.ts (`openGatewayForAgent` /
+    // `requestGatewayForAgent`). Using leaseSecondary here gated opens on a
+    // different pool than chat — listed-but-dead remotes. Same door as chat.
+    try {
+      await openGatewayForAgent(connectionId, profile, { spawnPriority: 'foreground' })
+    } catch {
       return { error: AGENT_ROUTING_UNAVAILABLE, ok: false }
     }
-
-    releaseSecondary(lease)
 
     return { connectionId, ok: true, profile }
   },
@@ -100,15 +131,19 @@ export const registryConnectionSource: PluginConnectionSource = {
   profileRoutes: async (): Promise<PluginProfileRoute[]> => {
     const roster = await connectionsRoster()
 
-    return roster.agents.map(agent => ({ connectionId: agent.connectionId, profile: agent.profile }))
+    return roster.agents.map(agent => {
+      const profile = agent.profile
+
+      return { connectionId: agent.connectionId, profile, targetProfile: profile }
+    })
   }
 }
 
 /**
- * Pre-warm a route without opening a socket.
+ * Pre-warm a route by opening the Desktop-shaped secondary (rate-limited).
  *
- * Rate-limited because a plugin polling this would otherwise re-enumerate every
- * source on every call — and the roster's own per-source deadline is 10 s.
+ * Rate-limited because a plugin polling this would otherwise re-dial every
+ * source on every call — and a cold spawn is not free.
  */
 export async function warmRegistryAgent(connectionId: string, profile: string): Promise<boolean> {
   const key = backendScopeKey(connectionId, profile)

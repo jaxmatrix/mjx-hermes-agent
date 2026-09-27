@@ -18,10 +18,8 @@ import { HUD_SURFACE, isActivityWindow, isTileWindow, satelliteSurface, WAKE_IND
 type WindowKind = 'activity' | 'desktop' | 'hud' | 'phone' | 'quick' | 'tile' | 'wake'
 
 function windowKind(): WindowKind {
-  // A native screen activity (`?win=activity`, Android/iOS) renders a single
-  // full-screen windowable surface — Settings / Command Center / Profiles, chosen
-  // live by the current route — with its own top bar + Home, bypassing the chat
-  // shell (MJX-141).
+  // Compat: `?win=activity` still mounts ActivityScreenRoot for old deep links.
+  // Phone Settings / CC open as SPA overlays on the main phone root instead.
   if (isActivityWindow()) {
     return 'activity'
   }

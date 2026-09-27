@@ -71,14 +71,15 @@ export function useSurfaceNavRows(surface: ActivitySurface): SurfaceNavRow[] {
       : (settingsEntries[0]?.id ?? '')
 
     // Groups AND their sub-tabs, flattened and indented — the same shape
-    // `OverlayNav` flattens into its narrow dropdown. Only the groups were
-    // listed before, which put Providers → API keys (and Keys → Settings)
-    // behind a group tap and then a second, different control inside the page.
+    // `OverlayNav` flattens into its narrow dropdown. Parent rows use a `:group`
+    // id suffix so React keys stay unique when the first child reuses the group
+    // route id (`providers`, `keys`) — without that the current option vanishes
+    // from the title drawer.
     return settingsEntries.flatMap(entry => [
       {
         active: entry.id === topId && section === entry.id,
         icon: <entry.icon className={ICON_CLASS} />,
-        id: entry.id,
+        id: entry.children?.length ? `${entry.id}:group` : entry.id,
         label: entry.label,
         path: `/settings/${entry.id}`
       },

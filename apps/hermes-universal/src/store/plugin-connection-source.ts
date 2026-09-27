@@ -40,6 +40,11 @@ export interface PluginAgent {
   profile: string
   label: string
   isDefault: boolean
+  /** Registry connection kind (`local` | `remote` | `ssh` | …). Present on
+   *  multi-source Desktop rosters; optional for the single-connection answer. */
+  connectionKind?: string
+  /** Backend profile the agent dials when it differs from `profile`. */
+  targetProfile?: string
 }
 
 export interface PluginAgentRoster {
@@ -49,13 +54,26 @@ export interface PluginAgentRoster {
    *  different facts.
    *
    *  So is a THIRD fact: `ok && !observed` means the source was seeded, not
-   *  dialled ("connect to find out"), which `ok` alone cannot express. */
-  sources: { connectionId: string; error?: string; observed: boolean; ok: boolean }[]
+   *  dialled ("connect to find out"), which `ok` alone cannot express.
+   *
+   *  Bot Mode also reads Desktop-shaped fields (`reachable`, `kind`, `label`)
+   *  when the registry source is installed. */
+  sources: {
+    connectionId: string
+    error?: string
+    kind?: string
+    label?: string
+    observed: boolean
+    ok: boolean
+    reachable?: boolean
+  }[]
 }
 
 export interface PluginProfileRoute {
   connectionId: string
   profile: string
+  /** Backend profile the route dials; defaults to `profile` when omitted by older callers. */
+  targetProfile: string
 }
 
 export type PluginAgentHandle =
@@ -98,8 +116,9 @@ function describeLiveConnection(): null | PluginConnection {
 const singleConnectionSource: PluginConnectionSource = {
   agents: async () => {
     const connectionId = liveConnectionId()
+    const live = describeLiveConnection()
 
-    if (!describeLiveConnection()) {
+    if (!live) {
       return { agents: [], sources: [{ connectionId, error: AGENT_ROUTING_UNAVAILABLE, observed: false, ok: false }] }
     }
 
@@ -109,12 +128,14 @@ const singleConnectionSource: PluginConnectionSource = {
       return {
         agents: (roster.profiles ?? []).map(profile => ({
           connectionId,
+          connectionKind: live.kind,
           isDefault: profile.is_default ?? false,
           label: profile.display_name || profile.name,
-          profile: profile.name
+          profile: profile.name,
+          targetProfile: profile.name
         })),
         // It answered — this is the one branch here that dialled anything.
-        sources: [{ connectionId, observed: true, ok: true }]
+        sources: [{ connectionId, kind: live.kind, observed: true, ok: true }]
       }
     } catch (error) {
       // The connection's own error, carried on its row — the roster still
@@ -151,7 +172,11 @@ const singleConnectionSource: PluginConnectionSource = {
   profileRoutes: async () => {
     const roster = await singleConnectionSource.agents()
 
-    return roster.agents.map(agent => ({ connectionId: agent.connectionId, profile: agent.profile }))
+    return roster.agents.map(agent => ({
+      connectionId: agent.connectionId,
+      profile: agent.profile,
+      targetProfile: agent.profile
+    }))
   }
 }
 

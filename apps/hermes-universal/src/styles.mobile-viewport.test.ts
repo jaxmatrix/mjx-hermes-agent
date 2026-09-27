@@ -76,7 +76,7 @@ describe('the phone app root is the visible rectangle', () => {
   })
 
   it('creates no containing block for the fixed surfaces pinned to the same rect', () => {
-    // MobileSidebar, MobileWorkspace and the floating pet are all `position:
+    // Sessions/Workspace windows and the floating pet are all `position:
     // fixed` and already sized from --visual-viewport-*. Any of these properties
     // on #root would make it their containing block and apply the offset twice —
     // a worse bug than the one this rule fixes, and visible only mid-keyboard.

@@ -9,6 +9,9 @@
 import { Button, universalHost as host, Input, useI18n } from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 
+import { requestForBot } from './routing'
+import type { RosterRow } from './types'
+
 // -- inline MCP setup (per-profile), driven by the mcp.servers.* gateway RPCs --
 // Feature-detected: if the gateway predates those RPCs the setup button hides
 // and the row falls back to the "run hermes mcp / Settings" hint. profile is
@@ -37,11 +40,71 @@ interface McpRpcResult {
   unsupported?: boolean
 }
 
-async function mcpRpc(method: string, params: Record<string, unknown>): Promise<McpRpcResult> {
-  // Returns { ok, result } or { ok:false, unsupported:true } when the gateway
-  // doesn't know the method (older backend) vs a real error.
+/** The capability scope the Edit Profile / New Bot panes hand down — the SDK's
+ *  `ProfileScope`: a bare profile name, or a connection-qualified scope for a
+ *  source-scoped bot. */
+type McpSetupScope = null | string | undefined | { connectionId?: null | string; profile?: null | string }
+
+/** Gateway always wants a profile NAME string; connectionId routes the RPC. */
+interface McpHome {
+  connectionId?: string
+  profile: string
+}
+
+function normalizeMcpHome(scope: McpSetupScope): McpHome | null {
+  if (scope == null) {
+    return null
+  }
+
+  if (typeof scope === 'string') {
+    const profile = scope.trim()
+
+    return profile ? { profile } : null
+  }
+
+  const profile = String(scope.profile || '').trim()
+
+  if (!profile) {
+    return null
+  }
+
+  const connectionId = String(scope.connectionId || '').trim() || undefined
+
+  return connectionId ? { connectionId, profile } : { profile }
+}
+
+function botStubForHome(home: McpHome): Partial<RosterRow> {
+  if (!home.connectionId) {
+    return { name: home.profile }
+  }
+
+  return {
+    connectionId: home.connectionId,
+    name: home.profile,
+    remoteSource: true,
+    sourceScoped: true
+  }
+}
+
+async function mcpRpc(
+  method: string,
+  params: Record<string, unknown>,
+  home?: McpHome | null
+): Promise<McpRpcResult> {
+  // Gateway `profile` is always a NAME string. When home carries a connectionId,
+  // route via requestForBot so Edit Profile on a remote bot hits that gateway.
+  const body =
+    home?.profile != null
+      ? {
+          ...params,
+          profile: home.profile
+        }
+      : params
+
   try {
-    const res = await host.request<McpServerPayload>(method, params)
+    const res = home?.connectionId
+      ? await requestForBot<McpServerPayload>(botStubForHome(home), method, body)
+      : await host.request<McpServerPayload>(method, body)
 
     return {
       ok: true,
@@ -87,21 +150,10 @@ interface McpCatalogEntry {
   requires?: string[]
 }
 
-/** The capability scope the Edit Profile / New Bot panes hand down — the SDK's
- *  `ProfileScope`: a bare profile name, or a connection-qualified scope for a
- *  source-scoped bot. */
-type McpSetupScope = null | string | undefined | { connectionId?: null | string; profile?: null | string }
-
 interface McpSetupButtonProps {
   ensureProfile?: () => Promise<null | string>
   entry: McpCatalogEntry
   onDone?: () => void
-  // TODO(bot-mode-types): Edit Profile passes `botBackendProfileScope(...)`, which
-  // is a `{ connectionId, profile }` OBJECT for every source-scoped bot. That
-  // object is forwarded verbatim as the `profile` param of mcp.servers.add /
-  // set_api_key / test / oauth.*, where the gateway expects a profile NAME
-  // string — and mcpRpc goes through host.request, so the connection isn't
-  // routed either. Typed as-written.
   profile: McpSetupScope
 }
 
@@ -121,9 +173,9 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
   // no render of lag between the parent supplying a profile and us using it.
   const createdProfileRef = useRef<McpSetupScope>(null)
 
-  // Resolve the target profile, creating it on demand for the New Bot flow.
-  const resolveProfile = async () => {
-    const known = profile || createdProfileRef.current
+  // Resolve the target home, creating a profile slug on demand for New Bot.
+  const resolveHome = async (): Promise<McpHome | null> => {
+    const known = normalizeMcpHome(profile || createdProfileRef.current)
 
     if (known) {
       return known
@@ -136,7 +188,7 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
         createdProfileRef.current = created
       }
 
-      return created
+      return normalizeMcpHome(created)
     }
 
     return null
@@ -164,20 +216,23 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
     // Ensure the server exists in the target profile first (add from catalog).
     setPhase('busy')
     setMessage('')
-    const profile = await resolveProfile()
+    const home = await resolveHome()
 
-    if (!profile) {
+    if (!home) {
       setPhase('idle')
 
       return
     }
 
     if (entry.fromCatalog && !entry.installed) {
-      const add = await mcpRpc('mcp.servers.add', {
-        profile,
-        name: entry.name,
-        preset: entry.name
-      })
+      const add = await mcpRpc(
+        'mcp.servers.add',
+        {
+          name: entry.name,
+          preset: entry.name
+        },
+        home
+      )
 
       if (!add.ok) {
         setPhase('error')
@@ -192,9 +247,9 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
 
   const submitKeys = async () => {
     setPhase('busy')
-    const target = profile || createdProfileRef.current
+    const home = normalizeMcpHome(profile || createdProfileRef.current)
 
-    if (!target) {
+    if (!home) {
       setPhase('error')
       setMessage('No target profile')
 
@@ -208,12 +263,15 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
         continue
       }
 
-      const r = await mcpRpc('mcp.servers.set_api_key', {
-        profile: target,
-        name: entry.name,
-        env_var: k,
-        value: val
-      })
+      const r = await mcpRpc(
+        'mcp.servers.set_api_key',
+        {
+          name: entry.name,
+          env_var: k,
+          value: val
+        },
+        home
+      )
 
       if (!r.ok) {
         setPhase('error')
@@ -224,10 +282,13 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
     }
 
     // Verify via test.
-    const t = await mcpRpc('mcp.servers.test', {
-      profile: target,
-      name: entry.name
-    })
+    const t = await mcpRpc(
+      'mcp.servers.test',
+      {
+        name: entry.name
+      },
+      home
+    )
 
     if (t.ok && t.result && (t.result.ok || (t.result.result && t.result.result.ok))) {
       setPhase('done')
@@ -247,24 +308,19 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
   const beginOAuth = async () => {
     const epoch = ++oauthEpoch.current
 
-    const source =
-      profile && typeof profile === 'object'
-        ? { ...profile }
-        : { connectionId: host.state.connectionId.get(), profile: profile || host.state.profile.get() }
-
     setPhase('busy')
     setMessage('')
-    const resolvedProfile = await resolveProfile()
+    const home = await resolveHome()
 
-    if (!resolvedProfile) {
+    if (!home) {
       setPhase('idle')
 
       return
     }
 
-    const scope = {
-      ...source,
-      profile: typeof resolvedProfile === 'object' ? resolvedProfile.profile : resolvedProfile
+    const oauthScope = {
+      connectionId: home.connectionId ?? host.state.connectionId.get(),
+      profile: home.profile
     }
 
     try {
@@ -272,7 +328,7 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
       setMessage('Complete sign-in in your browser...')
       await host.completeMcpOAuth({
         serverName: entry.name,
-        profile: scope,
+        profile: oauthScope,
         catalogPreset: entry.fromCatalog && !entry.installed ? entry.name : undefined,
         cancelled: () => oauthEpoch.current !== epoch
       })
@@ -366,4 +422,18 @@ export function McpSetupButton({ profile, entry, onDone, ensureProfile }: McpSet
       {isOAuth ? 'Sign in\u2026' : 'Set up\u2026'}
     </Button>
   )
+}
+
+/** Test seam: normalize scope the button uses for gateway RPCs. */
+export function mcpHomeForTest(scope: McpSetupScope): McpHome | null {
+  return normalizeMcpHome(scope)
+}
+
+/** Test seam: exercise home-routed mcp.servers.* without mounting the button. */
+export function mcpRpcForTest(
+  method: string,
+  params: Record<string, unknown>,
+  scope: McpSetupScope
+): Promise<McpRpcResult> {
+  return mcpRpc(method, params, normalizeMcpHome(scope))
 }

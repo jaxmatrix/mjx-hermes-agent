@@ -48,6 +48,7 @@ import { registry } from '@/contrib/registry'
 import type { WorkspaceMode } from '@/contrib/types'
 import { deleteProfile, getLogs, getStatus, hermesApi, type HermesGateway } from '@/hermes'
 import { completeMcpDesktopOAuth } from '@/lib/mcp-dashboard-oauth'
+import { IS_MOBILE } from '@/lib/platform'
 import {
   $gateway,
   activeGatewayConnectionId,
@@ -1074,7 +1075,11 @@ export const host = {
             }
           }
 
-          const intent = options.intent ?? 'in-place'
+          // Phone Sessions force `'main'` so navigate always runs when selection
+          // and the hash disagree. Bot opens reuse that door on IS_MOBILE; desktop
+          // keeps `in-place` so an already-open bot tile is fronted, not reminted.
+          const intent: OpenSessionIntent =
+            options.workspaceMode === 'bots' && IS_MOBILE ? 'main' : (options.intent ?? 'in-place')
 
           if (options.workspaceMode === 'bots') {
             openSession(storedSessionId, navigate, intent, {

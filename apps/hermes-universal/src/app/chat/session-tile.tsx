@@ -23,6 +23,7 @@ import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
 import { useModelControls } from '@/app/session/hooks/use-model-controls'
 import { blobToDataUrl } from '@/app/session/hooks/use-prompt-actions/utils'
 import { resolveStoredSession } from '@/app/session/hooks/use-session-actions/utils'
+import { ModelMenuHostProvider } from '@/app/shell/model-menu-host-context'
 import { ModelMenuPanel } from '@/app/shell/model-menu-panel'
 import { ReasoningMenuPanel } from '@/app/shell/reasoning-menu-panel'
 import { formatRefValue } from '@/components/assistant-ui/directive-text'
@@ -287,16 +288,16 @@ function TileChat({
 
   // Per-tile model menu — rendered under this tile's SessionView so the pill
   // + switch target THIS runtime, not the primary (which may be mid-turn).
-  const modelMenuContent = useMemo(
+  const modelMenuHost = useMemo(
     () =>
-      gatewayOpen ? (
-        <ModelMenuPanel
-          onSelectModel={selectModel}
-          ownerConnectionId={ownerRoute?.connectionId || undefined}
-          profile={ownerRoute?.targetProfile || ownerRoute?.profile || activeGatewayProfile}
-          requestGateway={requestTileGateway}
-        />
-      ) : null,
+      gatewayOpen
+        ? {
+            onSelectModel: selectModel,
+            ownerConnectionId: ownerRoute?.connectionId || undefined,
+            profile: ownerRoute?.targetProfile || ownerRoute?.profile || activeGatewayProfile,
+            requestGateway: requestTileGateway
+          }
+        : null,
     [
       activeGatewayProfile,
       gatewayOpen,
@@ -308,61 +309,52 @@ function TileChat({
     ]
   )
 
+  const modelMenuContent = useMemo(
+    () => (modelMenuHost ? <ModelMenuPanel {...modelMenuHost} /> : null),
+    [modelMenuHost]
+  )
+
   const reasoningMenuContent = useMemo(
-    () =>
-      gatewayOpen ? (
-        <ReasoningMenuPanel
-          onSelectModel={selectModel}
-          ownerConnectionId={ownerRoute?.connectionId || undefined}
-          profile={ownerRoute?.targetProfile || ownerRoute?.profile || activeGatewayProfile}
-          requestGateway={requestTileGateway}
-        />
-      ) : null,
-    [
-      activeGatewayProfile,
-      gatewayOpen,
-      ownerRoute?.connectionId,
-      ownerRoute?.profile,
-      ownerRoute?.targetProfile,
-      requestTileGateway,
-      selectModel
-    ]
+    () => (modelMenuHost ? <ReasoningMenuPanel {...modelMenuHost} /> : null),
+    [modelMenuHost]
   )
 
   return (
     <SessionViewProvider value={view}>
       <ComposerScopeProvider value={scope}>
-        <ChatView
-          gateway={gateway}
-          modelMenuContent={modelMenuContent}
-          modelOptionsOwnerConnectionId={ownerRoute?.connectionId || undefined}
-          modelOptionsProfile={ownerRoute?.targetProfile || ownerRoute?.profile || activeGatewayProfile}
-          onAddContextRef={addContextRefAttachment}
-          onAddUrl={onAddUrl}
-          onAttachDroppedItems={composer.attachDroppedItems}
-          onAttachImageBlob={composer.attachImageBlob}
-          onAttachPastedText={composer.attachPastedText}
-          onCancel={actions.cancelRun}
-          onDeleteSelectedSession={noop}
-          onDismissError={actions.dismissError}
-          onEdit={actions.editMessage}
-          onPasteClipboardImage={onPasteClipboardImage}
-          onPickFiles={onPickFiles}
-          onPickFolders={onPickFolders}
-          onPickImages={onPickImages}
-          onReload={actions.reloadFromMessage}
-          onRemoveAttachment={onRemoveAttachment}
-          onRestoreToMessage={actions.restoreToMessage}
-          onRetryResume={onRetryResume}
-          onSteer={actions.steerPrompt}
-          onSteerHidden={actions.injectHiddenPrompt}
-          onSubmit={actions.submitText}
-          onThreadMessagesChange={actions.handleThreadMessagesChange}
-          onToggleSelectedPin={noop}
-          onTranscribeAudio={tileTranscribeAudio}
-          reasoningMenuContent={reasoningMenuContent}
-          requestModelOptionsForOwner={requestTileGateway}
-        />
+        <ModelMenuHostProvider value={modelMenuHost}>
+          <ChatView
+            gateway={gateway}
+            modelMenuContent={modelMenuContent}
+            modelOptionsOwnerConnectionId={ownerRoute?.connectionId || undefined}
+            modelOptionsProfile={ownerRoute?.targetProfile || ownerRoute?.profile || activeGatewayProfile}
+            onAddContextRef={addContextRefAttachment}
+            onAddUrl={onAddUrl}
+            onAttachDroppedItems={composer.attachDroppedItems}
+            onAttachImageBlob={composer.attachImageBlob}
+            onAttachPastedText={composer.attachPastedText}
+            onCancel={actions.cancelRun}
+            onDeleteSelectedSession={noop}
+            onDismissError={actions.dismissError}
+            onEdit={actions.editMessage}
+            onPasteClipboardImage={onPasteClipboardImage}
+            onPickFiles={onPickFiles}
+            onPickFolders={onPickFolders}
+            onPickImages={onPickImages}
+            onReload={actions.reloadFromMessage}
+            onRemoveAttachment={onRemoveAttachment}
+            onRestoreToMessage={actions.restoreToMessage}
+            onRetryResume={onRetryResume}
+            onSteer={actions.steerPrompt}
+            onSteerHidden={actions.injectHiddenPrompt}
+            onSubmit={actions.submitText}
+            onThreadMessagesChange={actions.handleThreadMessagesChange}
+            onToggleSelectedPin={noop}
+            onTranscribeAudio={tileTranscribeAudio}
+            reasoningMenuContent={reasoningMenuContent}
+            requestModelOptionsForOwner={requestTileGateway}
+          />
+        </ModelMenuHostProvider>
       </ComposerScopeProvider>
     </SessionViewProvider>
   )

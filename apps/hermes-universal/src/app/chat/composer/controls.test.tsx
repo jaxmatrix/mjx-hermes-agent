@@ -8,7 +8,17 @@ import { applyWakeStartResult, applyWakeStatus, resetWakeWordState } from '@/sto
 
 import { ComposerControls } from './controls'
 
-vi.mock('./model-pill', () => ({ ModelPill: () => null }))
+vi.mock('./model-pill', () => ({
+  ModelPill: ({ compact }: { compact?: boolean }) => (
+    <span data-compact={compact ? '' : undefined} data-testid="model-pill">
+      {compact ? 'compact' : 'full'}
+    </span>
+  )
+}))
+
+vi.mock('./reasoning-pill', () => ({
+  ReasoningPill: () => <span data-testid="reasoning-pill">reasoning</span>
+}))
 
 const state: ChatBarState = {
   model: { canSwitch: false, model: '', provider: '' },
@@ -59,6 +69,24 @@ async function expectShortcutTooltip(label: string, shortcut: string) {
 afterEach(() => {
   cleanup()
   $hudMode.set(false)
+})
+
+describe('stacked controls row pills', () => {
+  // When the composer stacks, index.tsx passes compactModelPill=false so the
+  // controls row can show the model name and thinking level.
+  it('shows the full model pill and reasoning when not compact', () => {
+    renderControls({ compactModelPill: false })
+
+    expect(screen.getByTestId('model-pill').textContent).toBe('full')
+    expect(screen.getByTestId('reasoning-pill')).toBeTruthy()
+  })
+
+  it('compacts the model pill and hides reasoning when compact', () => {
+    renderControls({ compactModelPill: true })
+
+    expect(screen.getByTestId('model-pill').textContent).toBe('compact')
+    expect(screen.queryByTestId('reasoning-pill')).toBeNull()
+  })
 })
 
 // The HUD is a Spotlight bar a few hundred pixels wide: the voice controls

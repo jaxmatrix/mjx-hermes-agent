@@ -13,6 +13,7 @@ import { universalHost as host } from '@hermes/plugin-sdk'
 
 import { $botMeta, botMetaKey, botOwner, persistBotMetaSnapshot } from './data'
 import { botsText } from './i18n'
+import { noteBotConnectionOpened } from './relay'
 import { backendTargetProfile, botConnectionRoute, botRosterMeta, botWorkspaceOwnerKey, requestForBot } from './routing'
 import type { RpcErrorLike } from './routing'
 import { getPluginCtx } from './shared'
@@ -100,44 +101,60 @@ async function openStoredBotChat(
       ? sdk.BOT_CHAT_SESSION_HYDRATION_TIMEOUT_MS
       : 60_000
 
-  // A profile backend that just woke up can lose the hydration-timeout race
-  // even though the session is fine (hermes-agent#89617) — clicking Retry
-  // succeeds because the backend is warm by then. retryHydrationTimeoutOnce
-  // asks the SDK layer to retry that same wait internally, BEFORE it arms the
-  // core stranded-session overlay: a plugin-side retry can't do this because
-  // only host.openSession sees the resume-exhausted latch that overlay reads.
-  //
-  // forceResume: an explicit bot switch must never trust a cached transcript.
-  // The SDK's surface-health check passes whenever ANY non-empty transcript is
-  // painted, including a stale snapshot the session-states cache kept from the
-  // previous time this bot was open — which left the pane showing old messages
-  // until an app restart (hermes-agent#93604). A resume is cheap and
-  // idempotent, so on this explicit user navigation we always request one.
-  await host.openSession(storedId, {
-    ...(route
-      ? {
-          route
-        }
-      : {}),
-    profile: name,
-    // Same intent a session row click uses. `tab` stacked a fresh tile every
-    // time focusOpenSession missed, so bot chats piled up beside each other and
-    // beside the untouched "New session" draft, which then kept focus —
-    // clicking a bot appeared to do nothing. `in-place` still fronts an
-    // already-open tile first, so Bot tabs survive owner lifecycles (#a81854a2,
-    // the reason this stopped being `main`); it just loads into main instead of
-    // minting a second tab when there is nothing to front.
-    intent: 'in-place',
-    awaitHydration: true,
-    expectHistory,
-    forceResume: true,
-    hydrationTimeoutMs,
-    keepAllProfilesScope: true,
-    workspaceMode: 'bots',
-    workspaceOwnerKey: ownerKey,
-    retryHydrationTimeoutOnce: true,
-    tabTitle: CANONICAL_CHAT_TITLE
-  })
+  // Hold the owner secondary across open + hydration (#93602). Per-request
+  // leases from requestProfile alone can drop the socket between RPCs while
+  // awaitHydration runs — remote Bot Chat then paints empty / stranded.
+  // Prefer retainProfile (session-scoped) over retainProfileSocket (relay).
+  let releaseRetain: (() => void) | null = null
+
+  if (route && typeof host.retainProfile === 'function') {
+    releaseRetain = await host.retainProfile(route, { spawnPriority: 'foreground' })
+  } else if (route && typeof host.retainProfileSocket === 'function') {
+    releaseRetain = host.retainProfileSocket(route)
+  }
+
+  try {
+    // A profile backend that just woke up can lose the hydration-timeout race
+    // even though the session is fine (hermes-agent#89617) — clicking Retry
+    // succeeds because the backend is warm by then. retryHydrationTimeoutOnce
+    // asks the SDK layer to retry that same wait internally, BEFORE it arms the
+    // core stranded-session overlay: a plugin-side retry can't do this because
+    // only host.openSession sees the resume-exhausted latch that overlay reads.
+    //
+    // forceResume: an explicit bot switch must never trust a cached transcript.
+    // The SDK's surface-health check passes whenever ANY non-empty transcript is
+    // painted, including a stale snapshot the session-states cache kept from the
+    // previous time this bot was open — which left the pane showing old messages
+    // until an app restart (hermes-agent#93604). A resume is cheap and
+    // idempotent, so on this explicit user navigation we always request one.
+    await host.openSession(storedId, {
+      ...(route
+        ? {
+            route
+          }
+        : {}),
+      profile: name,
+      // Same intent a session row click uses. `tab` stacked a fresh tile every
+      // time focusOpenSession missed, so bot chats piled up beside each other and
+      // beside the untouched "New session" draft, which then kept focus —
+      // clicking a bot appeared to do nothing. `in-place` still fronts an
+      // already-open tile first, so Bot tabs survive owner lifecycles (#a81854a2,
+      // the reason this stopped being `main`); it just loads into main instead of
+      // minting a second tab when there is nothing to front.
+      intent: 'in-place',
+      awaitHydration: true,
+      expectHistory,
+      forceResume: true,
+      hydrationTimeoutMs,
+      keepAllProfilesScope: true,
+      workspaceMode: 'bots',
+      workspaceOwnerKey: ownerKey,
+      retryHydrationTimeoutOnce: true,
+      tabTitle: CANONICAL_CHAT_TITLE
+    })
+  } finally {
+    releaseRetain?.()
+  }
 
   return storedId
 }
@@ -598,12 +615,22 @@ export async function prepareBotSource(bot: RosterRow) {
     )
   }
 
+  // Mark the home gateway warm so the cross-connection relay may background-
+  // dial it; until then connect-on-demand sources stay out of the 30s drain.
+  if (bot.connectionId) {
+    noteBotConnectionOpened(bot.connectionId)
+  }
+
   if (!route && typeof host.ensureAgent === 'function') {
     // Source-annotated row on the ACTIVE connection (no captured route):
     // legacy activation path, unchanged. An absent connectionId is fine —
     // ensureGatewayAgent normalizes it with `(connectionId ?? '').trim() || null`.
     await host.ensureAgent(bot.connectionId, bot.name)
   }
+  // Routed remote: Electron Desktop only notes opened — the first
+  // requestForBot / requestProfile dials via requestGatewayForAgent (same
+  // gateway.ts pool). Do not call ensureAgent (switches primary) or a separate
+  // probeAgent lease pool (Universal dual-door bug: listed but dead).
 }
 
 export async function ensureBotMetadata(bot: RosterRow): Promise<BotMeta> {

@@ -4519,6 +4519,11 @@ export interface Translations {
     editor: string
     terminal: string
     status: string
+    control: string
+    workspace: string
+    settings: string
+    profiles: string
+    agents: string
   }
   connect: {
     back: string

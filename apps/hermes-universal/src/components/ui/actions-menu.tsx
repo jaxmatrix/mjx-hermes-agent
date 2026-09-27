@@ -1,4 +1,5 @@
-import type * as React from 'react'
+import * as React from 'react'
+import { useState } from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
 import {
@@ -23,6 +24,8 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { MenuDrawer } from '@/components/ui/menu-drawer'
+import { IS_MOBILE } from '@/lib/platform'
 
 // One place to define a set of actions and get BOTH a kebab dropdown and a
 // matching right-click context menu — so a row's ⋯ menu and its right-click menu
@@ -30,8 +33,8 @@ import {
 // surface (Item / Separator / Sub…), so a caller writes `items={kit => …}` once
 // and hands the render function to both wrappers.
 //
-// The pattern originated inline in the session row menu; it lives here so every
-// kebab in the app can add right-click parity in one line.
+// On phones the same `items` render feeds `MenuDrawer` (bottom sheet + pages)
+// instead of a floating Radix menu — one description, three surfaces.
 
 /** A menu flavour (dropdown / context) — the item + separator + submenu parts. */
 export interface MenuKit {
@@ -131,10 +134,51 @@ function ActionItems({ items, kit }: { items: ActionsMenuProps['items']; kit: Me
   return <>{items(kit)}</>
 }
 
+function useDrawerOpen(controlled: boolean | undefined, onOpenChange?: (open: boolean) => void) {
+  const [uncontrolled, setUncontrolled] = useState(false)
+  const open = controlled ?? uncontrolled
+
+  const setOpen = (next: boolean) => {
+    if (controlled === undefined) {
+      setUncontrolled(next)
+    }
+
+    onOpenChange?.(next)
+  }
+
+  return [open, setOpen] as const
+}
+
+function cloneTrigger(
+  children: React.ReactNode,
+  handlers: {
+    onClick?: (event: React.MouseEvent) => void
+    onContextMenu?: (event: React.MouseEvent) => void
+  }
+) {
+  const child = React.Children.only(children) as React.ReactElement<{
+    onClick?: (event: React.MouseEvent) => void
+    onContextMenu?: (event: React.MouseEvent) => void
+  }>
+
+  return React.cloneElement(child, {
+    onClick: (event: React.MouseEvent) => {
+      child.props.onClick?.(event)
+      handlers.onClick?.(event)
+    },
+    onContextMenu: (event: React.MouseEvent) => {
+      child.props.onContextMenu?.(event)
+      handlers.onContextMenu?.(event)
+    }
+  })
+}
+
 /**
  * A kebab dropdown menu. Pair it with `ActionsContextMenu` using the same
  * `items` render function so the two menus stay identical. No tip on the
  * trigger — `aria-label` on the button is enough (see DESIGN.md).
+ *
+ * On mobile the same items open a bottom `MenuDrawer` instead of a floating menu.
  */
 export function ActionsMenu({
   align = 'end',
@@ -144,12 +188,23 @@ export function ActionsMenu({
   items,
   onCloseAutoFocus,
   onOpenChange,
-  open,
+  open: openProp,
   side,
   sideOffset = 6
 }: ActionsMenuProps) {
+  const [open, setOpen] = useDrawerOpen(openProp, onOpenChange)
+
+  if (IS_MOBILE) {
+    return (
+      <>
+        {cloneTrigger(children, { onClick: () => setOpen(true) })}
+        <MenuDrawer onOpenChange={setOpen} open={open} render={items} title={ariaLabel ?? ''} />
+      </>
+    )
+  }
+
   return (
-    <DropdownMenu onOpenChange={onOpenChange} open={open}>
+    <DropdownMenu onOpenChange={onOpenChange} open={openProp}>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent
         align={align}
@@ -180,6 +235,8 @@ interface ActionsContextMenuProps {
 /**
  * Wrap a row so right-clicking it opens the same menu as its kebab. Pass the
  * kebab's `items` render function so both surfaces mirror each other.
+ *
+ * On mobile, long-press / contextmenu opens the bottom `MenuDrawer` instead.
  */
 export function ActionsContextMenu({
   ariaLabel,
@@ -189,8 +246,24 @@ export function ActionsContextMenu({
   items,
   onCloseAutoFocus
 }: ActionsContextMenuProps) {
+  const [open, setOpen] = useDrawerOpen(undefined)
+
   if (disabled) {
     return <>{children}</>
+  }
+
+  if (IS_MOBILE) {
+    return (
+      <>
+        {cloneTrigger(children, {
+          onContextMenu: event => {
+            event.preventDefault()
+            setOpen(true)
+          }
+        })}
+        <MenuDrawer onOpenChange={setOpen} open={open} render={items} title={ariaLabel ?? ''} />
+      </>
+    )
   }
 
   return (

@@ -505,7 +505,10 @@ export const UserMessage: FC<{
                   </ActionBarPrimitive.Edit>
                 )}
                 {(showStop || showRestore) && (
-                  <div className="pointer-events-none absolute end-2 bottom-2 z-10 flex items-center justify-center opacity-0 transition-opacity group-hover/user-message:opacity-100 group-focus-within/user-message:opacity-100">
+                  <div
+                    className="pointer-events-none absolute end-2 bottom-2 z-10 flex items-center justify-center opacity-0 transition-opacity group-hover/user-message:opacity-100 group-focus-within/user-message:opacity-100 coarse:opacity-100"
+                    data-slot="aui_user-msg-actions"
+                  >
                     {showStop ? (
                       <button
                         aria-label={copy.stop}

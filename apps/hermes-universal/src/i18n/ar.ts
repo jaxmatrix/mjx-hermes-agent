@@ -3403,6 +3403,21 @@ export const ar = defineLocale({
       }
     }
   },
+  mobileWorkspace: {
+    backToChat: 'المحادثة',
+    menu: 'القائمة',
+    tabsAria: 'أقسام مساحة العمل',
+    review: 'المراجعة',
+    files: 'الملفات',
+    editor: 'المحرر',
+    terminal: 'الطرفية',
+    status: 'الحالة',
+    control: 'التحكم',
+    workspace: 'مساحة العمل',
+    settings: 'الإعدادات',
+    profiles: 'الملفات الشخصية',
+    agents: 'الوكلاء'
+  },
   ui: {
     search: {
       clear: 'مسح البحث'

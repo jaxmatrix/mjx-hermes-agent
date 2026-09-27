@@ -224,11 +224,15 @@ registry.registerMany([
     // NO minHeight: a tool panel drags all the way down to its collapsed
     // header (the sash floors it at COLLAPSED_ZONE_PX and folds the zone to
     // its rail there). A real floor left a sliver of unusable terminal.
+    //
+    // No lifecycleKeepAlive: PersistentTerminal already latches xterm+PTY in a
+    // fixed overlay chasing the slot. CSS-anchor keep-alive hosts are for
+    // guests that must not remount (Browser webviews); on WebKitGTK they often
+    // leave the terminal slot at 0×0 so the overlay never mounts — empty chrome.
     data: {
       placement: 'bottom',
       height: '20vh',
       maxHeight: '80vh',
-      lifecycleKeepAlive: true,
       tabTitle: () => <LocalizedTabTitle select={t => t.sidebar.terminal} />,
       tabTitleText: () => translateNow('sidebar.terminal')
     },

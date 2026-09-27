@@ -88,9 +88,11 @@ function mockWindow(id: string): void {
   }))
   vi.doMock('@/store/gateway-restore', async () => {
     const { atom } = await import('@/store/atom')
+    const $restoring = atom(true)
 
     return {
-      $restoring: atom(true),
+      $restoring,
+      beginGatewayRestore: () => $restoring.set(true),
       // The real claim's contract: Rust decides which window has the marker.
       claimPendingOAuth: async () => {
         const pending = ctx.pendingOAuth
@@ -99,6 +101,7 @@ function mockWindow(id: string): void {
           ? pending
           : null
       },
+      finishGatewayRestore: () => $restoring.set(false),
       loadGatewayTarget: () => ctx.legacyTarget
     }
   })

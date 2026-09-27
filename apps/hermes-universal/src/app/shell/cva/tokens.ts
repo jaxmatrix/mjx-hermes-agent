@@ -7,6 +7,10 @@
 export const shellChromeSurface =
   'border-(--ui-stroke-tertiary) bg-(--ui-bg-chrome) select-none'
 
+/** Sidebar fill + hairline — Sessions/Workspace rail (matches desktop statusbar role). */
+export const shellSidebarSurface =
+  'border-(--ui-stroke-tertiary) bg-(--ui-bg-sidebar) select-none'
+
 /** Active accent (tab underline, badge fill). */
 export const shellAccent = 'bg-(--ui-accent-primary)'
 

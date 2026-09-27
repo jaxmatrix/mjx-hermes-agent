@@ -23,6 +23,7 @@ import type { ChatMessage } from '@/lib/chat-messages'
 import { NEW_SESSION_TITLE, quickModelOptions, sessionTitle } from '@/lib/chat-runtime'
 import { useIncrementalExternalStoreRuntime } from '@/lib/incremental-external-store-runtime'
 import { currentModelCapabilities, modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+import { IS_MOBILE } from '@/lib/platform'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
 import { migrateSessionDraft } from '@/store/composer'
@@ -802,8 +803,9 @@ const ChatViewContent = memo(function ChatViewContent({
     >
       <Backdrop />
       {/* Tiles get their chrome from the layout zone (chip strip); the modal
-          prompt overlays stay active-session-scoped in the primary surface. */}
-      {isPrimary && (
+          prompt overlays stay active-session-scoped in the primary surface.
+          Phone owns the title in MobileTopBar — skip the in-pane header. */}
+      {isPrimary && !IS_MOBILE && (
         <ChatHeader
           activeSessionId={activeSessionId}
           isRoutedSessionView={isRoutedSessionView}

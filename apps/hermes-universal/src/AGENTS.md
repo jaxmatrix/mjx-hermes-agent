@@ -106,3 +106,23 @@ sign-in). `deriveBillingView` branches on `billing.free_tier` BEFORE `logged_in`
 sign-in dialog is a single claimed owner (first mount wins, like the real-profile consent prompt);
 its states map 1:1 to the poll route's `status` + `reason`. Copy is the ruled free-tier copy: never
 "guest", "anonymous", "claim" or "Nous Portal" in user-facing text.
+
+## Session open doors (phone + absorbed desktop chat)
+
+Desktop's `store/session.ts` owns two ids: `$selectedStoredSessionId` (list / route) and
+`$activeSessionId` (gateway runtime). Universal's `$activeStoredSessionId` is an **alias of
+`$selectedStoredSessionId`**, not the runtime atom.
+
+**Route-shaped primary opens** (Sessions window, cold restore, MobileSurfaceShell, SidebarScrollBody
+including cron runs, bubble `promote` / `newChatBubble`): `requestSessionResume` + navigate →
+`useRouteResume` → `resumeSession`. That is the only hydrator for the main ChatView. Sessions
+uses `resumeSessionIntoMain`; bubble strip actions navigate from `store/chat-bubbles`.
+
+**Lifecycle `openSession` / `hydrateColdSession`** is for satellites and in-place slice hydrate only:
+HUD, tile window, HUD handoff (`forceResume`), background bubble warm (`ensureLiveSession` /
+`addBubble`), plugin wake. Do not call it from phone Sessions / restore / surface chrome / bubble
+foreground switch.
+
+Phone cold-start memory is `hermes.lastSessionId.byProfile` (`lastOpenedSessionId`). Desktop's
+`hermes.desktop.lastSessionId…` restore+write path is gated off on `IS_MOBILE`. Gateway re-home
+must call `forgetLastSessionMarkers(leavingConnectionId)` from the wipe list (rule 20).

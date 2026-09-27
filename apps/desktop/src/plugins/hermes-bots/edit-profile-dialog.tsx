@@ -3,22 +3,7 @@
  * config disclosure for an existing bot.
  */
 
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DisclosureCaret,
-  host,
-  Input,
-  queryClient,
-  Textarea,
-  useI18n,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DisclosureCaret, host, Input, queryClient, Textarea, useI18n, useValue } from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'
@@ -201,6 +186,7 @@ export function EditProfileDialog({ bot, open, onClose }: EditProfileDialogProps
             <BotFace color={avatarColor(color, bot.name)} image={image} name={bot.name} shape={shape} size={64} />
           </div>
           <AvatarPicker
+            bot={bot}
             color={color}
             generateSeed={{
               name: bot.name,
