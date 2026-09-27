@@ -334,7 +334,7 @@ mod imp {
 ///     cargo test --features tracing -- --ignored --nocapture export_reaches_collector
 ///
 /// Then look for service `hermes-universal`, operation `telemetry.smoke`, at
-/// http://localhost:8200.
+/// http://localhost:16686.
 #[cfg(all(test, feature = "tracing"))]
 mod live_export_tests {
     #[test]
