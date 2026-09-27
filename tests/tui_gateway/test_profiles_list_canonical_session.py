@@ -5,9 +5,7 @@ titled "Bot Chat" on that bot's profile (core UNIQUE(title) makes it a
 registry of at most one row). The desktop BOTS roster previews it and clicks
 open it, so the gateway resolves the registry row server-side on every
 ``profiles.list`` and reports it per profile as ``canonical_session``.
-Upstream removed the ``preferred_session_ids`` pin contract; this fork keeps it
-alongside (apps/hermes-universal still sends it) — ``canonical_session`` is the
-authoritative answer, ``preferred_session`` only echoes a pinned id.
+Aligned with upstream: ``preferred_session_ids`` is ignored (no pin path).
 
 Contract under test:
 - Every profile row (with include_sessions on) whose state.db could be read
@@ -621,13 +619,13 @@ def test_the_envelope_discloses_the_capability_and_the_title(home):
     assert envelope["bot_mode_protocol"] is True
 
 
-def test_the_pin_path_still_works_alongside_it(home):
-    """Backward compatibility: both resolve, and agree when the pin is right."""
+def test_preferred_session_ids_are_ignored(home):
+    """Upstream drop: pins must not break include_sessions or invent preferred_session."""
     db = _db(home)
     _add_session(db, "botchat", title="Bot Chat", ts=1000, text="hi", hidden=True)
     db.close()
 
     row = _row(_profiles({"preferred_session_ids": {"default": "botchat"}}), "default")
 
-    assert row["preferred_session"]["id"] == "botchat"
+    assert "preferred_session" not in row
     assert row["canonical_session"]["id"] == "botchat"
