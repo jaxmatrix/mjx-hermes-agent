@@ -171,7 +171,7 @@ export function rosterSectionRenderers({
     )
   }
 
-  const renderGroupChatSection = () => {
+  const renderGroupChatSection = (rows: RosterGroupRow[] = sortedGroupRows) => {
     const sectionId = 'group-chats'
     const collapsed = rosterSectionCollapsed(sectionId)
 
@@ -186,7 +186,7 @@ export function rosterSectionRenderers({
           tip={`${sortedGroupRows.length} global group chat${sortedGroupRows.length === 1 ? '' : 's'}`}
         />
         {collapsed ? null : (
-          <div className="grid min-w-0 gap-0.5">{renderUserSections(sortedGroupRows, 'groups:')}</div>
+          <div className="grid min-w-0 gap-0.5">{renderUserSections(rows, 'groups:')}</div>
         )}
       </div>
     )

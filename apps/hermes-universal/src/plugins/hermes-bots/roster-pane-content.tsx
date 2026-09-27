@@ -1,5 +1,7 @@
 import { Button, Codicon, DisclosureCaret, GlyphSpinner, PanelEmpty, RowButton } from '@hermes/plugin-sdk'
-import type { ReactNode, RefObject } from 'react'
+import { useEffect, useState, type ReactNode, type RefObject } from 'react'
+
+import { useNearBottomLoad } from '@/app/chat/sidebar/use-near-bottom-load'
 
 import type { useRoster } from './data'
 import { $showHiddenBots } from './hidden-bots'
@@ -7,6 +9,11 @@ import type { useBots } from './i18n'
 import type { deriveRosterPresentation, deriveRosterRows } from './roster-pane-derivation'
 import type { rosterSectionRenderers } from './roster-pane-sections'
 import type { rosterGatewayOptions } from './roster-sections'
+import {
+  nextRosterWindow,
+  ROSTER_WINDOW_INITIAL,
+  takeGatewaySections
+} from './roster-window'
 import type { RosterRow } from './types'
 
 interface RosterContentProps {
@@ -40,6 +47,39 @@ interface RosterContentProps {
   renderHiddenGatewaySection: ReturnType<typeof rosterSectionRenderers>['renderHiddenGatewaySection']
 }
 
+function BotsRosterScrollPort({
+  resetKey,
+  rowCount,
+  children
+}: {
+  resetKey: string
+  rowCount: number
+  children: (visibleCount: number) => ReactNode
+}) {
+  const [visibleCount, setVisibleCount] = useState(ROSTER_WINDOW_INITIAL)
+
+  useEffect(() => {
+    setVisibleCount(ROSTER_WINDOW_INITIAL)
+  }, [resetKey])
+
+  const onScroll = useNearBottomLoad({
+    hasMore: visibleCount < rowCount,
+    loadGeneration: visibleCount,
+    loading: false,
+    onLoadMore: () => setVisibleCount(prev => nextRosterWindow(prev, rowCount))
+  })
+
+  return (
+    <div
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      data-slot="bots-roster"
+      onScroll={onScroll}
+    >
+      <div className="grid w-full min-w-0 gap-0.5 px-1.5 pb-2">{children(visibleCount)}</div>
+    </div>
+  )
+}
+
 export function renderRosterContent({
   b,
   staleNotice,
@@ -70,6 +110,18 @@ export function renderRosterContent({
   renderUserSections,
   renderHiddenGatewaySection
 }: RosterContentProps) {
+  const gatewayBotCount = gatewaySections.sections.reduce((n, section) => n + section.rows.length, 0)
+  const hiddenCount = showHiddenRows ? matchingHiddenBots.length : 0
+  const rowCount = showGatewaySections
+    ? sortedGroupRows.length + gatewayBotCount + hiddenCount
+    : rosterRows.length + hiddenCount
+  const resetKey = [
+    query,
+    selectedGateway?.connectionId ?? '',
+    showGatewaySections ? 'gw' : 'flat',
+    String(rowCount)
+  ].join('|')
+
   return (
     <>
       {staleNotice ? (
@@ -126,52 +178,112 @@ export function renderRosterContent({
           />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-slot="bots-roster">
-          <div className="grid w-full min-w-0 gap-0.5 px-1.5 pb-2">
-            {showGatewaySections
-              ? [
-                  sortedGroupRows.length ? renderGroupChatSection() : null,
-                  ...gatewaySections.sections.map(renderGatewaySection)
-                ].filter(Boolean)
-              : renderUserSections(rosterRows)}
-            {showHiddenSection ? (
-              <div
-                className="mt-1 border-t border-(--ui-stroke-tertiary) pt-1"
-                key={'hidden-section'}
-                ref={hiddenSectionRef}
-              >
-                {hasRosterConstraint ? (
-                  <div className="flex w-full items-center gap-1 px-2 py-1.5 text-[0.6875rem] font-medium text-(--ui-text-tertiary)">
-                    <Codicon name="eye-closed" />
-                    <span>Hidden</span>
-                    <span className="text-(--ui-text-quaternary)">{matchingHiddenBots.length}</span>
-                  </div>
-                ) : (
-                  <RowButton
-                    aria-expanded={hiddenExpanded}
-                    className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-start text-[0.6875rem] font-medium text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground"
-                    onClick={() => $showHiddenBots.set(!hiddenExpanded)}
+        <BotsRosterScrollPort resetKey={resetKey} rowCount={rowCount}>
+          {visibleCount => {
+            const groupBudget = showGatewaySections ? Math.min(sortedGroupRows.length, visibleCount) : 0
+            const afterGroups = Math.max(0, visibleCount - groupBudget)
+
+            if (showGatewaySections) {
+              const { remaining, sections: visibleGateway } = takeGatewaySections(
+                gatewaySections.sections,
+                afterGroups
+              )
+              const hiddenBudget = showHiddenRows ? remaining : 0
+              const visibleHidden = matchingHiddenBots.slice(0, hiddenBudget)
+              const { sections: visibleHiddenGateway } = takeGatewaySections(
+                hiddenGatewaySections.sections,
+                hiddenBudget
+              )
+
+              return (
+                <>
+                  {groupBudget > 0
+                    ? renderGroupChatSection(sortedGroupRows.slice(0, groupBudget))
+                    : null}
+                  {visibleGateway.map(renderGatewaySection)}
+                  {showHiddenSection ? (
+                    <div
+                      className="mt-1 border-t border-(--ui-stroke-tertiary) pt-1"
+                      key="hidden-section"
+                      ref={hiddenSectionRef}
+                    >
+                      {hasRosterConstraint ? (
+                        <div className="flex w-full items-center gap-1 px-2 py-1.5 text-[0.6875rem] font-medium text-(--ui-text-tertiary)">
+                          <Codicon name="eye-closed" />
+                          <span>Hidden</span>
+                          <span className="text-(--ui-text-quaternary)">{matchingHiddenBots.length}</span>
+                        </div>
+                      ) : (
+                        <RowButton
+                          aria-expanded={hiddenExpanded}
+                          className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-start text-[0.6875rem] font-medium text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground"
+                          onClick={() => $showHiddenBots.set(!hiddenExpanded)}
+                        >
+                          <DisclosureCaret open={hiddenExpanded} />
+                          <span>Hidden</span>
+                          <span className="text-(--ui-text-quaternary)">{hiddenBots.length}</span>
+                        </RowButton>
+                      )}
+                      {showHiddenRows ? (
+                        matchingHiddenBots.length ? (
+                          hiddenGatewaySections.sectioned ? (
+                            visibleHiddenGateway.map(renderHiddenGatewaySection)
+                          ) : (
+                            visibleHidden.map((bot: RosterRow) => renderBotRow(bot, 'hidden:'))
+                          )
+                        ) : (
+                          <div className="px-2 py-2 text-xs text-(--ui-text-quaternary)">{b.roster.noHiddenMatch}</div>
+                        )
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
+              )
+            }
+
+            const visibleRows = rosterRows.slice(0, visibleCount)
+            const hiddenBudget = Math.max(0, visibleCount - visibleRows.length)
+            const visibleHidden = matchingHiddenBots.slice(0, hiddenBudget)
+
+            return (
+              <>
+                {renderUserSections(visibleRows)}
+                {showHiddenSection ? (
+                  <div
+                    className="mt-1 border-t border-(--ui-stroke-tertiary) pt-1"
+                    key="hidden-section"
+                    ref={hiddenSectionRef}
                   >
-                    <DisclosureCaret open={hiddenExpanded} />
-                    <span>Hidden</span>
-                    <span className="text-(--ui-text-quaternary)">{hiddenBots.length}</span>
-                  </RowButton>
-                )}
-                {showHiddenRows ? (
-                  matchingHiddenBots.length ? (
-                    hiddenGatewaySections.sectioned ? (
-                      hiddenGatewaySections.sections.map(renderHiddenGatewaySection)
+                    {hasRosterConstraint ? (
+                      <div className="flex w-full items-center gap-1 px-2 py-1.5 text-[0.6875rem] font-medium text-(--ui-text-tertiary)">
+                        <Codicon name="eye-closed" />
+                        <span>Hidden</span>
+                        <span className="text-(--ui-text-quaternary)">{matchingHiddenBots.length}</span>
+                      </div>
                     ) : (
-                      matchingHiddenBots.map((bot: RosterRow) => renderBotRow(bot, 'hidden:'))
-                    )
-                  ) : (
-                    <div className="px-2 py-2 text-xs text-(--ui-text-quaternary)">{b.roster.noHiddenMatch}</div>
-                  )
+                      <RowButton
+                        aria-expanded={hiddenExpanded}
+                        className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-start text-[0.6875rem] font-medium text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground"
+                        onClick={() => $showHiddenBots.set(!hiddenExpanded)}
+                      >
+                        <DisclosureCaret open={hiddenExpanded} />
+                        <span>Hidden</span>
+                        <span className="text-(--ui-text-quaternary)">{hiddenBots.length}</span>
+                      </RowButton>
+                    )}
+                    {showHiddenRows ? (
+                      matchingHiddenBots.length ? (
+                        visibleHidden.map((bot: RosterRow) => renderBotRow(bot, 'hidden:'))
+                      ) : (
+                        <div className="px-2 py-2 text-xs text-(--ui-text-quaternary)">{b.roster.noHiddenMatch}</div>
+                      )
+                    ) : null}
+                  </div>
                 ) : null}
-              </div>
-            ) : null}
-          </div>
-        </div>
+              </>
+            )
+          }}
+        </BotsRosterScrollPort>
       )}
     </>
   )
