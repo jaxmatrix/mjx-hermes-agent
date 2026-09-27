@@ -67,6 +67,8 @@ export interface PluginAgentRoster {
 export interface PluginProfileRoute {
   connectionId: string
   profile: string
+  /** Backend profile the route dials; defaults to `profile` when omitted by older callers. */
+  targetProfile: string
 }
 
 export type PluginAgentHandle =
@@ -162,7 +164,11 @@ const singleConnectionSource: PluginConnectionSource = {
   profileRoutes: async () => {
     const roster = await singleConnectionSource.agents()
 
-    return roster.agents.map(agent => ({ connectionId: agent.connectionId, profile: agent.profile }))
+    return roster.agents.map(agent => ({
+      connectionId: agent.connectionId,
+      profile: agent.profile,
+      targetProfile: agent.profile
+    }))
   }
 }
 

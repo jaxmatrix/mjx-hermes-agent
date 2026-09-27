@@ -114,12 +114,14 @@ Desktop's `store/session.ts` owns two ids: `$selectedStoredSessionId` (list / ro
 `$selectedStoredSessionId`**, not the runtime atom.
 
 **Route-shaped primary opens** (Sessions window, cold restore, MobileSurfaceShell, SidebarScrollBody
-including cron runs): `resumeSessionIntoMain` → `requestSessionResume` + navigate →
-`useRouteResume` → `resumeSession`. That is the only hydrator for the main ChatView.
+including cron runs, bubble `promote` / `newChatBubble`): `requestSessionResume` + navigate →
+`useRouteResume` → `resumeSession`. That is the only hydrator for the main ChatView. Sessions
+uses `resumeSessionIntoMain`; bubble strip actions navigate from `store/chat-bubbles`.
 
 **Lifecycle `openSession` / `hydrateColdSession`** is for satellites and in-place slice hydrate only:
-HUD, tile window, HUD handoff (`forceResume`), bubble `promote`, plugin wake. Do not call it from
-phone Sessions / restore / surface chrome.
+HUD, tile window, HUD handoff (`forceResume`), background bubble warm (`ensureLiveSession` /
+`addBubble`), plugin wake. Do not call it from phone Sessions / restore / surface chrome / bubble
+foreground switch.
 
 Phone cold-start memory is `hermes.lastSessionId.byProfile` (`lastOpenedSessionId`). Desktop's
 `hermes.desktop.lastSessionId…` restore+write path is gated off on `IS_MOBILE`. Gateway re-home

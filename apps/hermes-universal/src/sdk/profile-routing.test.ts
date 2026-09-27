@@ -1,8 +1,21 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as ModStore from '@/components/pane-shell/tree/store'
 import type * as ModSession from '@/store/session'
 import type { ProfileInfo } from '@/types/hermes'
+
+const platform = vi.hoisted(() => ({ isMobile: false }))
+
+vi.mock('@/lib/platform', async importOriginal => {
+  const actual = await importOriginal<object>()
+
+  return {
+    ...actual,
+    get IS_MOBILE() {
+      return platform.isMobile
+    }
+  }
+})
 
 vi.mock('@/app/chat/session-view', async () => {
   const { atom } = await import('nanostores')
@@ -195,6 +208,7 @@ const profile = (name: string): ProfileInfo => ({
 })
 
 afterEach(() => {
+  platform.isMobile = false
   vi.clearAllMocks()
   vi.mocked(sessionTileDelegate).mockReturnValue(null)
   vi.mocked(activeGatewayConnectionId).mockReturnValue('local')
@@ -597,6 +611,30 @@ describe('profile-aware plugin session opens', () => {
     })
 
     expect(openSessionCore).toHaveBeenCalledWith('bot-chat', expect.any(Function), 'in-place', {
+      ownerRoute: route,
+      workspaceMode: 'bots',
+      workspaceOwnerKey: 'source-a::default'
+    })
+  })
+
+  it('forces main intent for Bot opens on phone so navigate always runs', async () => {
+    platform.isMobile = true
+
+    const route = {
+      connectionId: 'source-a',
+      mode: 'remote' as const,
+      profile: 'default',
+      targetProfile: 'backend-default'
+    }
+
+    await host.openSession('bot-chat', {
+      intent: 'in-place',
+      route,
+      workspaceMode: 'bots',
+      workspaceOwnerKey: 'source-a::default'
+    })
+
+    expect(openSessionCore).toHaveBeenCalledWith('bot-chat', expect.any(Function), 'main', {
       ownerRoute: route,
       workspaceMode: 'bots',
       workspaceOwnerKey: 'source-a::default'

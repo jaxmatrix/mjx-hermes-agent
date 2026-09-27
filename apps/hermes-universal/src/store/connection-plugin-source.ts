@@ -131,7 +131,11 @@ export const registryConnectionSource: PluginConnectionSource = {
   profileRoutes: async (): Promise<PluginProfileRoute[]> => {
     const roster = await connectionsRoster()
 
-    return roster.agents.map(agent => ({ connectionId: agent.connectionId, profile: agent.profile }))
+    return roster.agents.map(agent => {
+      const profile = agent.profile
+
+      return { connectionId: agent.connectionId, profile, targetProfile: profile }
+    })
   }
 }
 

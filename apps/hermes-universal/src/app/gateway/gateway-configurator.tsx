@@ -323,7 +323,9 @@ export function GatewayConfigurator({
   const trimmedUrl = remoteUrl.trim()
 
   useEffect(() => {
-    if (pendingMode !== 'remote' || !trimmedUrl || !/^https?:\/\//i.test(trimmedUrl)) {
+    // `normalizeBaseUrl` prepends http:// for host:port — do not require a typed
+    // scheme here or Sign in never appears for a LAN gateway pasted without one.
+    if (pendingMode !== 'remote' || !trimmedUrl) {
       setProbeState('idle')
       setAuthRequired(false)
       setProviders([])
