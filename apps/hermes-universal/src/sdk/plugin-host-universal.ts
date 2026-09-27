@@ -178,23 +178,22 @@ export function installUniversalHost(): void {
 // module finishes. Microtask (+ installPluginSdk) runs after the cycle settles.
 queueMicrotask(installUniversalHost)
 
-export type UniversalHost = typeof host & {
-  agents: () => ReturnType<typeof pluginConnectionSource> extends { agents: infer A } ? A : never
-  connections: () => ReturnType<typeof pluginConnectionSource> extends { connections: infer C } ? C : never
-  probeAgent: (
-    connectionId: string,
-    profile: string
-  ) => ReturnType<ReturnType<typeof pluginConnectionSource>['ensureAgent']>
+/**
+ * Desktop `host` plus the doors `installUniversalHost` mutates onto it.
+ * `Omit` the overwritten keys — intersecting call signatures would keep the
+ * Electron roster/`openSession` shapes and hide `ok`/`observed`/`target`.
+ */
+export type UniversalHost = Omit<typeof host, 'agents' | 'connections' | 'openSession' | 'state'> & {
+  agents: ReturnType<typeof pluginConnectionSource>['agents']
+  connections: ReturnType<typeof pluginConnectionSource>['connections']
+  probeAgent: ReturnType<typeof pluginConnectionSource>['ensureAgent']
   attachToSession: typeof attachToSession
   bindSession: (storedSessionId: string, options?: BindSessionOptions) => Promise<BindSessionResult>
   openCreatedSession: (
     created: PluginCreatedSession,
     options?: { focus?: boolean; target?: StoreOpenOptions['target'] }
   ) => ReturnType<typeof openCreatedPluginSession>
-  openSession: (
-    storedSessionId: string,
-    options?: Record<string, unknown>
-  ) => Promise<unknown>
+  openSession: (storedSessionId: string, options?: Record<string, unknown>) => Promise<unknown>
   refreshSessions: () => Promise<void>
   releaseSession: (storedSessionId: string) => void
   sessionMessages: typeof sessionMessages
@@ -206,10 +205,3 @@ export type UniversalHost = typeof host & {
     sessions: typeof $pluginSessionIndex
   }
 }
-
-/**
- * Live binding to desktop `host` (mutated by `installUniversalHost`). A value
- * read of `host` at this module's eval time was the Android TDZ crash; a
- * re-export links without touching the binding until the importer reads it.
- */
-export { host as universalHost } from './index'
