@@ -2,7 +2,7 @@
  * Messaging platform section with near-bottom reveal (+ optional API deepen).
  */
 
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useState, type ComponentProps, type ReactNode } from 'react'
 
 import { PlatformAvatar } from '@/app/messaging/platform-icon'
 import type { SessionInfo } from '@/types/hermes'
@@ -12,6 +12,18 @@ import { useNearBottomLoad } from './use-near-bottom-load'
 
 const INITIAL_SHOWN = 3
 const REVEAL_STEP = 10
+
+type MessagingRowHandlers = Pick<
+  ComponentProps<typeof SidebarSessionsSection>,
+  | 'activeSessionId'
+  | 'onArchiveSession'
+  | 'onBranchSession'
+  | 'onDeleteSession'
+  | 'onResumeSession'
+  | 'onTogglePin'
+  | 'onToggleUnread'
+  | 'dndSensors'
+>
 
 export function MessagingPlatformSection({
   group,
@@ -32,8 +44,8 @@ export function MessagingPlatformSection({
   /** Called when the local window catches up to loaded rows and the backend may have more. */
   onRevealExhausted?: () => void
   loadingMore?: boolean
-  rowHandlers: Record<string, unknown>
-  labelMeta?: React.ReactNode
+  rowHandlers: MessagingRowHandlers
+  labelMeta?: ReactNode
 }) {
   const [shown, setShown] = useState(INITIAL_SHOWN)
   const canReveal = group.sessions.length > shown || Boolean(group.hasMore)

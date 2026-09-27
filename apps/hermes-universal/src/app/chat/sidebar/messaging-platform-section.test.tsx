@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { MessagingPlatformSection } from './messaging-platform-section'
@@ -7,7 +8,7 @@ vi.mock('./sessions-section', () => ({
   SidebarSessionsSection: (props: {
     sessions: { id: string }[]
     onContentScroll?: (e: { currentTarget: HTMLElement }) => void
-    footer: unknown
+    footer?: ReactNode
     label: string
   }) => (
     <div data-testid="msg-section">
@@ -41,7 +42,14 @@ describe('MessagingPlatformSection', () => {
         onRevealExhausted={onRevealExhausted}
         onToggle={() => undefined}
         open
-        rowHandlers={{}}
+        rowHandlers={{
+          activeSessionId: null,
+          onArchiveSession: () => undefined,
+          onDeleteSession: () => undefined,
+          onResumeSession: () => undefined,
+          onTogglePin: () => undefined,
+          onToggleUnread: () => undefined
+        }}
       />
     )
 
