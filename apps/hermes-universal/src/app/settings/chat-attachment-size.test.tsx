@@ -21,6 +21,7 @@ vi.mock('@/hermes', () => ({
   getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
   setApiRequestProfile: vi.fn(),
+  getElevenLabsVoices: vi.fn(async () => ({ available: false })),
   getHermesConfigRecord: vi.fn(async () => ({ display: { show_reasoning: false }, timezone: 'UTC' })),
   getHermesConfigSchema: vi.fn(async () => ({
     fields: {

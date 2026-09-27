@@ -198,7 +198,7 @@ export function BillingPlansView({ onBack, tiers }: { onBack: () => void; tiers:
 
   return (
     <div className="@container">
-      <div className="mb-2.5 flex items-center gap-2 pt-2 text-[length:var(--conversation-text-font-size)] font-medium">
+      <div className="mb-2.5 flex items-center gap-2 pt-2 text-[length:var(--ui-section-font-size)] font-semibold">
         <Button
           aria-label="Back to billing"
           className="size-7 p-0 text-(--ui-text-tertiary)"

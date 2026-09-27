@@ -23,7 +23,16 @@ export function MobileShell() {
   const { openMobile, setOpenMobile, openMobileRight, setOpenMobileRight } = useSidebar()
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background" data-slot="mobile-shell">
+    <div
+      className="flex h-full min-h-0 flex-col bg-background"
+      data-slot="mobile-shell"
+      // Horizontal insets only — MobileTopBar owns top, composer owns bottom.
+      // Matches MobileWindowChrome so chat/thread stay inside the safe rectangle.
+      style={{
+        paddingLeft: 'var(--safe-area-inset-left, 0px)',
+        paddingRight: 'var(--safe-area-inset-right, 0px)'
+      }}
+    >
       <MobileTopBar />
 
       <div className="flex min-h-0 flex-1 flex-col">

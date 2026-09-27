@@ -19,6 +19,7 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: () => undefined }))
 const SETTINGS_SECTIONS: readonly WorkspaceSettingsSectionTab[] = [
   { id: 'model', label: 'Model' },
   { id: 'chat', label: 'Chat' },
+  { id: 'providers', label: 'Providers' },
   { id: 'keys', label: 'API keys' }
 ]
 
@@ -91,9 +92,10 @@ describe('WorkspaceWindow', () => {
     expect(screen.getByLabelText('Agents')).toBeTruthy()
     expect(screen.getByText('Control body')).toBeTruthy()
 
-    // Control has no submenu — top strip is omitted; close still floats.
+    // Control has no submenu — top strip stays in flow with close only.
     expect(screen.queryAllByRole('tab')).toHaveLength(0)
-    expect(container.querySelector('[data-slot="mobile-window-top"]')).toBeNull()
+    expect(container.querySelector('[data-slot="mobile-window-top"]')).toBeTruthy()
+    expect(container.querySelector('[data-slot="mobile-window-close-float"]')).toBeNull()
     expect(screen.getByLabelText(/close/i)).toBeTruthy()
 
     const rail = container.querySelector('[data-slot="mobile-nav-rail"]')
@@ -115,7 +117,7 @@ describe('WorkspaceWindow', () => {
     await user.click(screen.getByLabelText('Profiles'))
     expect(screen.getByText('Profiles body')).toBeTruthy()
     expect(screen.queryAllByRole('tab')).toHaveLength(0)
-    expect(container.querySelector('[data-slot="mobile-window-top"]')).toBeNull()
+    expect(container.querySelector('[data-slot="mobile-window-top"]')).toBeTruthy()
 
     await user.click(screen.getByLabelText('Agents'))
     expect(onOpenAgents).toHaveBeenCalledOnce()
@@ -148,7 +150,7 @@ describe('WorkspaceWindow', () => {
 
     await user.click(screen.getByLabelText('Control'))
     expect(screen.queryAllByRole('tab')).toHaveLength(0)
-    expect(container.querySelector('[data-slot="mobile-window-top"]')).toBeNull()
+    expect(container.querySelector('[data-slot="mobile-window-top"]')).toBeTruthy()
     expect(screen.getByText('Control body')).toBeTruthy()
   })
 })

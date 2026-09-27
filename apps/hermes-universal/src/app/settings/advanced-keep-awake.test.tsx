@@ -19,6 +19,7 @@ vi.mock('@/hermes', () => ({
   getApiRequestConnection: () => null,
   getApiRequestProfile: () => 'default',
   setApiRequestProfile: vi.fn(),
+  getElevenLabsVoices: vi.fn(async () => ({ available: false })),
   getHermesConfigRecord: vi.fn(async () => ({})),
   // One real Advanced key so the loaded body has a field of its own to wait for.
   getHermesConfigSchema: vi.fn(async () => ({ fields: { 'terminal.docker_image': { type: 'string' } } })),

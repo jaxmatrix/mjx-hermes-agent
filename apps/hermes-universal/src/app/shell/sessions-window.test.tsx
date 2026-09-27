@@ -75,14 +75,17 @@ describe('SessionsWindow', () => {
     renderSessions()
 
     expect(screen.getByLabelText('New')).toBeTruthy()
+    expect(document.querySelector('[data-slot="sessions-window-profile"]')).toBeTruthy()
 
     await user.click(screen.getByRole('tab', { name: 'Bots' }))
     expect(screen.getByText('Bots body')).toBeTruthy()
     expect(screen.queryByLabelText('New')).toBeNull()
+    expect(document.querySelector('[data-slot="sessions-window-profile"]')).toBeNull()
 
     await user.click(screen.getByRole('tab', { name: 'Sessions' }))
     expect(screen.getByText('Sessions body')).toBeTruthy()
     expect(screen.getByLabelText('New')).toBeTruthy()
+    expect(document.querySelector('[data-slot="sessions-window-profile"]')).toBeTruthy()
   })
 
   it('keeps chrome within a fixed-height parent when the body is tall', () => {
@@ -124,5 +127,11 @@ describe('SessionsWindow', () => {
     expect(rail).toBeTruthy()
     expect(chrome!.getBoundingClientRect().height).toBeLessThanOrEqual(frame.getBoundingClientRect().height + 0.5)
     expect(screen.getByLabelText('New')).toBeTruthy()
+
+    const body = container.querySelector('[data-slot="sessions-window-body"]')
+    expect(body).toBeTruthy()
+    expect(body!.className).toMatch(/\bflex\b/)
+    expect(body!.className).toMatch(/\bmin-h-0\b/)
+    expect(body!.className).toMatch(/\bflex-col\b/)
   })
 })

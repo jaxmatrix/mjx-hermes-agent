@@ -9,6 +9,7 @@
 import { useStore } from '@nanostores/react'
 import { type MouseEventHandler, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
 import { $chatOnboardingSolo } from '@/components/onboarding-chat/assembly'
 import { PaneTab, PaneTabLabel, PaneTabStrip } from '@/components/ui/pane-tab'
 import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
@@ -164,7 +165,11 @@ export function NarrowOverlays() {
       {revealed && (
         <div
           className={cn(
-            'absolute inset-y-0 z-40 flex flex-col overflow-hidden bg-(--ui-sidebar-surface-background) shadow-2xl',
+            // `top: TITLEBAR_HEIGHT` — not `inset-y-0`. Contrib zeros
+            // `--titlebar-height` and ZONE_CONTENT forces aside `pt-0`, so
+            // without this reservation files/review paint under the fixed
+            // window titlebar. Same clearance floating-panes uses.
+            'absolute bottom-0 z-40 flex flex-col overflow-hidden bg-(--ui-sidebar-surface-background) shadow-2xl',
             sideOf(revealed) === 'left'
               ? 'start-0 border-e border-(--ui-stroke-secondary)'
               : 'end-0 border-s border-(--ui-stroke-secondary)'
@@ -177,7 +182,10 @@ export function NarrowOverlays() {
           onMouseLeave={onMouseLeave}
           // Match the pane's docked width (sessions ~237px, files its rail
           // width) instead of a fat fixed 20rem — capped for tiny screens.
-          style={{ width: `min(${(revealed.data as { width?: string } | undefined)?.width ?? '18rem'}, 85vw)` }}
+          style={{
+            top: TITLEBAR_HEIGHT,
+            width: `min(${(revealed.data as { width?: string } | undefined)?.width ?? '18rem'}, 85vw)`
+          }}
         >
           {/* Zone-mates share the overlay through the zone's own tab strip
               (SESSIONS | BOTS) — a lone pane keeps the stripless form. */}

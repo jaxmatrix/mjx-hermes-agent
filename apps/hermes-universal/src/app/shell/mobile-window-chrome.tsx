@@ -13,8 +13,9 @@ export interface MobileWindowTab {
 
 /**
  * Full-height phone window chrome: optional primary tab strip, close ✕, body,
- * optional bottom rail. Top bar matches chat `MobileChromeBar` (h-12 + safe-area)
- * only when `tabs` are present; otherwise the strip is omitted and ✕ floats.
+ * optional bottom rail. Top bar always matches chat `MobileChromeBar`
+ * (h-12 + safe-area) so body content sits below the chrome for every page —
+ * tabs are optional inside that band; without them the row is close-only.
  * ✕ uses the same mobile titlebar density as the chat shell.
  */
 export function MobileWindowChrome({
@@ -55,6 +56,17 @@ export function MobileWindowChrome({
     </TitlebarButton>
   )
 
+  const closeSlot = (
+    <div
+      className={cn(
+        'absolute top-0 z-10 flex h-12 items-center',
+        closeAtStart ? 'start-0 ps-1' : 'end-0 pe-1'
+      )}
+    >
+      {closeButton}
+    </div>
+  )
+
   return (
     <div
       className={cn(
@@ -70,13 +82,13 @@ export function MobileWindowChrome({
         paddingRight: 'var(--safe-area-inset-right, 0px)'
       }}
     >
-      {tabList && onSelectTab ? (
-        <div
-          className={cn('shrink-0', topBorder && 'border-b border-(--ui-stroke-tertiary)')}
-          data-slot="mobile-window-top"
-          style={{ paddingTop: 'var(--safe-area-inset-top, 0px)' }}
-        >
-          <div className="relative flex h-12 min-w-0 items-center" data-top-bar="">
+      <div
+        className={cn('shrink-0', topBorder && 'border-b border-(--ui-stroke-tertiary)')}
+        data-slot="mobile-window-top"
+        style={{ paddingTop: 'var(--safe-area-inset-top, 0px)' }}
+      >
+        <div className="relative flex h-12 min-w-0 items-center" data-top-bar="">
+          {tabList && onSelectTab ? (
             <PaneTabStrip
               className={cn('min-h-12 min-w-0', closeAtStart ? 'ps-12' : 'pe-12')}
               titlebar
@@ -99,28 +111,14 @@ export function MobileWindowChrome({
                 </PaneTab>
               ))}
             </PaneTabStrip>
-            <div
-              className={cn(
-                'absolute top-0 z-10 flex h-12 items-center',
-                closeAtStart ? 'start-0 ps-1' : 'end-0 pe-1'
-              )}
-            >
-              {closeButton}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div
-          className={cn(
-            'absolute z-10 flex h-12 items-center',
-            closeAtStart ? 'start-0 ps-1' : 'end-0 pe-1'
+          ) : (
+            // Close-only band: reserve the same horizontal inset the tab strip
+            // uses so the ✕ never sits under a future leading control.
+            <div className={cn('min-h-12 min-w-0 flex-1', closeAtStart ? 'ps-12' : 'pe-12')} />
           )}
-          data-slot="mobile-window-close-float"
-          style={{ top: 'var(--safe-area-inset-top, 0px)' }}
-        >
-          {closeButton}
+          {closeSlot}
         </div>
-      )}
+      </div>
 
       {secondary}
 

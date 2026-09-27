@@ -41,6 +41,7 @@ export function MobileNavRail({
       aria-label={ariaLabel}
       className={cn('shrink-0 border-t', shellSidebarSurface)}
       data-slot="mobile-nav-rail"
+      style={{ paddingBottom: 'var(--safe-area-inset-bottom, 0px)' }}
     >
       <div
         className={cn(

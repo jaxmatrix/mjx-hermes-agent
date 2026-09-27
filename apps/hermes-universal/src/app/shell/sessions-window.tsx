@@ -18,8 +18,9 @@ export interface SessionsWindowProfile {
 
 /**
  * Phone left window: Sessions|Bots tab strip (always both), profile button →
- * top drawer picker, body, bottom nav rail (Sessions tab only), ✕.
- * Presentational — live wiring supplies bodies and nav items; Storybook stubs them.
+ * top drawer picker (Sessions tab only), body, bottom nav rail (Sessions tab
+ * only), ✕. Presentational — live wiring supplies bodies and nav items;
+ * Storybook stubs them.
  *
  * Submenus on mobile are drawers (top or bottom), never floating DropdownMenus.
  * SIDEBAR_NAV (New / Caps / …) is the Sessions-tab bottom rail only — not on chat.
@@ -53,17 +54,19 @@ export function SessionsWindow({
       activeTabId={activeTab}
       body={
         <div className="flex h-full min-h-0 flex-1 flex-col">
-          <div
-            className="shrink-0 border-b border-(--ui-stroke-tertiary) px-2 py-1.5"
-            data-top-bar=""
-          >
-            <ProfileMenuButton
-              onSelectProfile={onSelectProfile}
-              profiles={profiles}
-              selected={selected}
-            />
-          </div>
-          <div className="min-h-0 flex-1 overflow-hidden" data-slot="sessions-window-body">
+          {activeTab === 'sessions' ? (
+            <div
+              className="shrink-0 border-b border-(--ui-stroke-tertiary) px-2 py-1.5"
+              data-top-bar=""
+            >
+              <ProfileMenuButton
+                onSelectProfile={onSelectProfile}
+                profiles={profiles}
+                selected={selected}
+              />
+            </div>
+          ) : null}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-slot="sessions-window-body">
             {activeTab === 'sessions' ? sessionsBody : botsBody}
           </div>
         </div>

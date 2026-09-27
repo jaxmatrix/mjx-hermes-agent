@@ -4,12 +4,14 @@ import type { ChangeEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getElevenLabsVoices, getHermesConfigSchema, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { isSubmitEnter } from '@/lib/ime'
+import { IS_DESKTOP } from '@/lib/platform'
 import { confirm } from '@/store/confirm'
 import {
   $dataUrlReadMaxMb,
@@ -64,11 +66,12 @@ export function ConfigSettings({
   // when the target profile changes — the same guarantee useOnProfileSwitch
   // provides for app-wide switches, without hand-clearing each piece.
   const scopeProfile = useStore($settingsRequestProfile)
+  const fallbackImportRef = useRef<HTMLInputElement | null>(null)
 
   return (
     <ConfigSettingsInner
       activeSectionId={activeSectionId}
-      importInputRef={importInputRef}
+      importInputRef={importInputRef ?? fallbackImportRef}
       key={scopeProfile ?? '__active__'}
       onConfigSaved={onConfigSaved}
       onMainModelChanged={onMainModelChanged}
@@ -84,7 +87,8 @@ interface ConfigSettingsProps {
   subpage?: string
   onConfigSaved?: () => void
   onMainModelChanged?: (provider: string, model: string) => void
-  importInputRef: React.RefObject<HTMLInputElement | null>
+  /** Optional — Workspace hosts omit the overlay import control. */
+  importInputRef?: React.RefObject<HTMLInputElement | null>
 }
 
 function ConfigSettingsInner({
@@ -94,7 +98,10 @@ function ConfigSettingsInner({
   onMainModelChanged,
   importInputRef,
   scopeProfile
-}: ConfigSettingsProps & { scopeProfile: string | undefined }) {
+}: ConfigSettingsProps & {
+  importInputRef: React.RefObject<HTMLInputElement | null>
+  scopeProfile: string | undefined
+}) {
   const { t } = useI18n()
   const c = t.settings.config
   const keepAwake = useStore($keepAwake)
@@ -294,7 +301,10 @@ function ConfigSettingsInner({
   const showModelSettings =
     activeSectionId === 'model' && (subpage === undefined || ['main', 'auxiliary', 'moa'].includes(subpage))
 
-  const showDesktopSettings = activeSectionId === 'advanced' && (subpage === undefined || subpage === 'desktop')
+  // Keep-awake / Quick Entry / disable-F12 are desktop machine prefs — same
+  // gate SectionBody used before ConfigSettings owned this block.
+  const showDesktopSettings =
+    IS_DESKTOP && activeSectionId === 'advanced' && (subpage === undefined || subpage === 'desktop')
   const showAttachments = activeSectionId === 'chat' && (subpage === undefined || subpage === 'attachments')
 
   // Deep-link target from the command palette (?field=<key>): scroll the row
@@ -558,6 +568,7 @@ function AttachmentSizeSetting() {
         </div>
       }
       description={c.attachmentSizeDesc}
+      id={settingRowElementId('chat.attachment-size')}
       title={c.attachmentSizeTitle}
     />
   )

@@ -26,7 +26,7 @@ import { MobileShell } from './mobile-shell'
 
 describe('MobileShell', () => {
   it('renders desktop chatRoutes instead of ChatScreen WorkspaceRoutes', () => {
-    render(
+    const { container } = render(
       <I18nProvider>
         <ThemeProvider>
           <ContribWiringContext.Provider
@@ -45,5 +45,9 @@ describe('MobileShell', () => {
 
     expect(screen.getByTestId('desktop-chat-routes')).toBeTruthy()
     expect(screen.getByTestId('mobile-top-bar')).toBeTruthy()
+
+    const shell = container.querySelector('[data-slot="mobile-shell"]') as HTMLElement
+    expect(shell.style.paddingLeft).toBe('var(--safe-area-inset-left, 0px)')
+    expect(shell.style.paddingRight).toBe('var(--safe-area-inset-right, 0px)')
   })
 })

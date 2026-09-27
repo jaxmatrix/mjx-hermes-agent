@@ -23,11 +23,13 @@ function renderChrome(ui: ReactElement) {
 }
 
 describe('MobileWindowChrome', () => {
-  it('hides the top row when there are no tabs and keeps a floating close', () => {
+  it('keeps an in-flow top bar with close when there are no tabs', () => {
     const { container } = renderChrome(<MobileWindowChrome body={<div>Body</div>} onClose={() => undefined} />)
 
-    expect(container.querySelector('[data-slot="mobile-window-top"]')).toBeNull()
-    expect(container.querySelector('[data-slot="mobile-window-close-float"]')).toBeTruthy()
+    const top = container.querySelector('[data-slot="mobile-window-top"]')
+    expect(top).toBeTruthy()
+    expect(top?.querySelector('[data-top-bar]')?.className).toMatch(/\bh-12\b/)
+    expect(container.querySelector('[data-slot="mobile-window-close-float"]')).toBeNull()
     expect(screen.getByLabelText(/close/i).getAttribute('data-density')).toBe('mobile')
   })
 

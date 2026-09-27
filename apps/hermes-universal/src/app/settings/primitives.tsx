@@ -73,7 +73,7 @@ export function SectionHeading({
   }
 
   return (
-    <div className="mb-2.5 flex items-center gap-2 pt-2 text-[length:var(--conversation-text-font-size)] font-medium">
+    <div className="mb-2.5 flex items-center gap-2 pt-2 text-[length:var(--ui-section-font-size)] font-semibold">
       {showTitle && (
         <>
           <Icon className="size-4 shrink-0 text-muted-foreground" />
@@ -180,7 +180,11 @@ export function ListRow({
               {description}
             </div>
           )}
-          {hint && <div className="mt-1 block font-mono text-[0.68rem] text-muted-foreground/45">{hint}</div>}
+          {hint && (
+            <div className="mt-1 block font-mono text-[length:var(--conversation-tool-font-size)] text-muted-foreground/45">
+              {hint}
+            </div>
+          )}
           {below}
         </div>
         {action && <div className={cn('min-w-0', !wide && '@2xl:justify-self-end')}>{action}</div>}

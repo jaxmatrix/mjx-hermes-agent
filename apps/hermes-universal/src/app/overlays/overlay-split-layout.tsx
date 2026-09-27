@@ -290,7 +290,9 @@ export function OverlayNav({ footer, groups }: { footer?: ReactNode; groups: Ove
               {
                 active: group.active && !group.children?.some(child => child.active),
                 icon: group.icon,
-                id: group.id,
+                // Unique when the first child reuses the group id (Providers /
+                // Keys) so the current option is not dropped from the list.
+                id: group.children?.length ? `${group.id}:group` : group.id,
                 label: group.label,
                 onSelect: group.onSelect,
                 separatorBefore: group.gapBefore

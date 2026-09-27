@@ -72,7 +72,7 @@ export function SettingsIndex() {
 
             return (
               <Link
-                className="flex items-center gap-3 border-b border-border/60 py-3.5 text-sm text-foreground transition-colors last:border-b-0 hover:text-primary"
+                className="flex items-center gap-3 border-b border-border/60 py-3.5 text-[length:var(--conversation-text-font-size)] text-foreground transition-colors last:border-b-0 hover:text-primary"
                 key={entry.id}
                 to={`/settings/${entry.id}`}
               >

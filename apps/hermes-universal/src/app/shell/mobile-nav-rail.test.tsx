@@ -21,6 +21,7 @@ describe('MobileNavRail', () => {
 
     expect(rail.className).toContain('bg-(--ui-bg-sidebar)')
     expect(rail.className).toContain('border-(--ui-stroke-tertiary)')
+    expect(rail.style.paddingBottom).toBe('var(--safe-area-inset-bottom, 0px)')
   })
 
   it('fills the rail width when there are four or fewer items', () => {

@@ -15,6 +15,7 @@ import { resolveProfileColor } from '@/lib/profile-color'
 import { logSessionsRoute } from '@/lib/sessions-route-log'
 import { $botsPaneVisible, $openBotChat } from '@/plugins/hermes-bots/bot-state'
 import { useStore } from '@/store/atom'
+import { openStoredSessionInBubble } from '@/store/chat-bubbles'
 import {
   $activeGatewayProfile,
   $profileColors,
@@ -51,11 +52,12 @@ export function SessionsWindowHost({ onClose }: { onClose: () => void }) {
     [colors, profiles]
   )
 
-  // Same door as desktop wiring `onResumeSession`: owner-aware resume request,
-  // then `app/open-session` navigate. Do NOT call lifecycle `openSession` here —
+  // Same door as desktop wiring `onResumeSession`: seed the bubble strip, then
+  // owner-aware resume + navigate. Do NOT call lifecycle `openSession` here —
   // `useRouteResume` is the single hydrator.
   const onResumeSession = useCallback(
     (sessionId: string, session?: SessionInfo) => {
+      openStoredSessionInBubble(sessionId)
       resumeSessionIntoMain(sessionId, navigate, session)
     },
     [navigate]
@@ -102,6 +104,12 @@ export function SessionsWindowHost({ onClose }: { onClose: () => void }) {
         skip = false
 
         return
+      }
+
+      // Seed the strip the same way Sessions-tab resume does — without a second
+      // resumeSessionIntoMain (SDK host.openSession already wakes the chat).
+      if (chat?.openedSessionId) {
+        openStoredSessionInBubble(chat.openedSessionId)
       }
 
       if (chat) {

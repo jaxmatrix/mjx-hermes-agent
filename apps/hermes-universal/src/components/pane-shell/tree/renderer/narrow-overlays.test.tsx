@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
 import { PANE_TOGGLE_REVEAL_EVENT } from '@/components/pane-shell'
 import { registry } from '@/contrib/registry'
 import { stubResizeObserver } from '@/test/jsdom'
@@ -77,6 +78,16 @@ describe('narrow overlay of a stacked zone', () => {
     fireEvent.pointerDown(overlayTab('bots')!, { button: 0 })
     expect(getByTestId('bots-body')).toBeTruthy()
     expect(queryByTestId('sessions-body')).toBeNull()
+  })
+
+  it('clears the fixed window titlebar (not inset-y-0 under contrib)', () => {
+    render(<NarrowOverlays />)
+    revealPane('sessions')
+
+    const overlay = document.querySelector<HTMLElement>('[data-narrow-overlay]')
+    expect(overlay).toBeTruthy()
+    expect(overlay!.style.top).toBe(`${TITLEBAR_HEIGHT}px`)
+    expect(overlay!.className).not.toMatch(/inset-y-0/)
   })
 
   it('keeps the stripless form for a zone with a single collapsible', () => {
